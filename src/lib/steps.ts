@@ -9,6 +9,7 @@ export const FLOW_STEPS = [
   { key: 'wbs', label: 'WBS Builder', segment: 'wbs' },
   { key: 'constraints', label: 'Constraints', segment: 'constraints' },
   { key: 'optimization', label: 'Optimization Results', segment: 'optimization' },
+  { key: 'changes', label: 'Changes & Versions', segment: 'changes' },
 ] as const
 
 export type FlowStepKey = (typeof FLOW_STEPS)[number]['key']

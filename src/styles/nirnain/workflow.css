@@ -1,0 +1,72 @@
+/**
+ * NirnAIn mockup · styles/workflow.css
+ *
+ * PURPOSE
+ *   Steps up to the WBS: dashboard, create chooser, uploads, scope, WBS.
+ *
+ * DEPENDS ON   styles/base.css (colour tokens)
+ * AUTHOR       Sharada Dogiparthi
+ * CREATED      2026-11-11
+ */
+
+/* ---- Dashboard: KPI cards, health rows, notifications. ---- */
+.notice{background:#EAF0E2;border:1px solid #C9D6B8;border-radius:6px;padding:10px 14px;font-size:13px;margin-bottom:16px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:6px;padding:16px 18px}
+.kpi .k{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mfg);margin-bottom:8px}
+.kpi .v{font-size:24px;font-weight:700;color:var(--pr)}
+.kpi .s{font-size:12px;color:var(--mfg);margin-top:4px}
+.dgrid{display:grid;grid-template-columns:1fr 300px;gap:16px}
+.riskb{font-size:10px;background:#F3D9D5;color:var(--red);border-radius:10px;padding:1px 6px;margin-left:6px}
+.notif{display:flex;gap:8px;padding:8px 0;border-bottom:1px solid var(--muted);font-size:12px}
+.notif small{display:block;color:var(--mfg);font-size:11px}
+.cnt{font-size:11px;background:var(--sec);color:#6B5254;border-radius:10px;padding:1px 7px}
+.atr{background:var(--soft);border:1px solid var(--line);border-radius:6px;padding:10px;margin-bottom:8px;font-size:12px}
+.dh{display:grid;grid-template-columns:1.4fr 1fr 1.2fr 60px 1fr 80px;gap:8px;font-size:12px;padding:8px 0;border-bottom:1px solid var(--muted)}
+.dh.h{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mfg);font-weight:600}
+
+/* ---- Create Project chooser: the two start options. ---- */
+.choose{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:8px}
+.opt-card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:24px;display:flex;flex-direction:column;gap:10px;text-align:left}
+.opt-card:hover{border-color:var(--pr);box-shadow:0 6px 18px rgba(114,47,55,.12)}
+.opt-card .ico{width:44px;height:44px;border-radius:10px;background:var(--muted);display:flex;align-items:center;justify-content:center;font-size:22px}
+.opt-card h2{font-size:17px}
+.opt-card p{margin:0;font-size:13px;color:#6B5254;line-height:1.6}
+.opt-card ul{margin:0;padding-left:18px;font-size:12px;color:var(--mfg);line-height:1.7}
+.opt-card .btn{align-self:flex-start;margin-top:auto}
+
+/* ---- File tiles, attached files and the step-by-step progress box. ---- */
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.tile{padding:14px 10px;border:1px dashed #c8c8c8;border-radius:6px;background:var(--soft);display:flex;flex-direction:column;align-items:center;gap:4px;font-size:22px}
+.tile:hover{border-color:var(--pr)}
+.tile b{font-size:12px}.tile span{font-size:11px;color:#999}
+.files{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.file{display:flex;align-items:center;gap:10px;background:var(--soft);border:1px solid var(--line);border-radius:4px;padding:6px 10px;font-size:12px}
+.file .x{margin-left:auto;background:none;border:0;font-size:16px;color:var(--mfg)}
+.runbox{background:#fff;border:1px solid var(--line);border-radius:6px;padding:14px 18px;margin-top:16px;font-size:13px}
+.runbox div{padding:3px 0;color:var(--mfg)}.runbox div.done{color:var(--fg)}.runbox div.done::before{content:'\2713  ';color:var(--green);font-weight:700}.runbox div.cur::before{content:'\25CC  '}
+.pf .note{margin-top:4px}
+
+/* ---- Scope Review items with quotes and actions. ---- */
+.sc-sec{margin-bottom:14px}
+.sc-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.sc-head .nm{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--mfg);display:flex;align-items:center;gap:8px}
+.sc-badge{font-family:'DM Mono',monospace;font-size:10px;padding:2px 6px;border-radius:3px;color:#6B5254}
+.item{display:flex;gap:10px;padding:10px 0;border-top:1px solid var(--muted)}
+.item .ic{width:18px;color:#B7A89A;font-weight:700}.item.accepted .ic{color:var(--green)}
+.item-main{flex:1;min-width:0}
+.item-text{font-size:13px}.item-text[contenteditable=true]{outline:2px solid var(--pr);border-radius:3px;padding:2px 4px;background:#fff}
+.item.removed .item-text{text-decoration:line-through;color:#A99A8E}.item.removed .quote,.item.removed .note{opacity:.5}
+.item-side{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.gate{font-size:12px;color:var(--mfg)}.gate.bad{color:var(--red)}
+
+/* ---- WBS Builder table and validation issues. ---- */
+.wbs td{padding:8px 10px}
+.wbs .l1 td{font-weight:700;background:var(--soft)}.wbs .l2 td{font-weight:600}
+.wbs .l3 td:nth-child(2){padding-left:34px}
+.wbs.flat .l3 td:nth-child(2){padding-left:10px}
+.tog{background:none;border:0;width:16px;color:var(--mfg)}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:4px;overflow:hidden}
+.seg button{background:#fff;border:0;padding:6px 12px;font-size:12px;color:var(--secfg)}.seg button.on{background:var(--secfg);color:#fff}
+.issue{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:4px;font-size:12px;margin-top:6px}

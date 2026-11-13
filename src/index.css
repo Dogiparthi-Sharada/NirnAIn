@@ -1,5 +1,18 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
-@import 'tailwindcss';
+/* Tailwind theme + utilities without Preflight: the approved NirnAIn design (styles/nirnain)
+   is built on browser defaults plus its own base.css. */
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+@import './styles/nirnain/base.css';
+@import './styles/nirnain/shell.css';
+@import './styles/nirnain/public.css';
+@import './styles/nirnain/workflow.css';
+@import './styles/nirnain/planning.css';
+@import './styles/nirnain/create-form.css';
+@import './styles/nirnain/team-policy.css';
+@import './styles/nirnain/dashboard-project.css';
+@import './styles/nirnain/product.css';
 
 @theme inline {
   --color-background: var(--background);

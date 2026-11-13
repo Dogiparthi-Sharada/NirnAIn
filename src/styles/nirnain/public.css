@@ -1,0 +1,63 @@
+/**
+ * NirnAIn mockup · styles/public.css
+ *
+ * PURPOSE
+ *   Public pages: landing and the four auth screens.
+ *
+ * DEPENDS ON   styles/base.css (colour tokens)
+ * AUTHOR       Sharada Dogiparthi
+ * CREATED      2026-11-11
+ */
+
+/* ---- Landing page (route /). ---- */
+.lp-head{position:sticky;top:42px;z-index:5;display:flex;align-items:center;justify-content:space-between;padding:14px 48px;background:rgba(246,239,226,.92);backdrop-filter:blur(6px);border-bottom:1px solid var(--line)}
+.lp-head nav{display:flex;gap:24px;font-size:13px}.lp-head nav a{color:var(--secfg)}
+.brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px}
+.bmark{width:32px;height:32px;border-radius:8px;background:var(--pr);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+.bmark.inv{background:#fff;color:var(--pr)}.bmark.sm{width:28px;height:28px}
+.bname em{font-style:normal;color:var(--pr)}.inv .bname em,.bname.inv em{color:#E8C9C4}
+.lp-hero{display:grid;grid-template-columns:1.1fr 1fr;gap:48px;padding:64px 48px;max-width:1240px;margin:0 auto;align-items:center}
+.eyebrow{display:inline-block;font-size:12px;font-weight:600;color:var(--pr);background:#fff;border:1px solid var(--line);border-radius:20px;padding:4px 12px}
+.lp-hero h1{display:block;font-size:48px;letter-spacing:-.025em;line-height:1.1;margin:18px 0}
+.grad{background:linear-gradient(90deg,#722F37,#B4544C);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lp-hero p{font-size:17px;line-height:1.65;color:#6B5254}
+.lp-tree{position:relative;padding:24px}
+.tn{background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:12px;font-weight:600}
+.tn.root{background:var(--pr);color:#fff;border-color:var(--pr);text-align:center}
+.tbranch,.tleaves{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px}
+.tn.leaf{font-weight:500;background:var(--soft)}.tn.ai{border-style:dashed;border-color:var(--green);color:var(--green)}
+.fchip{display:inline-flex;align-items:center;gap:6px;margin:14px 8px 0 0;font-size:11px;background:#fff;border:1px solid var(--line);border-radius:20px;padding:4px 10px;box-shadow:0 4px 12px rgba(46,26,29,.08)}
+.pulse{width:7px;height:7px;border-radius:50%;background:#4F7A4A}
+.lp-sec{padding:64px 48px;max-width:1240px;margin:0 auto}
+.lp-white{background:#fff}
+.lp-about{display:grid;grid-template-columns:1fr 1.2fr;gap:48px}
+.lp-about h2{font-size:30px;letter-spacing:-.02em;line-height:1.2}
+.lp-feats{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:24px}
+.lp-feats .card .ft{display:inline-block;font-family:'DM Mono',monospace;font-size:10px;padding:2px 6px;border-radius:3px;margin-bottom:8px}
+.lp-steps{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-top:24px}
+.lp-steps div{text-align:center;font-size:12px}.lp-steps b{display:block;font-size:13px;margin:8px 0 4px}
+.lp-steps .n{width:32px;height:32px;border-radius:50%;background:var(--pr);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:700}
+.lp-cta{background:var(--pr);color:#fff;text-align:center;padding:56px 24px}
+.lp-cta h2{font-size:28px}.lp-cta p{color:#E8DCC6}
+.lp-foot{text-align:center;font-size:12px;color:var(--mfg);padding:20px}
+
+/* ---- Sign in, create account, check email, reset password. ---- */
+.view.on.auth{display:grid}
+.auth{min-height:calc(100vh - 42px);grid-template-columns:420px 1fr;background:#fff}
+.auth-panel{background:var(--pr);color:#fff;padding:40px;display:flex;flex-direction:column}
+.auth-panel h2{font-size:28px;line-height:1.3;margin:56px 0 12px}
+.auth-panel p{font-size:14px;color:#CDBFAB;line-height:1.7;margin:0}
+.feat{list-style:none;padding:0;margin:28px 0 0;display:flex;flex-direction:column;gap:12px}
+.feat li{display:flex;gap:10px;align-items:center;font-size:13px;color:#E8DCC6}
+.feat li::before{content:'\2713';width:18px;height:18px;border-radius:50%;background:#DDE7D0;color:#4F7A4A;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex:none}
+.auth-panel .copy{margin-top:auto;font-size:12px;color:#E8C9C4}
+.auth-main{display:flex;align-items:center;justify-content:center;padding:40px}
+.auth-box{width:100%;max-width:400px}
+.auth-box .sub{font-size:14px;margin:4px 0 22px}
+.auth-box .field{margin-bottom:14px}
+.oauth{margin-bottom:10px;font-size:14px}
+.divider{display:flex;align-items:center;gap:12px;margin:18px 0;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#A99A8E}
+.divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--line)}
+.foot{text-align:center;font-size:13px;color:var(--mfg);margin-top:18px}
+.pwlist{list-style:none;padding:0;margin:6px 0 0;font-size:12px;color:var(--mfg)}.pwlist li::before{content:'\25CB  '}
+.alert{border-radius:6px;padding:10px 12px;font-size:13px;margin-bottom:14px}.alert.ok{background:#EAF0E2;border:1px solid #C9D6B8}.alert.bad{background:#F3D9D5;border:1px solid #E6BDB8}.alert.warn{background:#F5E3C8;border:1px solid #E6CFA6}

@@ -15,12 +15,15 @@ import AuthCallback from './screens/AuthCallback'
 import AuthConfirm from './screens/AuthConfirm'
 import LandingPage from './screens/LandingPage'
 import Dashboard from './screens/Dashboard'
+import CreateChooser from './screens/CreateChooser'
 import CreateProject from './screens/CreateProject'
+import CreateFromUpload from './screens/CreateFromUpload'
 import AIProjectIntake from './screens/AIProjectIntake'
 import ScopeReview from './screens/ScopeReview'
 import WBSBuilder from './screens/WBSBuilder'
 import Constraints from './screens/Constraints'
 import OptimizationResults from './screens/OptimizationResults'
+import ChangesVersions from './screens/ChangesVersions'
 
 function RootLayout() {
   return (
@@ -76,7 +79,9 @@ const router = createBrowserRouter([
                 errorElement: <RouteError inline />,
                 children: [
                   { path: 'dashboard', element: <Dashboard /> },
-                  { path: 'projects/new', element: <CreateProject /> },
+                  { path: 'projects/new', element: <CreateChooser /> },
+                  { path: 'projects/new/form', element: <CreateProject /> },
+                  { path: 'projects/new/upload', element: <CreateFromUpload /> },
                   {
                     path: 'projects/:projectId',
                     children: [
@@ -86,6 +91,7 @@ const router = createBrowserRouter([
                       { path: 'wbs', element: <WBSBuilder /> },
                       { path: 'constraints', element: <Constraints /> },
                       { path: 'optimization', element: <OptimizationResults /> },
+                      { path: 'changes', element: <ChangesVersions /> },
                     ],
                   },
                 ],

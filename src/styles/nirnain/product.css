@@ -1,0 +1,10 @@
+/**
+ * NirnAIn · styles/nirnain/product.css
+ *
+ * Product overrides on top of the approved mockup styles (mockup handoff 2026-11-13):
+ * the mockup reserves 42px at the top for its reviewer bar and shows build labels;
+ * the product has neither.
+ */
+#app{height:100vh}
+.tag.t-live,.tag.t-mock,.tag.t-pr,.tag.t-new,.tag.t-build,details.bts,.mockonly,.mocknote{display:none}
+:focus-visible{outline:2px solid var(--pr);outline-offset:2px}

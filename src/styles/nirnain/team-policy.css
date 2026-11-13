@@ -1,0 +1,60 @@
+/**
+ * NirnAIn mockup · styles/team-policy.css
+ *
+ * PURPOSE
+ *   Step 5 additions and the step 6 constraint check: Must hold / Can flex switches with
+ *   their explanation and warnings, the team and skills editors, and the advice card on
+ *   Optimization Results.
+ *
+ * DEPENDS ON   styles/base.css (colour tokens, .card, .btn, .in), styles/workflow.css (.seg)
+ * AUTHOR       Sharada Dogiparthi
+ * CREATED      2026-11-11
+ */
+
+/* ---- Card heading with the switch on the right ---- */
+.card-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.card-head h3{margin:0}
+
+/* ---- Must hold / Can flex switch ---- */
+.pol{display:inline-flex;margin-left:auto;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:#fff}
+.pol button{border:0;background:#fff;padding:5px 12px;font-size:12px;color:var(--secfg)}
+.pol button.on{background:var(--pr);color:#fff;font-weight:600}
+.pol button:not(.on):hover{background:var(--soft)}
+.pol-fixed{margin-left:auto;font-size:12px;font-weight:600;color:var(--mfg);background:var(--muted);border-radius:16px;padding:5px 12px}
+
+/* ---- What the choice means + recommendation ---- */
+.pol-help{font-size:12px;color:var(--secfg);background:var(--soft);border-radius:4px;padding:8px 10px;line-height:1.6}
+.pol-help .rec{display:inline-block;font-size:10.5px;font-weight:700;background:#DDE7D0;color:#3E5F3A;border-radius:10px;padding:1px 8px;margin-right:4px}
+.pol-help .rec.off{background:#F5E3C8;color:#7A4E0F}
+.pol-warn{margin-top:8px;font-size:12.5px;line-height:1.55;background:#F8E4E1;border:1px solid #E6BDB8;border-left:5px solid var(--red);border-radius:4px;padding:10px 12px;color:#5E1F28}
+
+/* ---- Mockup-only note ---- */
+.mocknote{font-size:12px;color:#7A4E0F;background:#FBF0DD;border:1px dashed #D9C4A0;border-radius:4px;padding:6px 10px;margin:0 0 16px;display:inline-block}
+body.hide-labels .mocknote{display:none}
+
+/* ---- Team and skills tables (scroll inside the card, never the whole page) ---- */
+.tbl-scroll{overflow-x:auto}
+.tbl-scroll .tbl th,.tbl-scroll .tbl td{padding-left:8px;padding-right:8px} /* fits a ~590px page without a scrollbar */
+/* "row-acts", not "acts": workflow.css already uses .acts as a flex row on Scope Review */
+.tbl td.row-acts{text-align:right;white-space:nowrap}
+.tbl td.row-acts .btn{display:block;margin:0 0 4px auto}
+.btn.danger{color:var(--red)}
+.btn.danger:hover{background:#F8E4E1}
+.in.hrs{width:60px;padding:5px 6px}
+.tbl td .in.sm{width:100%;max-width:260px}
+.member-form{margin-top:14px;border:1px solid var(--border);border-radius:6px;background:var(--soft);padding:16px}
+.member-form h4{margin:0 0 12px;font-size:13px}
+.skill-picks{display:flex;flex-wrap:wrap;gap:8px}
+.pick{display:inline-flex;align-items:center;gap:6px;font-size:12px;background:#fff;border:1px solid var(--border);border-radius:14px;padding:4px 10px;cursor:pointer}
+.seg.sm button{padding:4px 9px;font-size:11px}
+
+/* ---- Constraint check card on Optimization Results ---- */
+.advice{margin-top:16px;border-left:5px solid var(--amber)}
+.advice.ok{border-left-color:var(--green)}
+.adv-top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+.adv{border-top:1px solid var(--muted);padding:12px 0 4px}
+.adv .row{gap:8px}
+.adv-why,.adv-fix{font-size:13px;line-height:1.55;margin-top:6px}
+.adv-fix{background:var(--soft);border-radius:4px;padding:6px 10px}
+.adv.change .adv-fix{background:#F8E4E1}
+.adv.decide .adv-fix{background:#EEF0F8}
