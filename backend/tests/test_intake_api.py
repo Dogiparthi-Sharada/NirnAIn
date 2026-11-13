@@ -1,0 +1,277 @@
+"""Intake endpoints and repository SQL (PR #18 follow-ups), no database needed."""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
+
+from app.api import deps
+from app.core.security import CurrentPrincipal
+from app.domain.common import ItemOrigin, OrgRole, ScopeCategory, ScopeStatus
+from app.domain.intake import IntakeRun, ScopeItem
+from app.repositories.intake import (
+    ActiveRun,
+    ActiveRunExistsError,
+    IntakeJobStore,
+    IntakeRepository,
+)
+from tests.conftest import Store
+from tests.test_optimization_repo import Rows
+from tests.test_repositories import Conn, Result
+
+Auth = Callable[[uuid.UUID], dict[str, str]]
+NOW = datetime(2026, 11, 13, 12, 0, tzinfo=UTC)
+
+
+@dataclass
+class IntakeStore:
+    runs: dict[uuid.UUID, IntakeRun] = field(default_factory=dict)
+    items: dict[uuid.UUID, ScopeItem] = field(default_factory=dict)
+    race: bool = False
+
+
+class FakeIntakes:
+    def __init__(self, store: Store, data: IntakeStore, user_id: uuid.UUID) -> None:
+        self.s, self.d, self.uid = store, data, user_id
+
+    def _role(self, project_id: uuid.UUID) -> OrgRole | None:
+        p = self.s.projects.get(project_id)
+        return self.s.role(p.org_id, self.uid) if p else None
+
+    async def project_exists(self, project_id: uuid.UUID) -> bool:
+        return self._role(project_id) is not None
+
+    async def can_write(self, project_id: uuid.UUID) -> bool:
+        return self._role(project_id) not in (None, OrgRole.VIEWER)
+
+    async def active_run(self, project_id: uuid.UUID, stale_after_s: int) -> ActiveRun | None:
+        return None
+
+    async def create(self, project_id: uuid.UUID, text: str) -> uuid.UUID:
+        if self.d.race:
+            raise ActiveRunExistsError
+        rid = uuid.uuid4()
+        self.d.runs[rid] = IntakeRun(
+            id=rid,
+            project_id=project_id,
+            status="queued",  # type: ignore[arg-type]
+            model=None,
+            items_extracted=None,
+            error=None,
+            created_at=NOW,
+            started_at=None,
+            finished_at=None,
+        )
+        return rid
+
+    async def get(self, project_id: uuid.UUID, run_id: uuid.UUID) -> IntakeRun | None:
+        run = self.d.runs.get(run_id)
+        visible = run and run.project_id == project_id and self._role(project_id) is not None
+        return run if visible else None
+
+    async def create_item(
+        self, project_id: uuid.UUID, category: ScopeCategory, text: str
+    ) -> ScopeItem | None:
+        order = sum(1 for i in self.d.items.values() if i.category == category)
+        item = ScopeItem(
+            id=uuid.uuid4(),
+            project_id=project_id,
+            category=category,
+            text=text,
+            status=ScopeStatus.ACCEPTED,
+            origin=ItemOrigin.MANUAL,
+            confidence=None,
+            sort_order=order,
+            created_at=NOW,
+            updated_at=NOW,
+        )
+        self.d.items[item.id] = item
+        return item
+
+
+class FakeIntaker:
+    def __init__(self) -> None:
+        self.submitted: list[uuid.UUID] = []
+
+    async def submit(self, run_id: uuid.UUID) -> None:
+        self.submitted.append(run_id)
+
+
+@pytest.fixture
+def intake_data() -> IntakeStore:
+    return IntakeStore()
+
+
+@pytest.fixture
+def intake_client(app: FastAPI, store: Store, intake_data: IntakeStore) -> Iterator[TestClient]:
+    def intakes(principal: CurrentPrincipal) -> FakeIntakes:
+        return FakeIntakes(store, intake_data, principal.user_id)
+
+    intaker = FakeIntaker()
+    app.dependency_overrides[deps.get_intake_repo] = intakes
+    app.dependency_overrides[deps.get_intake_runner] = lambda: intaker
+    with TestClient(app, raise_server_exceptions=False) as c:
+        yield c
+
+
+def _project(client: TestClient, store: Store, auth: Auth) -> tuple[uuid.UUID, uuid.UUID, str]:
+    user = store.add_user("Jane Doe")
+    org = store.add_org(user, "Acme")
+    r = client.post(f"/api/v1/orgs/{org}/projects", json={"name": "CRM"}, headers=auth(user))
+    return user, org, r.json()["id"]
+
+
+# --------------------------------------------------------------------------- API
+def test_get_run_by_id_follows_location(
+    intake_client: TestClient, store: Store, auth: Auth
+) -> None:
+    user, _, pid = _project(intake_client, store, auth)
+    r = intake_client.post(
+        f"/api/v1/projects/{pid}/intake/runs", json={"text": "notes"}, headers=auth(user)
+    )
+    assert r.status_code == 202
+    got = intake_client.get(r.headers["location"], headers=auth(user))
+    assert got.status_code == 200
+    assert got.json()["id"] == r.json()["id"]
+    missing = intake_client.get(
+        f"/api/v1/projects/{pid}/intake/runs/{uuid.uuid4()}", headers=auth(user)
+    )
+    assert missing.status_code == 404
+    stranger = store.add_user("Eve")
+    assert intake_client.get(r.headers["location"], headers=auth(stranger)).status_code == 404
+
+
+def test_create_run_conflict_on_race(
+    intake_client: TestClient, store: Store, intake_data: IntakeStore, auth: Auth
+) -> None:
+    user, _, pid = _project(intake_client, store, auth)
+    intake_data.race = True
+    r = intake_client.post(
+        f"/api/v1/projects/{pid}/intake/runs", json={"text": "notes"}, headers=auth(user)
+    )
+    assert r.status_code == 409
+    assert r.json()["detail"] == "AI intake is already running for this project."
+
+
+def test_create_scope_item(intake_client: TestClient, store: Store, auth: Auth) -> None:
+    user, org, pid = _project(intake_client, store, auth)
+    url = f"/api/v1/projects/{pid}/scope-items"
+    r = intake_client.post(
+        url, json={"category": "deliverable", "text": "  Data warehouse  "}, headers=auth(user)
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert (body["category"], body["text"], body["status"], body["origin"]) == (
+        "deliverable",
+        "Data warehouse",
+        "accepted",
+        "manual",
+    )
+    assert body["sortOrder"] == 0
+
+    bad = intake_client.post(url, json={"category": "nope", "text": "x"}, headers=auth(user))
+    assert bad.status_code == 422
+    empty = intake_client.post(url, json={"category": "risk", "text": "  "}, headers=auth(user))
+    assert empty.status_code == 422
+
+    viewer = store.add_user("Vic Viewer")
+    store.members[(org, viewer)] = OrgRole.VIEWER
+    r = intake_client.post(url, json={"category": "risk", "text": "x"}, headers=auth(viewer))
+    assert r.status_code == 403
+    stranger = store.add_user("Eve")
+    r = intake_client.post(url, json={"category": "risk", "text": "x"}, headers=auth(stranger))
+    assert r.status_code == 404
+
+
+# --------------------------------------------------------------------------- repository SQL
+class _UniqueError(Exception):
+    sqlstate = "23505"
+
+
+class ManyConn(Conn):
+    """Also accepts executemany-style parameter lists."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.many: list[list[dict[str, Any]]] = []
+
+    async def execute(self, stmt: Any, params: Any = None) -> Result:
+        if params is not None:
+            self.many.append(params)
+        return await super().execute(stmt)
+
+
+class RaisingConn(Conn):
+    async def execute(self, stmt: Any) -> Result:
+        raise IntegrityError("INSERT", {}, _UniqueError())
+
+
+async def test_create_inserts_run_first_and_maps_unique_violation() -> None:
+    conn = Conn()
+    await IntakeRepository(conn).create(uuid.uuid4(), "notes")  # type: ignore[arg-type]
+    assert conn.sql[0].startswith("INSERT INTO public.intake_runs")
+    assert conn.sql[1].startswith("INSERT INTO public.source_documents")
+    with pytest.raises(ActiveRunExistsError):
+        await IntakeRepository(RaisingConn()).create(uuid.uuid4(), "notes")  # type: ignore[arg-type]
+
+
+async def test_create_item_appends_manual_accepted() -> None:
+    pid = uuid.uuid4()
+    row = {
+        "id": uuid.uuid4(),
+        "project_id": pid,
+        "category": "risk",
+        "text": "Vendor delay",
+        "status": "accepted",
+        "origin": "manual",
+        "confidence": None,
+        "sort_order": 3,
+        "created_at": NOW,
+        "updated_at": NOW,
+    }
+    conn = Conn(Result([]), Rows([row]))
+    item = await IntakeRepository(conn).create_item(pid, ScopeCategory.RISK, "Vendor delay")  # type: ignore[arg-type]
+    assert item is not None
+    assert item.sort_order == 3
+    assert conn.sql[0].startswith("INSERT INTO public.scope_items")
+    assert "max(public.scope_items.sort_order)" in conn.sql[0]
+    assert conn.params[0]["status"] == ScopeStatus.ACCEPTED
+    assert conn.params[0]["origin"] == ItemOrigin.MANUAL
+
+
+async def test_finish_replaces_untouched_ai_items_and_keeps_original_text() -> None:
+    conn = ManyConn()
+    run_id, pid = uuid.uuid4(), uuid.uuid4()
+    items = [{"category": "risk", "text": "Vendor delay", "confidence": 0.8}]
+    await IntakeJobStore(conn).finish(run_id, pid, "m", items, 1, 2)  # type: ignore[arg-type]
+    delete, insert, update = conn.sql
+    assert delete.startswith("DELETE FROM public.scope_items")
+    for fragment in (
+        "public.scope_items.origin =",
+        "public.scope_items.status =",
+        "public.scope_items.intake_run_id IS DISTINCT FROM",
+        "public.scope_items.text = public.scope_items.original_text",
+        "public.scope_items.updated_at = public.scope_items.created_at",
+    ):
+        assert fragment in delete
+    assert conn.params[0]["origin_1"] == ItemOrigin.AI
+    assert conn.params[0]["status_1"] == ScopeStatus.PENDING
+    assert insert.startswith("INSERT INTO public.scope_items")
+    ((row,),) = conn.many
+    assert row["original_text"] == row["text"] == "Vendor delay"
+    assert update.startswith("UPDATE public.intake_runs")
+
+
+async def test_finish_with_no_items_still_clears_stale_suggestions() -> None:
+    conn = ManyConn()
+    await IntakeJobStore(conn).finish(uuid.uuid4(), uuid.uuid4(), "m", [], 1, 2)  # type: ignore[arg-type]
+    assert conn.sql[0].startswith("DELETE FROM public.scope_items")
+    assert conn.sql[1].startswith("UPDATE public.intake_runs")

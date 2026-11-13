@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     intake_model: str = "claude-opus-5-5"
     # Queued/running runs older than this are treated as orphaned (server restarted).
     intake_stale_after_s: int = Field(default=180, ge=30)
+    # WBS generate/validate and the assistant. Without a key, WBS generation falls back
+    # to a template, validation runs only the deterministic checks, and the assistant is 503.
+    ai_model: str = "claude-sonnet-5-5"
+    # Queued/running AI jobs older than this are treated as orphaned (server restarted).
+    ai_job_stale_after_s: int = Field(default=600, ge=60)
+    # Per-request limit for the synchronous assistant call.
+    assistant_timeout_s: float = Field(default=60.0, gt=0, le=300)
 
     # Injected by Railway at build/deploy time.
     railway_git_commit_sha: str | None = None

@@ -11,8 +11,10 @@ from dataclasses import dataclass
 from typing import Any
 
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.core.errors import pg_error_info
 from app.domain.common import DocumentKind, ItemOrigin, JobStatus, ScopeCategory, ScopeStatus
 from app.domain.intake import IntakeRun, ScopeItem
 from app.repositories.tables import intake_runs, projects, scope_items, source_documents
@@ -34,6 +36,10 @@ _ITEM_COLUMNS = (
     item_t.c.created_at,
     item_t.c.updated_at,
 )
+
+
+class ActiveRunExistsError(Exception):
+    """The one-active-run-per-project unique index rejected the insert."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +75,14 @@ def _older_than(seconds: int) -> sa.ColumnElement[bool]:
     return sa.func.coalesce(run_t.c.started_at, run_t.c.created_at) < cutoff
 
 
+def _unedited() -> sa.ColumnElement[bool]:
+    # Items written before original_text was stored: never updated since insert.
+    return sa.or_(
+        sa.and_(item_t.c.original_text.is_not(None), item_t.c.text == item_t.c.original_text),
+        sa.and_(item_t.c.original_text.is_(None), item_t.c.updated_at == item_t.c.created_at),
+    )
+
+
 class IntakeRepository:
     """User-facing queries: everything runs under the caller's RLS session."""
 
@@ -100,6 +114,15 @@ class IntakeRepository:
         )
 
     async def create(self, project_id: uuid.UUID, text: str) -> uuid.UUID:
+        run_id = uuid.uuid4()
+        try:
+            await self._conn.execute(
+                sa.insert(run_t).values(id=run_id, project_id=project_id, status=JobStatus.QUEUED)
+            )
+        except IntegrityError as exc:
+            if pg_error_info(exc).sqlstate == "23505":
+                raise ActiveRunExistsError from exc
+            raise
         await self._conn.execute(
             sa.insert(doc_t).values(
                 id=uuid.uuid4(),
@@ -108,10 +131,6 @@ class IntakeRepository:
                 title="Pasted notes",
                 content_text=text,
             )
-        )
-        run_id = uuid.uuid4()
-        await self._conn.execute(
-            sa.insert(run_t).values(id=run_id, project_id=project_id, status=JobStatus.QUEUED)
         )
         return run_id
 
@@ -137,6 +156,31 @@ class IntakeRepository:
             .order_by(item_t.c.category, item_t.c.sort_order)
         )
         return [_to_item(row) for row in (await self._conn.execute(stmt)).all()]
+
+    async def create_item(
+        self, project_id: uuid.UUID, category: ScopeCategory, text: str
+    ) -> ScopeItem | None:
+        """Add a manual, accepted item at the end of its category."""
+        item_id = uuid.uuid4()
+        next_order = (
+            sa.select(sa.func.coalesce(sa.func.max(item_t.c.sort_order) + 1, 0))
+            .where(item_t.c.project_id == project_id, item_t.c.category == category)
+            .scalar_subquery()
+        )
+        await self._conn.execute(
+            sa.insert(item_t).values(
+                id=item_id,
+                project_id=project_id,
+                category=category,
+                text=text,
+                status=ScopeStatus.ACCEPTED,
+                origin=ItemOrigin.MANUAL,
+                sort_order=next_order,
+            )
+        )
+        stmt = sa.select(*_ITEM_COLUMNS).where(item_t.c.id == item_id)
+        row = (await self._conn.execute(stmt)).first()
+        return _to_item(row) if row else None
 
     async def update_item(self, item_id: uuid.UUID, patch: dict[str, Any]) -> ScopeItem | None:
         if patch:
@@ -188,6 +232,17 @@ class IntakeJobStore:
         input_tokens: int,
         output_tokens: int,
     ) -> None:
+        # Re-analysis replaces earlier AI suggestions nobody has touched yet;
+        # accepted, removed and edited items stay.
+        await self._conn.execute(
+            sa.delete(item_t).where(
+                item_t.c.project_id == project_id,
+                item_t.c.origin == ItemOrigin.AI,
+                item_t.c.status == ScopeStatus.PENDING,
+                item_t.c.intake_run_id.is_distinct_from(run_id),
+                _unedited(),
+            )
+        )
         if items:
             counters: dict[str, int] = {}
             rows = []
@@ -202,6 +257,7 @@ class IntakeJobStore:
                         "intake_run_id": run_id,
                         "category": ScopeCategory(category),
                         "text": str(it["text"])[:2000],
+                        "original_text": str(it["text"])[:2000],
                         "confidence": it.get("confidence"),
                         "status": ScopeStatus.PENDING,
                         "origin": ItemOrigin.AI,

@@ -12,6 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import ARRAY, ENUM, JSONB, UUID
 
 from app.domain.common import (
+    AiJobKind,
     ConstraintMode,
     DependencyType,
     DocumentKind,
@@ -382,4 +383,25 @@ recommendations = sa.Table(
     sa.Column("after_value", sa.Text),
     sa.Column("reason", sa.Text, nullable=False),
     sa.Column("sort_order", sa.Integer, nullable=False),
+)
+
+# --------------------------------------------------------------------------- AI jobs
+ai_job_kind = _pg_enum(AiJobKind, "ai_job_kind")
+
+ai_jobs = sa.Table(
+    "ai_jobs",
+    metadata,
+    sa.Column("id", _uuid, primary_key=True),
+    sa.Column("project_id", _uuid, nullable=False),
+    sa.Column("kind", ai_job_kind, nullable=False),
+    sa.Column("status", job_status, nullable=False),
+    sa.Column("model", sa.Text),
+    sa.Column("input_tokens", sa.Integer),
+    sa.Column("output_tokens", sa.Integer),
+    sa.Column("result", JSONB),
+    sa.Column("error", sa.Text),
+    sa.Column("requested_by", _uuid),
+    sa.Column("created_at", _ts, nullable=False),
+    sa.Column("started_at", _ts),
+    sa.Column("finished_at", _ts),
 )

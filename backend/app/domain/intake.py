@@ -47,3 +47,8 @@ class IntakeRunCreate(InputModel):
 class ScopeItemUpdate(InputModel):
     text: str | None = Field(default=None, min_length=1, max_length=2000)
     status: ScopeStatus | None = None
+
+
+class ScopeItemCreate(InputModel):
+    category: ScopeCategory
+    text: str = Field(min_length=1, max_length=2000)

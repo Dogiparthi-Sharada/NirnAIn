@@ -173,6 +173,12 @@ class ItemOrigin(StrEnum):
     MANUAL = "manual"
 
 
+# --- public.ai_job_kind
+class AiJobKind(StrEnum):
+    WBS_GENERATE = "wbs_generate"
+    WBS_VALIDATE = "wbs_validate"
+
+
 class Page[T](CamelModel):
     items: list[T]
     next_cursor: str | None = None
