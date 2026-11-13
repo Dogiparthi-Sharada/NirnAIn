@@ -194,6 +194,7 @@ export interface OptimizationRun {
   createdAt: string
   startedAt: string | null
   finishedAt: string | null
+  appliedAt?: string | null
 }
 
 /** What the optimizer needs before it can run (from the 422 problem's `missing` extension). */
@@ -252,4 +253,168 @@ export interface ScopeItem {
 export interface ScopeItemPatch {
   text?: string
   status?: ScopeItemStatus
+}
+
+export interface ScopeItemCreate {
+  category: ScopeCategory
+  text: string
+}
+
+/* ───────────────────────────── WBS ───────────────────────────── */
+
+export interface WbsSkill {
+  skillId: string
+  name: string
+  minProficiency: number
+}
+
+export interface WbsNode {
+  id: string
+  parentId: string | null
+  level: 1 | 2 | 3
+  sortOrder: number
+  /** Derived from tree position: "1", "1.2", "1.2.3". */
+  code: string
+  name: string
+  description: string | null
+  durationDays: number | null
+  effortHours: number | null
+  ownerEmployeeId: string | null
+  ownerName: string | null
+  origin: 'ai' | 'manual'
+  scopeItemId: string | null
+  skills: WbsSkill[]
+}
+
+export interface WbsNodeCreate {
+  parentId: string | null
+  name: string
+  durationDays?: number | null
+  ownerEmployeeId?: string | null
+}
+
+export interface WbsNodePatch {
+  name?: string
+  durationDays?: number | null
+  ownerEmployeeId?: string | null
+}
+
+export type AiJobKind = 'wbs_generate' | 'wbs_validate'
+
+export interface AiJob {
+  id: string
+  projectId: string
+  kind: AiJobKind
+  status: IntakeRunStatus
+  error: string | null
+  result: Record<string, unknown> | null
+  createdAt: string
+  startedAt: string | null
+  finishedAt: string | null
+}
+
+export type WbsIssueType = 'missing' | 'duplicate' | 'warning'
+
+export interface WbsValidation {
+  structureValid: boolean
+  levels: number
+  issues: { type: WbsIssueType; text: string }[]
+}
+
+/* ───────────────────────────── Constraints / resources ───────────────────────────── */
+
+export type ConstraintMode = 'hard' | 'soft'
+
+export interface Milestone {
+  id?: string
+  name: string
+  /** ISO date. */
+  dueDate: string
+  wbsNodeId: string | null
+  mode: ConstraintMode
+}
+
+export interface ConstraintSet {
+  budgetTotalCents: number | null
+  contingencyPct: number
+  laborCapCents: number | null
+  infraCapCents: number | null
+  budgetMode: ConstraintMode
+  startDate: string | null
+  mustFinishBy: string | null
+  deadlineMode: ConstraintMode
+  workingDaysPerWeek: number
+  capacityMode: ConstraintMode
+  skillMode: ConstraintMode
+  milestones: Milestone[]
+}
+
+export interface TeamMember {
+  employeeId: string
+  fullName: string
+  roleTitle: string | null
+  weeklyCapacityHours: number
+  /** Average weekly hours already committed to other projects in this project's window. */
+  allocatedHours: number
+  hourlyRateCents: number | null
+  isContractor: boolean
+  skills: { skillId: string; name: string; proficiency: number }[]
+}
+
+export interface SkillCoverage {
+  skillId: string
+  name: string
+  required: boolean
+  available: boolean
+}
+
+export type DependencyType = 'FS' | 'SS' | 'FF' | 'SF'
+
+export const DEPENDENCY_TYPE_LABELS: Record<DependencyType, string> = {
+  FS: 'Finish-to-Start',
+  SS: 'Start-to-Start',
+  FF: 'Finish-to-Finish',
+  SF: 'Start-to-Finish',
+}
+
+export interface Dependency {
+  id: string
+  predecessorId: string
+  successorId: string
+  predecessorLabel: string
+  successorLabel: string
+  type: DependencyType
+  lagDays: number
+  origin: 'ai' | 'manual'
+}
+
+export interface DependencyCreate {
+  predecessorId: string
+  successorId: string
+  type: DependencyType
+}
+
+/* ───────────────────────────── AI assistant ───────────────────────────── */
+
+export interface AssistantMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+/* ───────────────────────────── Source documents ───────────────────────────── */
+
+export type DocumentKind = 'text' | 'pdf' | 'docx' | 'transcript' | 'audio'
+
+export interface SourceDocument {
+  id: string
+  projectId: string
+  kind: DocumentKind
+  title: string
+  mimeType: string | null
+  sizeBytes: number | null
+  extractionStatus: IntakeRunStatus
+  extractionError: string | null
+  /** Characters of text extracted for the AI (0 when extraction failed). */
+  chars: number
+  createdAt: string
 }

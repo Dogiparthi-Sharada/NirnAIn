@@ -1,7 +1,21 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useParams } from 'react-router'
+import { errorMessage } from '@/lib/api'
+import {
+  useCapacity,
+  useCreateWbsNode,
+  useLatestAiJob,
+  useMoveWbsNode,
+  useProject,
+  useStartAiJob,
+  useUpdateWbsNode,
+  useWbs,
+} from '@/lib/queries'
 import { useStepNav } from '@/lib/steps'
+import type { WbsNode, WbsNodePatch, WbsValidation } from '@/lib/types'
 
 interface WBSItem {
+  id: string
   code: string
   level: 1 | 2 | 3
   name: string
@@ -10,49 +24,118 @@ interface WBSItem {
   expanded?: boolean
 }
 
-const INITIAL_WBS: WBSItem[] = [
-  { code: '1.0', level: 1, name: 'Enterprise Data Platform', expanded: true },
-  { code: '1.1', level: 2, name: 'Data Ingestion Layer', expanded: true },
-  { code: '1.1.1', level: 3, name: 'Salesforce connector development', duration: '3w', owner: 'M. Chen' },
-  { code: '1.1.2', level: 3, name: 'SAP integration setup', duration: '4w', owner: 'M. Chen' },
-  { code: '1.1.3', level: 3, name: 'Internal DB pipeline scripting (12 sources)', duration: '6w', owner: 'S. Kim' },
-  { code: '1.1.4', level: 3, name: 'Data quality validation framework', duration: '2w', owner: 'S. Kim' },
-  { code: '1.2', level: 2, name: 'Data Warehouse & ETL', expanded: true },
-  { code: '1.2.1', level: 3, name: 'Schema design and data modeling', duration: '3w', owner: 'S. Kim' },
-  { code: '1.2.2', level: 3, name: 'ETL pipeline development', duration: '5w', owner: 'M. Chen' },
-  { code: '1.2.3', level: 3, name: 'Performance tuning and indexing', duration: '2w', owner: 'S. Kim' },
-  { code: '1.3', level: 2, name: 'Dashboard & Reporting Portal', expanded: true },
-  { code: '1.3.1', level: 3, name: 'BI tool configuration and setup', duration: '2w', owner: 'T. Rivera' },
-  { code: '1.3.2', level: 3, name: 'Standard report library (40 reports)', duration: '4w', owner: 'T. Rivera' },
-  { code: '1.3.3', level: 3, name: 'Self-service analytics layer', duration: '3w', owner: 'T. Rivera' },
-  { code: '1.4', level: 2, name: 'Security & Compliance', expanded: true },
-  { code: '1.4.1', level: 3, name: 'RBAC implementation', duration: '2w', owner: 'S. Kim' },
-  { code: '1.4.2', level: 3, name: 'Audit logging system', duration: '1w', owner: 'M. Chen' },
-  { code: '1.4.3', level: 3, name: 'SOC 2 / GDPR compliance review', duration: '3w', owner: 'External' },
-  { code: '1.5', level: 2, name: 'Training & Rollout', expanded: false },
-  { code: '1.5.1', level: 3, name: 'End-user training materials', duration: '2w', owner: 'J. Doe' },
-  { code: '1.5.2', level: 3, name: 'Phased rollout (300 users)', duration: '3w', owner: 'J. Doe' },
-]
+/** Durations are stored in working days; the builder shows weeks. */
+const DAYS_PER_WEEK = 5
 
-const AI_ISSUES = [
-  { type: 'missing', text: 'Disaster recovery / backup procedures not represented in WBS' },
-  { type: 'missing', text: '1.4 Security section missing penetration testing work package' },
-  { type: 'duplicate', text: '1.1.4 (data quality) may overlap with 1.2.3 (performance tuning) — verify scope boundary' },
-  { type: 'warning', text: 'WBS code 1.3 has no testing or UAT work package before release' },
-]
+function formatWeeks(days: number | null): string | undefined {
+  if (days == null) return undefined
+  const w = days / DAYS_PER_WEEK
+  return `${Number.isInteger(w) ? w : w.toFixed(1)}w`
+}
+
+/** The root shows as "1.0" like the design; children use the server-derived codes. */
+function displayCode(node: WbsNode): string {
+  return node.level === 1 ? '1.0' : node.code
+}
+
+function validatedLabel(finishedAt: string | null): string {
+  if (!finishedAt) return 'Not validated yet'
+  const minutes = Math.round((Date.now() - new Date(finishedAt).getTime()) / 60_000)
+  if (minutes < 1) return 'Validated just now'
+  if (minutes < 60) return `Validated ${minutes} min ago`
+  const hours = Math.round(minutes / 60)
+  return hours < 24 ? `Validated ${hours}h ago` : `Validated ${new Date(finishedAt).toLocaleDateString()}`
+}
+
+const ACTIVE_JOB = new Set(['queued', 'running'])
 
 export default function WBSBuilder() {
   const nav = useStepNav()
-  const [wbs, setWbs] = useState(INITIAL_WBS)
+  const { projectId = '' } = useParams()
+  const project = useProject(projectId)
+  const wbsQuery = useWbs(projectId)
+  const team = useCapacity(projectId)
+  const generateJob = useLatestAiJob(projectId, 'wbs_generate')
+  const validateJob = useLatestAiJob(projectId, 'wbs_validate')
+  const startGenerate = useStartAiJob(projectId, 'wbs_generate')
+  const startValidate = useStartAiJob(projectId, 'wbs_validate')
+  const createNode = useCreateWbsNode(projectId)
+  const updateNode = useUpdateWbsNode(projectId)
+  const moveNode = useMoveWbsNode(projectId)
+
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
   const [selectedCode, setSelectedCode] = useState('1.1')
   const [draggedCode, setDraggedCode] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
-  const [validating, setValidating] = useState(false)
-  const [lastValidated, setLastValidated] = useState('Validated just now')
   const [view, setView] = useState<'chart' | 'list'>('chart')
+  const [editing, setEditing] = useState<string | null>(null)
+  const [draft, setDraft] = useState({ name: '', weeks: '', ownerId: '' })
+
+  const nodes = useMemo(() => wbsQuery.data ?? [], [wbsQuery.data])
+  const wbs: WBSItem[] = useMemo(
+    () =>
+      nodes.map((n) => ({
+        id: n.id,
+        code: displayCode(n),
+        level: n.level,
+        name: n.name,
+        duration: n.level === 3 ? formatWeeks(n.durationDays) : undefined,
+        owner: n.level === 3 ? n.ownerName ?? 'Unassigned' : undefined,
+        expanded: !collapsed.has(n.id),
+      })),
+    [nodes, collapsed],
+  )
+  const root = nodes.find((n) => n.level === 1)
+
+  const generateStatus = generateJob.data?.status
+  const generating = startGenerate.isPending || ACTIVE_JOB.has(generateStatus ?? '')
+  const validateStatus = validateJob.data?.status
+  const validating = startValidate.isPending || ACTIVE_JOB.has(validateStatus ?? '')
+  const validation = validateStatus === 'succeeded' ? (validateJob.data?.result as WbsValidation | null) : null
+  const lastValidated = validating ? 'Validating…' : validatedLabel(validateJob.data?.finishedAt ?? null)
+  const actionError = createNode.error ?? updateNode.error ?? moveNode.error ?? startGenerate.error ?? startValidate.error
+
+  // "AI has pre-populated based on scope": build the WBS once when the project has none.
+  const autoGenerated = useRef(false)
+  useEffect(() => {
+    if (autoGenerated.current || !wbsQuery.isSuccess || !generateJob.isSuccess) return
+    if (wbsQuery.data.length === 0 && generateJob.data === null) {
+      autoGenerated.current = true
+      startGenerate.mutate()
+    }
+  }, [wbsQuery.isSuccess, wbsQuery.data, generateJob.isSuccess, generateJob.data, startGenerate])
+
+  // A generation that just finished: load the new tree.
+  const lastGenerateStatus = useRef(generateStatus)
+  useEffect(() => {
+    const previous = lastGenerateStatus.current
+    lastGenerateStatus.current = generateStatus
+    if (previous && ACTIVE_JOB.has(previous) && generateStatus === 'succeeded') void wbsQuery.refetch()
+  }, [generateStatus, wbsQuery])
+
+  // Validate once automatically so the panel reflects the real tree.
+  const autoValidated = useRef(false)
+  useEffect(() => {
+    if (autoValidated.current || generating || !validateJob.isSuccess || nodes.length === 0) return
+    if (validateJob.data === null) {
+      autoValidated.current = true
+      startValidate.mutate()
+    }
+  }, [generating, validateJob.isSuccess, validateJob.data, nodes.length, startValidate])
+
+  function nodeByCode(code: string): WbsNode | undefined {
+    return nodes.find((n) => displayCode(n) === code)
+  }
 
   function toggleExpand(code: string) {
-    setWbs(prev => prev.map(i => i.code === code ? { ...i, expanded: !i.expanded } : i))
+    const node = nodeByCode(code)
+    if (!node) return
+    setCollapsed(prev => {
+      const next = new Set(prev)
+      if (next.has(node.id)) next.delete(node.id)
+      else next.add(node.id)
+      return next
+    })
   }
 
   function isVisible(item: WBSItem): boolean {
@@ -67,91 +150,87 @@ export default function WBSBuilder() {
     return true
   }
 
+  async function ensureRoot(): Promise<string | null> {
+    if (root) return root.id
+    try {
+      const created = await createNode.mutateAsync({ parentId: null, name: project.data?.name ?? 'Project' })
+      return created.id
+    } catch {
+      return null
+    }
+  }
+
   function addDeliverable() {
-    setWbs(prev => {
-      const deliverableCount = prev.filter(item => item.level === 2).length
-      return [
-        ...prev,
-        {
-          code: `1.${deliverableCount + 1}`,
-          level: 2,
-          name: 'New deliverable',
-          expanded: true,
-        },
-      ]
+    void (async () => {
+      const rootId = await ensureRoot()
+      if (rootId) createNode.mutate({ parentId: rootId, name: 'New deliverable' })
+    })()
+  }
+
+  function addPackageUnder(parentId: string) {
+    createNode.mutate({ parentId, name: 'New work package' })
+    setCollapsed(prev => {
+      const next = new Set(prev)
+      next.delete(parentId)
+      return next
     })
   }
 
   function addWorkPackage() {
-    setWbs(prev => {
-      const selected = prev.find(item => item.code === selectedCode)
-      const parentCode = selected?.level === 2
-        ? selected.code
-        : selected?.level === 3
-          ? selected.code.split('.').slice(0, 2).join('.')
-          : prev.find(item => item.level === 2)?.code
+    const selected = nodeByCode(selectedCode)
+    const parentId = selected?.level === 2
+      ? selected.id
+      : selected?.level === 3
+        ? selected.parentId
+        : nodes.find(n => n.level === 2)?.id
+    if (parentId) addPackageUnder(parentId)
+  }
 
-      if (!parentCode) return prev
+  function addSub(item: WBSItem) {
+    if (item.level === 1) addDeliverable()
+    else addPackageUnder(item.id)
+  }
 
-      const childCount = prev.filter(item => item.level === 3 && item.code.startsWith(`${parentCode}.`)).length
-      const next = [...prev]
-      const lastChildIndex = next.reduce(
-        (found, item, index) => item.code.startsWith(`${parentCode}.`) ? index : found,
-        -1,
-      )
-      const parentIndex = next.findIndex(item => item.code === parentCode)
-      next.splice(lastChildIndex >= 0 ? lastChildIndex + 1 : parentIndex + 1, 0, {
-        code: `${parentCode}.${childCount + 1}`,
-        level: 3,
-        name: 'New work package',
-        duration: '—',
-        owner: 'Unassigned',
-      })
-      return next.map(item => item.code === parentCode ? { ...item, expanded: true } : item)
+  function startEdit(item: WBSItem) {
+    const node = nodes.find(n => n.id === item.id)
+    if (!node) return
+    setEditing(node.id)
+    setDraft({
+      name: node.name,
+      weeks: node.durationDays == null ? '' : String(node.durationDays / DAYS_PER_WEEK),
+      ownerId: node.ownerEmployeeId ?? '',
     })
+  }
+
+  function saveEdit(item: WBSItem) {
+    const name = draft.name.trim()
+    if (!name) return
+    const patch: WbsNodePatch = { name }
+    if (item.level === 3) {
+      const w = Number.parseFloat(draft.weeks)
+      patch.durationDays = Number.isFinite(w) && w >= 0 ? Math.round(w * DAYS_PER_WEEK) : null
+      patch.ownerEmployeeId = draft.ownerId || null
+    }
+    updateNode.mutate({ nodeId: item.id, patch })
+    setEditing(null)
   }
 
   function validateWbs() {
-    setValidating(true)
-    window.setTimeout(() => {
-      setValidating(false)
-      setLastValidated('Validated just now')
-    }, 650)
+    if (!validating && nodes.length > 0) startValidate.mutate()
   }
 
-  function normalizeCodes(items: WBSItem[]) {
-    let deliverable = 0
-    let workPackage = 0
-    return items.map(item => {
-      if (item.level === 1) return { ...item, code: '1.0' }
-      if (item.level === 2) {
-        deliverable += 1
-        workPackage = 0
-        return { ...item, code: `1.${deliverable}` }
-      }
-      workPackage += 1
-      return { ...item, code: `1.${deliverable}.${workPackage}` }
-    })
-  }
-
+  /** Same rules as before: only within the same parent. The server renumbers the codes. */
   function moveItem(sourceCode: string, targetCode: string) {
     if (sourceCode === targetCode) return
-    setWbs(prev => {
-      const source = prev.find(item => item.code === sourceCode)
-      const target = prev.find(item => item.code === targetCode)
-      if (!source || !target || source.level !== target.level || source.level === 1) return prev
-
-      const sourceParent = source.code.split('.').slice(0, -1).join('.')
-      const targetParent = target.code.split('.').slice(0, -1).join('.')
-      if (sourceParent !== targetParent) return prev
-
-      const sourceBlock = prev.filter(item => item.code === sourceCode || item.code.startsWith(`${sourceCode}.`))
-      const remaining = prev.filter(item => !sourceBlock.includes(item))
-      const targetIndex = remaining.findIndex(item => item.code === targetCode)
-      const reordered = [...remaining]
-      reordered.splice(targetIndex, 0, ...sourceBlock)
-      return normalizeCodes(reordered)
-    })
+    const source = nodeByCode(sourceCode)
+    const target = nodeByCode(targetCode)
+    if (!source || !target || source.level !== target.level || source.level === 1) return
+    if (source.parentId !== target.parentId) return
+    const siblings = nodes.filter(n => n.parentId === source.parentId)
+    const from = siblings.findIndex(n => n.id === source.id)
+    const to = siblings.findIndex(n => n.id === target.id)
+    const position = from < to ? to - 1 : to
+    if (position !== from) moveNode.mutate({ nodeId: source.id, position })
   }
 
   /** Keyboard alternative to dragging: Alt+Arrow moves an item within its parent. */
@@ -163,6 +242,32 @@ export default function WBSBuilder() {
     const index = siblings.findIndex(i => i.code === item.code)
     if (event.key === 'ArrowUp' && index > 0) moveItem(item.code, siblings[index - 1].code)
     if (event.key === 'ArrowDown' && index < siblings.length - 1) moveItem(siblings[index + 1].code, item.code)
+  }
+
+  const packages = nodes.filter(n => n.level === 3)
+  const summary: [string, string][] = [
+    ['Level 1 (Project)', String(nodes.filter(n => n.level === 1).length)],
+    ['Level 2 (Deliverables)', String(nodes.filter(n => n.level === 2).length)],
+    ['Level 3 (Work Packages)', String(packages.length)],
+    ['Total Work Packages', String(packages.length)],
+    ['Unassigned Packages', String(packages.filter(n => !n.ownerEmployeeId).length)],
+    ['Estimated Weeks', `${formatWeeks(packages.reduce((sum, n) => sum + (n.durationDays ?? 0), 0)) ?? '0w'} total`],
+  ]
+
+  let emptyState: React.ReactNode = null
+  if (!root) {
+    if (wbsQuery.isPending) emptyState = 'Loading WBS…'
+    else if (wbsQuery.isError) emptyState = <span style={{ color: '#A83A4A' }}>{errorMessage(wbsQuery.error)}</span>
+    else if (generating) emptyState = 'AI is building the WBS from the accepted scope…'
+    else if (generateStatus === 'failed') {
+      emptyState = (
+        <>
+          <span style={{ color: '#A83A4A' }}>{generateJob.data?.error ?? 'AI generation failed.'}</span>{' '}
+          <button onClick={() => startGenerate.mutate()} style={{ ...secondaryBtn, padding: '4px 10px', fontSize: 12, marginLeft: 6 }}>Try again</button>
+          <div style={{ marginTop: 8 }}>Or start manually with + Add Deliverable.</div>
+        </>
+      )
+    } else emptyState = 'No WBS yet. Use + Add Deliverable to start.'
   }
 
   const issueColor: Record<string, string> = { missing: '#F5E3C8', duplicate: '#F5E3C8', warning: '#F3D9D5' }
@@ -195,14 +300,23 @@ export default function WBSBuilder() {
         </div>
       </div>
 
+      {actionError && (
+        <div role="alert" style={{ marginBottom: 12, fontSize: 12, color: '#A83A4A' }}>{errorMessage(actionError)}</div>
+      )}
+
       <div className="grid" style={{ gridTemplateColumns: '1fr 280px', gap: 20 }}>
-        {view === 'chart' && (
+        {emptyState && (
+          <div style={{ ...cardStyle, fontSize: 13, color: '#7A6063' }} aria-busy={generating || wbsQuery.isPending}>
+            {emptyState}
+          </div>
+        )}
+        {!emptyState && view === 'chart' && (
           <div style={{ ...cardStyle, overflow: 'auto', minWidth: 0 }}>
             <OrgChart wbs={wbs} selectedCode={selectedCode} onSelect={setSelectedCode} onToggle={toggleExpand} />
           </div>
         )}
         {/* WBS tree */}
-        <div style={{ ...cardStyle, display: view === 'list' ? 'block' : 'none' }}>
+        <div style={{ ...cardStyle, display: !emptyState && view === 'list' ? 'block' : 'none' }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: '#7A6063', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 14, paddingBottom: 8, borderBottom: '1px solid #EFE5D2', display: 'grid', gridTemplateColumns: '120px 1fr 80px 100px 80px', gap: 10 }}>
             <span>WBS Code</span>
             <span>Name</span>
@@ -212,8 +326,8 @@ export default function WBSBuilder() {
           </div>
           {wbs.filter(isVisible).map(item => (
             <div
-              key={item.code}
-              draggable={item.level > 1}
+              key={item.id}
+              draggable={item.level > 1 && editing !== item.id}
               onDragStart={(event) => {
                 setDraggedCode(item.code)
                 event.dataTransfer.effectAllowed = 'move'
@@ -272,21 +386,77 @@ export default function WBSBuilder() {
                   gap: 4,
                   cursor: item.level < 3 ? 'pointer' : 'default',
                 }}
-                onClick={() => item.level < 3 && toggleExpand(item.code)}
+                onClick={() => item.level < 3 && editing !== item.id && toggleExpand(item.code)}
               >
                 {item.level < 3 && (
                   <span style={{ fontSize: 10, color: '#999', userSelect: 'none' }}>
                     {item.expanded ? '▼' : '▶'}
                   </span>
                 )}
-                {item.name}
+                {editing === item.id ? (
+                  <input
+                    value={draft.name}
+                    onChange={e => setDraft(d => ({ ...d, name: e.target.value }))}
+                    onClick={e => e.stopPropagation()}
+                    onKeyDown={e => {
+                      e.stopPropagation()
+                      if (e.key === 'Enter') saveEdit(item)
+                      if (e.key === 'Escape') setEditing(null)
+                    }}
+                    aria-label="Name"
+                    maxLength={300}
+                    autoFocus
+                    style={editInput}
+                  />
+                ) : (
+                  item.name
+                )}
               </span>
-              <span style={{ fontFamily: 'DM Mono, monospace', fontSize: 12, color: '#7A6063' }}>{item.duration || '—'}</span>
-              <span style={{ fontSize: 12, color: '#6B5254' }}>{item.owner || '—'}</span>
+              {editing === item.id && item.level === 3 ? (
+                <input
+                  value={draft.weeks}
+                  onChange={e => setDraft(d => ({ ...d, weeks: e.target.value }))}
+                  onKeyDown={e => {
+                    e.stopPropagation()
+                    if (e.key === 'Enter') saveEdit(item)
+                    if (e.key === 'Escape') setEditing(null)
+                  }}
+                  aria-label="Duration in weeks"
+                  inputMode="decimal"
+                  placeholder="weeks"
+                  style={editInput}
+                />
+              ) : (
+                <span style={{ fontFamily: 'DM Mono, monospace', fontSize: 12, color: '#7A6063' }}>{item.duration || '—'}</span>
+              )}
+              {editing === item.id && item.level === 3 ? (
+                <select
+                  value={draft.ownerId}
+                  onChange={e => setDraft(d => ({ ...d, ownerId: e.target.value }))}
+                  aria-label="Owner"
+                  style={editInput}
+                >
+                  <option value="">Unassigned</option>
+                  {(team.data ?? []).map(m => (
+                    <option key={m.employeeId} value={m.employeeId}>{m.fullName}</option>
+                  ))}
+                </select>
+              ) : (
+                <span style={{ fontSize: 12, color: '#6B5254' }}>{item.owner || '—'}</span>
+              )}
               <div className="flex gap-4">
-                <button style={{ fontSize: 11, color: '#6B5254', border: '1px solid #e0e0e0', borderRadius: 3, padding: '2px 7px', background: '#FAF5EB', cursor: 'pointer' }}>Edit</button>
-                {item.level < 3 && (
-                  <button style={{ fontSize: 11, color: '#6B5254', border: '1px solid #e0e0e0', borderRadius: 3, padding: '2px 7px', background: '#FAF5EB', cursor: 'pointer' }}>+ Sub</button>
+                {editing === item.id ? (
+                  <>
+                    <button onClick={(e) => { e.stopPropagation(); saveEdit(item) }} style={{ ...rowBtn, background: '#722F37', color: '#fff', borderColor: '#722F37' }}>Save</button>
+                    <button onClick={(e) => { e.stopPropagation(); setEditing(null) }} style={rowBtn}>Cancel</button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={(e) => { e.stopPropagation(); startEdit(item) }} style={rowBtn}>Edit</button>
+                    {item.level < 3 && (
+                      <button onClick={(e) => { e.stopPropagation(); addSub(item) }} style={rowBtn}>+ Sub</button>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -300,9 +470,23 @@ export default function WBSBuilder() {
               <div style={{ fontSize: 13, fontWeight: 600 }}>AI Validation</div>
               <span style={{ fontSize: 10, color: '#7A6063' }}>{lastValidated}</span>
             </div>
-            <div style={{ fontSize: 12, color: '#4F7A4A', fontWeight: 500, marginBottom: 10 }}>WBS structure is valid (3 levels)</div>
+            {validation && (
+              <div style={{ fontSize: 12, color: validation.structureValid ? '#4F7A4A' : '#A83A4A', fontWeight: 500, marginBottom: 10 }}>
+                {validation.structureValid
+                  ? `WBS structure is valid (${validation.levels} levels)`
+                  : `WBS structure needs attention (${validation.levels} levels)`}
+              </div>
+            )}
+            {!validation && validateStatus === 'failed' && (
+              <div style={{ fontSize: 12, color: '#A83A4A', marginBottom: 10 }}>{validateJob.data?.error ?? 'Validation failed.'}</div>
+            )}
+            {!validation && validateStatus !== 'failed' && (
+              <div style={{ fontSize: 12, color: '#7A6063', marginBottom: 10 }}>
+                {validating ? 'Checking structure, coverage and staffing…' : 'Run AI Validate to check the WBS.'}
+              </div>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {AI_ISSUES.map((issue, i) => (
+              {(validation?.issues ?? []).map((issue, i) => (
                 <div key={i} style={{ padding: '8px 10px', background: issueColor[issue.type] || '#F3EADB', borderRadius: 4, borderLeft: `3px solid ${issueTag[issue.type]}` }}>
                   <div style={{ fontSize: 10, fontWeight: 700, color: issueTag[issue.type], textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>
                     {issue.type}
@@ -311,7 +495,7 @@ export default function WBSBuilder() {
                 </div>
               ))}
             </div>
-            <button onClick={validateWbs} disabled={validating} style={{ ...secondaryBtn, width: '100%', marginTop: 12, fontSize: 12 }}>
+            <button onClick={validateWbs} disabled={validating || nodes.length === 0} style={{ ...secondaryBtn, width: '100%', marginTop: 12, fontSize: 12 }}>
               {validating ? 'Validating WBS…' : 'AI Validate'}
             </button>
           </div>
@@ -319,14 +503,7 @@ export default function WBSBuilder() {
           <div style={cardStyle}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>WBS Summary</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: '#6B5254' }}>
-              {[
-                ['Level 1 (Project)', '1'],
-                ['Level 2 (Deliverables)', '5'],
-                ['Level 3 (Work Packages)', '14'],
-                ['Total Work Packages', '14'],
-                ['Unassigned Packages', '2'],
-                ['Estimated Weeks', '38w total'],
-              ].map(([k, v]) => (
+              {summary.map(([k, v]) => (
                 <div key={k} className="flex justify-between" style={{ paddingBottom: 5, borderBottom: '1px solid #EFE5D2' }}>
                   <span>{k}</span>
                   <span style={{ fontFamily: 'DM Mono, monospace', fontWeight: 500, color: '#2E1A1D' }}>{v}</span>
@@ -458,5 +635,7 @@ function Breadcrumb({ steps }: { steps: string[] }) {
 }
 
 const cardStyle: React.CSSProperties = { background: '#fff', border: '1px solid #E8DCC6', borderRadius: 6, padding: '18px 20px' }
+const rowBtn: React.CSSProperties = { fontSize: 11, color: '#6B5254', border: '1px solid #e0e0e0', borderRadius: 3, padding: '2px 7px', background: '#FAF5EB', cursor: 'pointer' }
+const editInput: React.CSSProperties = { width: '100%', minWidth: 0, padding: '3px 6px', border: '1px solid #bbb', borderRadius: 3, fontSize: 12, fontFamily: 'inherit' }
 const primaryBtn: React.CSSProperties = { padding: '9px 20px', background: '#722F37', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' }
 const secondaryBtn: React.CSSProperties = { padding: '9px 16px', background: '#fff', color: '#4A2B2F', border: '1px solid #CDBFAB', borderRadius: 4, fontSize: 13, cursor: 'pointer' }

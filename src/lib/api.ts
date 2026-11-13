@@ -149,6 +149,26 @@ export async function apiFetch<T>(path: string, init: ApiRequestInit = {}): Prom
   return (text ? JSON.parse(text) : undefined) as T
 }
 
+/** Authenticated file download: saves the response body under the server's filename (or `fallbackName`). */
+export async function apiDownload(path: string, fallbackName: string): Promise<void> {
+  let response = await send(path, {}, await accessToken())
+  if (response.status === 401) {
+    const { data, error } = await supabase.auth.refreshSession()
+    if (!error && data.session) response = await send(path, {}, data.session.access_token)
+  }
+  if (!response.ok) throw await toApiError(response)
+  const disposition = response.headers.get('Content-Disposition') ?? ''
+  const match = /filename="?([^";]+)"?/i.exec(disposition)
+  const url = URL.createObjectURL(await response.blob())
+  const link = document.createElement('a')
+  link.href = url
+  link.download = match?.[1] ?? fallbackName
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 /** Human-readable message for any thrown value. */
 export function errorMessage(error: unknown): string {
   if (isApiError(error)) return error.detail || error.title
