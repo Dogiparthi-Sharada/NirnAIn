@@ -14,6 +14,8 @@ class AiJob(CamelModel):
     project_id: uuid.UUID
     kind: AiJobKind
     status: JobStatus
+    # The model that did the work; 'template' / 'rules' when the deterministic fallback ran.
+    model: str | None = None
     error: str | None
     result: dict[str, Any] | None
     created_at: datetime

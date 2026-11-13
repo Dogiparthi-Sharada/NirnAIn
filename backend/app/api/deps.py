@@ -9,8 +9,10 @@ from fastapi import Depends, Path, Request
 
 from app.core.db import UserDB
 from app.core.errors import ServiceUnavailableError
+from app.jobs.ai_jobs import AiJobRunner
 from app.jobs.intake import IntakeRunner
 from app.jobs.optimizer import OptimizationRunner
+from app.repositories.ai_jobs import AiJobRepository
 from app.repositories.intake import IntakeRepository
 from app.repositories.me import ProfileRepository
 from app.repositories.notifications import NotificationRepository
@@ -67,6 +69,17 @@ def get_intake_runner(request: Request) -> IntakeRunner:
     return intaker
 
 
+def get_ai_job_repo(db: UserDB) -> AiJobRepository:
+    return AiJobRepository(db)
+
+
+def get_ai_runner(request: Request) -> AiJobRunner:
+    runner: AiJobRunner | None = getattr(request.app.state, "ai_runner", None)
+    if runner is None:
+        raise ServiceUnavailableError("AI jobs are not available")
+    return runner
+
+
 Profiles = Annotated[ProfileRepository, Depends(get_profile_repo)]
 Orgs = Annotated[OrgRepository, Depends(get_org_repo)]
 Projects = Annotated[ProjectRepository, Depends(get_project_repo)]
@@ -77,6 +90,8 @@ Intakes = Annotated[IntakeRepository, Depends(get_intake_repo)]
 Intaker = Annotated[IntakeRunner, Depends(get_intake_runner)]
 Wbs = Annotated[WbsRepository, Depends(get_wbs_repo)]
 Planning = Annotated[PlanningRepository, Depends(get_planning_repo)]
+AiJobs = Annotated[AiJobRepository, Depends(get_ai_job_repo)]
+AiRunner = Annotated[AiJobRunner, Depends(get_ai_runner)]
 
 # Path parameters are camelCase on the wire, like everything else.
 OrgId = Annotated[uuid.UUID, Path(alias="orgId")]
