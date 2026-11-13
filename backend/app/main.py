@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.ai.llm import LLM, make_client
 from app.api.v1 import health
 from app.api.v1.router import api_router
 from app.core.config import Settings, get_settings
@@ -79,6 +80,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.ai_runner = AiJobRunner(
         ai_engine_store(app.state.engine) if app.state.engine is not None else None, settings
     )
+    app.state.assistant_llm = LLM(make_client(settings), settings.ai_model)
     if app.state.engine is None:
         logger.warning("DATABASE_URL is not set; database endpoints will return 503")
     if app.state.token_verifier is None:

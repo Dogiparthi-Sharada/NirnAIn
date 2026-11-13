@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     ai,
+    assistant,
     dashboard,
     intake,
     me,
@@ -26,3 +27,4 @@ api_router.include_router(intake.router)
 api_router.include_router(wbs.router)
 api_router.include_router(planning.router)
 api_router.include_router(ai.router)
+api_router.include_router(assistant.router)
