@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(13);
+select plan(17);
 
 insert into auth.users (id, email, raw_user_meta_data, aud, role)
 values
@@ -35,9 +35,10 @@ insert into public.wbs_nodes (id, project_id, parent_id, level, name, duration_d
   ('c3000000-0000-0000-0000-000000000004', 'c1000000-0000-0000-0000-000000000001', 'c3000000-0000-0000-0000-000000000000', 2, 'Data', 5, 'c2000000-0000-0000-0000-000000000002');
 
 -- Planning start is a Wednesday: week 0 starts Monday 2026-11-09.
-insert into public.optimization_runs (id, project_id, status, input_snapshot) values
-  ('c4000000-0000-0000-0000-000000000001', 'c1000000-0000-0000-0000-000000000001', 'optimal', '{"start_date": "2026-11-11"}'),
-  ('c4000000-0000-0000-0000-000000000002', 'c1000000-0000-0000-0000-000000000001', 'infeasible', '{"start_date": "2026-11-11"}');
+insert into public.optimization_runs (id, project_id, status, input_snapshot, completion_date) values
+  ('c4000000-0000-0000-0000-000000000001', 'c1000000-0000-0000-0000-000000000001', 'optimal', '{"start_date": "2026-11-11"}', '2026-11-27'),
+  ('c4000000-0000-0000-0000-000000000002', 'c1000000-0000-0000-0000-000000000001', 'infeasible', '{"start_date": "2026-11-11"}', null),
+  ('c4000000-0000-0000-0000-000000000003', 'c1000000-0000-0000-0000-000000000001', 'feasible', '{"start_date": "2026-11-11"}', null);
 insert into public.planned_assignments (run_id, wbs_node_id, employee_id, contractor_label, start_week, end_week, hours_per_week) values
   ('c4000000-0000-0000-0000-000000000001', 'c3000000-0000-0000-0000-000000000001', 'c2000000-0000-0000-0000-000000000001', null, 0, 1, 30),
   ('c4000000-0000-0000-0000-000000000001', 'c3000000-0000-0000-0000-000000000002', 'c2000000-0000-0000-0000-000000000002', null, 2, 2, 20),
@@ -100,16 +101,44 @@ select results_eq(
      ('c3000000-0000-0000-0000-000000000004'::uuid, 'c2000000-0000-0000-0000-000000000002'::uuid) $$,
   'assigned work packages get their planned employee as owner; contractor tasks are unchanged');
 select ok(
-  (select applied_at is not null and applied_by = 'c0000000-0000-0000-0000-000000000001'
+  (select applied_at is not null and applied_by = 'c0000000-0000-0000-0000-000000000001' and version = 1
    from public.optimization_runs where id = 'c4000000-0000-0000-0000-000000000001'),
-  'the run records who applied it and when');
+  'the run records who applied it and when, as plan v1');
 select ok(
-  (select applied_at is null from public.optimization_runs where id = 'c4000000-0000-0000-0000-000000000002'),
+  (select bool_and(applied_at is null and version is null) from public.optimization_runs
+   where id in ('c4000000-0000-0000-0000-000000000002', 'c4000000-0000-0000-0000-000000000003')),
   'other runs are not marked applied');
 select is(
   (select current_step::text || '/' || status::text from public.projects
    where id = 'c1000000-0000-0000-0000-000000000001'),
   'done/on_track', 'the project moves to done and on track');
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"c0000000-0000-0000-0000-000000000001","role":"authenticated"}';
+select throws_ok(
+  $$ select public.apply_optimization_run('c4000000-0000-0000-0000-000000000001') $$,
+  'P0001', 'This plan is already applied', 'a run cannot be applied twice');
+select lives_ok(
+  $$ select public.apply_optimization_run('c4000000-0000-0000-0000-000000000003') $$,
+  'a later run can be applied on top of the current plan');
+reset role;
+
+select results_eq(
+  $$ select id, version from public.optimization_runs
+     where project_id = 'c1000000-0000-0000-0000-000000000001' and version is not null order by version $$,
+  $$ values
+     ('c4000000-0000-0000-0000-000000000001'::uuid, 1),
+     ('c4000000-0000-0000-0000-000000000003'::uuid, 2) $$,
+  'each applied run becomes the project''s next plan version');
+select results_eq(
+  $$ select user_id, org_id, project_id, level::text, message from public.notifications
+     where project_id = 'c1000000-0000-0000-0000-000000000001' order by created_at, message $$,
+  $$ select 'c0000000-0000-0000-0000-000000000001'::uuid, org_id, 'c1000000-0000-0000-0000-000000000001'::uuid,
+            'info', 'Plan v1 applied for Apply test · finishes Nov 27, 2026' from apply_org
+     union all
+     select 'c0000000-0000-0000-0000-000000000001'::uuid, org_id, 'c1000000-0000-0000-0000-000000000001'::uuid,
+            'info', 'Plan v2 applied for Apply test' from apply_org $$,
+  'the caller is notified of each applied plan version');
 
 select * from finish();
 rollback;
