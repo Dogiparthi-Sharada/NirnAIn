@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { useOrg } from '@/org/useOrg'
-import { useCreateProject, useMembers } from '@/lib/queries'
+import { uploadDocument, useCreateProject, useMembers } from '@/lib/queries'
 import { errorMessage, isApiError } from '@/lib/api'
 import { formatNumber, todayIsoDate } from '@/lib/format'
 import {
@@ -20,6 +20,7 @@ import {
   type Visibility,
 } from '@/lib/types'
 import { Alert, Button } from '@/components/ui'
+import DocumentUpload, { checkFile, type UploadEntry } from '@/components/DocumentUpload'
 
 const DEPARTMENTS = ['Engineering', 'Operations', 'Finance', 'Product'] as const
 const CURRENCY = 'USD'
@@ -139,6 +140,10 @@ export default function CreateProject() {
   const [pendingIntent, setPendingIntent] = useState<Intent | null>(null)
   const [serverError, setServerError] = useState<{ title: string; detail: string } | null>(null)
   const fieldRefs = useRef<Partial<Record<FieldName, HTMLElement | null>>>({})
+  // Files picked before the project exists; uploaded right after it is created.
+  const [files, setFiles] = useState<{ key: string; file: File }[]>([])
+  const [fileError, setFileError] = useState<string | null>(null)
+  const [uploadingCount, setUploadingCount] = useState(0)
 
   useEffect(() => {
     document.title = 'Create Project · NirnAIn'
@@ -168,6 +173,33 @@ export default function CreateProject() {
       'aria-invalid': errors[name] ? true : undefined,
       'aria-describedby': errors[name] ? `cp-${name}-error` : undefined,
     }
+  }
+
+  function addFiles(picked: File[]) {
+    setFileError(null)
+    const accepted: { key: string; file: File }[] = []
+    for (const file of picked) {
+      const problem = checkFile(file)
+      if (problem) setFileError(`${file.name}: ${problem}`)
+      else accepted.push({ key: `${file.name}-${file.size}-${file.lastModified}`, file })
+    }
+    setFiles((prev) => [...prev, ...accepted.filter((a) => !prev.some((p) => p.key === a.key))])
+  }
+
+  /** Uploads the attached files to the new project; returns a message when some failed. */
+  async function uploadAttached(projectId: string): Promise<string | null> {
+    if (files.length === 0) return null
+    setUploadingCount(files.length)
+    const failed: string[] = []
+    for (const { file } of files) {
+      try {
+        await uploadDocument(projectId, file)
+      } catch (error) {
+        failed.push(`${file.name} (${errorMessage(error)})`)
+      }
+    }
+    setUploadingCount(0)
+    return failed.length > 0 ? `Some files couldn't be uploaded: ${failed.join('; ')}. Add them again below.` : null
   }
 
   async function submit(intent: Intent) {
@@ -203,10 +235,11 @@ export default function CreateProject() {
     setPendingIntent(intent)
     try {
       const project = await createProject.mutateAsync(payload)
+      const uploadError = await uploadAttached(project.id)
       if (intent === 'draft') {
-        navigate('/dashboard', { state: { notice: `Draft “${project.name}” saved.` } })
+        navigate('/dashboard', { state: { notice: uploadError ?? `Draft “${project.name}” saved.` } })
       } else {
-        navigate(`/projects/${encodeURIComponent(project.id)}/intake`)
+        navigate(`/projects/${encodeURIComponent(project.id)}/intake`, { state: { uploadError } })
       }
     } catch (error) {
       setPendingIntent(null)
@@ -403,6 +436,21 @@ export default function CreateProject() {
               </select>
             </Field>
           </div>
+
+          <SectionLabel style={{ marginTop: 24 }}>Supporting Documents</SectionLabel>
+          <DocumentUpload
+            entries={files.map<UploadEntry>(({ key, file }) => ({
+              key,
+              name: file.name,
+              sizeBytes: file.size,
+              status: uploadingCount > 0 ? 'uploading' : 'pending',
+            }))}
+            onFiles={addFiles}
+            onRemove={(key) => setFiles((prev) => prev.filter((f) => f.key !== key))}
+            disabled={busy}
+            hint="Optional. Attach briefs, specs, meeting transcripts or recordings now; AI reads them in the AI Intake step. Max 50 MB per file."
+            error={fileError}
+          />
         </div>
 
         <div id="cp-form-status" aria-live="assertive" aria-atomic="true">

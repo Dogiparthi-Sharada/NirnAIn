@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { useNavigate, useParams } from 'react-router'
-import { isApiError } from '@/lib/api'
-import { useLatestIntakeRun, useStartIntakeRun } from '@/lib/queries'
+import { useLocation, useNavigate, useParams } from 'react-router'
+import DocumentUpload, { checkFile, type UploadEntry } from '@/components/DocumentUpload'
+import { errorMessage as describeError, isApiError } from '@/lib/api'
+import { useDeleteDocument, useDocuments, useLatestIntakeRun, useStartIntakeRun, useUploadDocument } from '@/lib/queries'
 import { useStepNav } from '@/lib/steps'
 
 const SAMPLE_TEXT = `Meeting Notes — Enterprise Data Platform Kickoff
@@ -35,8 +36,54 @@ export default function AIProjectIntake() {
   const { projectId = '' } = useParams()
   const [text, setText] = useState(SAMPLE_TEXT)
 
+  const location = useLocation()
   const latest = useLatestIntakeRun(projectId)
   const startRun = useStartIntakeRun(projectId)
+  const documents = useDocuments(projectId)
+  const uploadDoc = useUploadDocument(projectId)
+  const deleteDoc = useDeleteDocument(projectId)
+  const [uploading, setUploading] = useState<UploadEntry[]>([])
+  const [uploadError, setUploadError] = useState<string | null>(
+    (location.state as { uploadError?: string } | null)?.uploadError ?? null,
+  )
+
+  const docs = documents.data ?? []
+  const readyDocs = docs.filter((d) => d.extractionStatus === 'succeeded').length
+  const entries: UploadEntry[] = [
+    ...uploading,
+    ...docs.map((d) => ({
+      key: d.id,
+      name: d.title,
+      sizeBytes: d.sizeBytes,
+      status: d.extractionStatus === 'succeeded' ? ('ready' as const) : ('failed' as const),
+      detail: d.extractionError,
+    })),
+  ]
+
+  async function addFiles(files: File[]) {
+    setUploadError(null)
+    for (const file of files) {
+      const problem = checkFile(file)
+      if (problem) {
+        setUploadError(`${file.name}: ${problem}`)
+        continue
+      }
+      const key = `upload-${file.name}-${file.size}-${Date.now()}`
+      setUploading((prev) => [...prev, { key, name: file.name, sizeBytes: file.size, status: 'uploading' }])
+      try {
+        await uploadDoc.mutateAsync(file)
+      } catch (error) {
+        setUploadError(`${file.name}: ${describeError(error)}`)
+      } finally {
+        setUploading((prev) => prev.filter((u) => u.key !== key))
+      }
+    }
+  }
+
+  function removeFile(key: string) {
+    setUploadError(null)
+    deleteDoc.mutate(key, { onError: (error) => setUploadError(describeError(error)) })
+  }
 
   const run = latest.data ?? null
   const status = run?.status ?? null
@@ -46,8 +93,10 @@ export default function AIProjectIntake() {
   const startError = startRun.error && isApiError(startRun.error) ? startRun.error.message : null
   const errorMessage = startError ?? (failed ? run?.error : null)
 
+  const canAnalyze = Boolean(text.trim()) || readyDocs > 0
+
   function handleAnalyze() {
-    if (!analyzing && text.trim()) startRun.mutate(text)
+    if (!analyzing && uploading.length === 0 && canAnalyze) startRun.mutate(text)
   }
 
   return (
@@ -92,34 +141,13 @@ export default function AIProjectIntake() {
           {/* Upload options */}
           <div style={{ ...cardStyle, marginTop: 16 }}>
             <div style={sectionLabel}>Upload Documents</div>
-            <div className="grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
-              {[
-                { icon: '📄', label: 'PDF', sub: 'Reports, specs' },
-                { icon: '📝', label: 'Word / DOCX', sub: 'Project docs' },
-                { icon: '💬', label: 'Transcript', sub: 'Meeting text' },
-                { icon: '🎙', label: 'Audio', sub: 'MP3, WAV, M4A' },
-              ].map(u => (
-                <button key={u.label} style={{
-                  padding: '14px 10px',
-                  border: '1px dashed #c8c8c8',
-                  borderRadius: 6,
-                  background: '#FAF5EB',
-                  cursor: 'pointer',
-                  textAlign: 'center',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: 4,
-                }}>
-                  <span style={{ fontSize: 22 }}>{u.icon}</span>
-                  <span style={{ fontSize: 12, fontWeight: 600 }}>{u.label}</span>
-                  <span style={{ fontSize: 11, color: '#999' }}>{u.sub}</span>
-                </button>
-              ))}
-            </div>
-            <div style={{ marginTop: 10, fontSize: 11, color: '#999' }}>
-              Drag files here or click a tile to browse. Max 50 MB per file.
-            </div>
+            <DocumentUpload
+              entries={entries}
+              onFiles={(files) => void addFiles(files)}
+              onRemove={removeFile}
+              disabled={analyzing}
+              error={uploadError ?? (documents.isError ? describeError(documents.error) : null)}
+            />
           </div>
 
           {/* Analyze button */}
@@ -136,7 +164,7 @@ export default function AIProjectIntake() {
               )}
               <button
                 onClick={handleAnalyze}
-                disabled={analyzing || !text.trim()}
+                disabled={analyzing || uploading.length > 0 || !canAnalyze}
                 style={{
                   padding: '10px 28px',
                   background: analyzing ? '#888' : '#722F37',
