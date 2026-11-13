@@ -44,7 +44,7 @@ export default function AIProjectIntake() {
   const analyzed = status === 'succeeded'
   const failed = status === 'failed'
   const startError = startRun.error && isApiError(startRun.error) ? startRun.error.message : null
-  const errorMessage = run?.error || startError
+  const errorMessage = startError ?? (failed ? run?.error : null)
 
   function handleAnalyze() {
     if (!analyzing && text.trim()) startRun.mutate(text)
@@ -131,7 +131,7 @@ export default function AIProjectIntake() {
                   ✓ Analysis complete — {run?.itemsExtracted ?? 0} items extracted
                 </span>
               )}
-              {failed && errorMessage && (
+              {errorMessage && (
                 <span style={{ fontSize: 13, color: '#A83A4A', fontWeight: 500, maxWidth: 320 }}>{errorMessage}</span>
               )}
               <button

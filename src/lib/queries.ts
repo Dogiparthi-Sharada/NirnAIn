@@ -18,6 +18,7 @@ import type {
   ProjectCreate,
   ProjectStatus,
   ProjectUpdate,
+  ScopeCategory,
   ScopeItem,
   ScopeItemPatch,
 } from './types'
@@ -253,6 +254,17 @@ export function useScopeItems(projectId: string) {
     queryFn: ({ signal }) =>
       apiFetch<ScopeItem[]>(`/api/v1/projects/${encodeURIComponent(projectId)}/scope-items`, { signal }),
     enabled: Boolean(projectId),
+  })
+}
+
+export function useAddScopeItem(projectId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (item: { category: ScopeCategory; text: string }) =>
+      apiFetch<ScopeItem>(`/api/v1/projects/${encodeURIComponent(projectId)}/scope-items`, { method: 'POST', json: item }),
+    onSuccess: (item) => {
+      queryClient.setQueryData<ScopeItem[]>(queryKeys.scopeItems(projectId), (prev) => (prev ? [...prev, item] : [item]))
+    },
   })
 }
 

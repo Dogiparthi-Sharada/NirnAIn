@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useParams } from 'react-router'
 import { isApiError } from '@/lib/api'
-import { useScopeItems, useUpdateScopeItem } from '@/lib/queries'
+import { useAddScopeItem, useScopeItems, useUpdateScopeItem } from '@/lib/queries'
 import { useStepNav } from '@/lib/steps'
 import { SCOPE_CATEGORIES, SCOPE_CATEGORY_LABELS, type ScopeCategory, type ScopeItem } from '@/lib/types'
 
@@ -19,8 +19,11 @@ export default function ScopeReview() {
   const { projectId = '' } = useParams()
   const itemsQuery = useScopeItems(projectId)
   const updateItem = useUpdateScopeItem(projectId)
+  const addItem = useAddScopeItem(projectId)
   const [editing, setEditing] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
+  const [adding, setAdding] = useState<ScopeCategory | null>(null)
+  const [addText, setAddText] = useState('')
 
   const items = itemsQuery.data ?? []
   const sections = useMemo(() => {
@@ -42,6 +45,15 @@ export default function ScopeReview() {
   function saveEdit(id: string) {
     updateItem.mutate({ itemId: id, patch: { text: editText } })
     setEditing(null)
+  }
+  function startAdd(category: ScopeCategory) {
+    setAdding(category)
+    setAddText('')
+  }
+  function saveAdd(category: ScopeCategory) {
+    const text = addText.trim()
+    if (text) addItem.mutate({ category, text })
+    setAdding(null)
   }
   function acceptAll() {
     for (const item of items) {
@@ -110,7 +122,6 @@ export default function ScopeReview() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         {SCOPE_CATEGORIES.map((category) => {
           const visible = sections[category].filter((i) => i.status !== 'removed')
-          if (visible.length === 0) return null
           const accepted = visible.filter((i) => i.status === 'accepted').length
           return (
             <div key={category} style={cardStyle}>
@@ -123,6 +134,7 @@ export default function ScopeReview() {
                     {accepted}/{visible.length} accepted
                   </span>
                 </div>
+                <button onClick={() => startAdd(category)} style={{ fontSize: 11, color: '#7A6063', background: 'none', border: 'none', cursor: 'pointer' }}>+ Add item</button>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {visible.map(item => (
@@ -168,6 +180,24 @@ export default function ScopeReview() {
                     )}
                   </div>
                 ))}
+                {adding === category && (
+                  <div className="flex gap-6" style={{ padding: '8px 10px', border: '1px solid #E8DCC6', borderRadius: 4, background: '#FAF5EB' }}>
+                    <input
+                      value={addText}
+                      onChange={e => setAddText(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') saveAdd(category)
+                        if (e.key === 'Escape') setAdding(null)
+                      }}
+                      aria-label={`New ${SCOPE_CATEGORY_LABELS[category]} item`}
+                      maxLength={2000}
+                      style={{ flex: 1, padding: '4px 8px', border: '1px solid #bbb', borderRadius: 3, fontSize: 13, fontFamily: 'inherit' }}
+                      autoFocus
+                    />
+                    <button onClick={() => saveAdd(category)} style={{ fontSize: 12, padding: '4px 10px', background: '#722F37', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}>Save</button>
+                    <button onClick={() => setAdding(null)} style={{ fontSize: 12, padding: '4px 8px', border: '1px solid #CDBFAB', borderRadius: 3, cursor: 'pointer', background: '#fff' }}>Cancel</button>
+                  </div>
+                )}
               </div>
             </div>
           )
