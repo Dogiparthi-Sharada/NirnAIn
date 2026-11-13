@@ -9,6 +9,7 @@ from app.api.v1 import (
     notifications,
     optimization,
     orgs,
+    overview,
     planning,
     projects,
     wbs,
@@ -24,3 +25,4 @@ api_router.include_router(optimization.router)
 api_router.include_router(intake.router)
 api_router.include_router(wbs.router)
 api_router.include_router(planning.router)
+api_router.include_router(overview.router)
