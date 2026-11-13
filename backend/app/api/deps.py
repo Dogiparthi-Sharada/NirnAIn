@@ -16,6 +16,7 @@ from app.repositories.me import ProfileRepository
 from app.repositories.notifications import NotificationRepository
 from app.repositories.optimization import OptimizationRepository
 from app.repositories.orgs import OrgRepository
+from app.repositories.planning import PlanningRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.wbs import WbsRepository
 
@@ -55,6 +56,10 @@ def get_wbs_repo(db: UserDB) -> WbsRepository:
     return WbsRepository(db)
 
 
+def get_planning_repo(db: UserDB) -> PlanningRepository:
+    return PlanningRepository(db)
+
+
 def get_intake_runner(request: Request) -> IntakeRunner:
     intaker: IntakeRunner | None = getattr(request.app.state, "intaker", None)
     if intaker is None:
@@ -71,6 +76,7 @@ Optimizer = Annotated[OptimizationRunner, Depends(get_optimization_runner)]
 Intakes = Annotated[IntakeRepository, Depends(get_intake_repo)]
 Intaker = Annotated[IntakeRunner, Depends(get_intake_runner)]
 Wbs = Annotated[WbsRepository, Depends(get_wbs_repo)]
+Planning = Annotated[PlanningRepository, Depends(get_planning_repo)]
 
 # Path parameters are camelCase on the wire, like everything else.
 OrgId = Annotated[uuid.UUID, Path(alias="orgId")]
@@ -79,3 +85,4 @@ NotificationId = Annotated[uuid.UUID, Path(alias="notificationId")]
 RunId = Annotated[uuid.UUID, Path(alias="runId")]
 ItemId = Annotated[uuid.UUID, Path(alias="itemId")]
 NodeId = Annotated[uuid.UUID, Path(alias="nodeId")]
+DependencyId = Annotated[uuid.UUID, Path(alias="dependencyId")]
