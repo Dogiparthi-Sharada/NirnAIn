@@ -2,10 +2,17 @@ from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks, Request, Response, status
 
-from app.api.deps import Intaker, Intakes, ItemId, ProjectId
+from app.api.deps import Intaker, Intakes, ItemId, ProjectId, RunId
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
-from app.domain.intake import IntakeRun, IntakeRunCreate, ScopeItem, ScopeItemUpdate
+from app.domain.intake import (
+    IntakeRun,
+    IntakeRunCreate,
+    ScopeItem,
+    ScopeItemCreate,
+    ScopeItemUpdate,
+)
 from app.jobs.intake import RESTART_ERROR
+from app.repositories.intake import ActiveRunExistsError
 
 router = APIRouter(tags=["intake"])
 
@@ -39,7 +46,10 @@ async def create_run(
             raise ConflictError(ACTIVE_RUN_DETAIL)
         await runs.fail_run(active.id, RESTART_ERROR)  # orphaned by a restart
 
-    run_id = await runs.create(project_id, body.text)
+    try:
+        run_id = await runs.create(project_id, body.text)
+    except ActiveRunExistsError as exc:  # lost a race with a concurrent request
+        raise ConflictError(ACTIVE_RUN_DETAIL) from exc
     run = await runs.get(project_id, run_id)
     if run is None:
         raise ForbiddenError("The run was created but is not visible to you")
@@ -65,6 +75,18 @@ async def latest_run(project_id: ProjectId, runs: Intakes) -> IntakeRun:
 
 
 @router.get(
+    "/projects/{projectId}/intake/runs/{runId}",
+    response_model=IntakeRun,
+    summary="Get an intake run",
+)
+async def get_run(project_id: ProjectId, run_id: RunId, runs: Intakes) -> IntakeRun:
+    run = await runs.get(project_id, run_id)
+    if run is None:
+        raise NotFoundError("Intake run not found")
+    return run
+
+
+@router.get(
     "/projects/{projectId}/scope-items",
     response_model=list[ScopeItem],
     summary="Scope items extracted (or added) for a project",
@@ -73,6 +95,25 @@ async def list_scope_items(project_id: ProjectId, runs: Intakes) -> list[ScopeIt
     if not await runs.project_exists(project_id):
         raise NotFoundError("Project not found")
     return await runs.list_scope_items(project_id)
+
+
+@router.post(
+    "/projects/{projectId}/scope-items",
+    response_model=ScopeItem,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add a scope item by hand (accepted, appended to its category)",
+)
+async def create_scope_item(
+    project_id: ProjectId, body: ScopeItemCreate, runs: Intakes
+) -> ScopeItem:
+    if not await runs.project_exists(project_id):
+        raise NotFoundError("Project not found")
+    if not await runs.can_write(project_id):
+        raise ForbiddenError("You do not have permission to edit this project's scope")
+    item = await runs.create_item(project_id, body.category, body.text)
+    if item is None:
+        raise ForbiddenError("The scope item was created but is not visible to you")
+    return item
 
 
 @router.patch(
