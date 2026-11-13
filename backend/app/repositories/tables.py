@@ -182,6 +182,9 @@ scope_items = sa.Table(
     sa.Column("text", sa.Text, nullable=False),
     sa.Column("original_text", sa.Text),
     sa.Column("source_quote", sa.Text),
+    sa.Column("evidence", sa.Text),  # stated | inferred | flagged
+    sa.Column("evidence_note", sa.Text),
+    sa.Column("suggested_text", sa.Text),
     sa.Column("confidence", sa.REAL),
     sa.Column("status", scope_status, nullable=False),
     sa.Column("origin", item_origin, nullable=False),
@@ -237,6 +240,8 @@ wbs_nodes = sa.Table(
     sa.Column("origin", item_origin, nullable=False),
     sa.Column("created_at", _ts, nullable=False),
     sa.Column("updated_at", _ts, nullable=False),
+    sa.Column("estimate_confirmed_at", _ts),
+    sa.Column("estimate_confirmed_by", _uuid),
 )
 
 # A view (security_invoker): WBS codes derived from tree position.
@@ -302,6 +307,9 @@ constraint_sets = sa.Table(
     sa.Column("skill_mode", constraint_mode, nullable=False),
     sa.Column("allow_contractors", sa.Boolean, nullable=False),
     sa.Column("contractor_rate_cents", sa.BigInteger),
+    sa.Column("specialist_answer", sa.Text),  # yes | no | unknown
+    sa.Column("deadline_answer", sa.Text),  # hard | soft | unknown
+    sa.Column("specialist_rate_confirmed", sa.Boolean, nullable=False),
     sa.Column("updated_at", _ts, nullable=False),
 )
 
@@ -349,6 +357,8 @@ optimization_runs = sa.Table(
     sa.Column("requested_by", _uuid),
     sa.Column("applied_at", _ts),
     sa.Column("applied_by", _uuid),
+    sa.Column("version", sa.Integer),
+    sa.Column("options", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
     sa.Column("started_at", _ts),
     sa.Column("finished_at", _ts),
     sa.Column("created_at", _ts, nullable=False),
@@ -404,4 +414,42 @@ ai_jobs = sa.Table(
     sa.Column("created_at", _ts, nullable=False),
     sa.Column("started_at", _ts),
     sa.Column("finished_at", _ts),
+)
+
+# --------------------------------------------------------------------------- workflow inputs
+project_team_members = sa.Table(
+    "project_team_members",
+    metadata,
+    sa.Column("project_id", _uuid, primary_key=True),
+    sa.Column("employee_id", _uuid, primary_key=True),
+    sa.Column("hours_per_week", sa.Numeric(5, 1), nullable=False),
+    sa.Column("role_title", sa.Text),
+    sa.Column("created_at", _ts, nullable=False, server_default=sa.FetchedValue()),
+)
+
+project_skills = sa.Table(
+    "project_skills",
+    metadata,
+    sa.Column("project_id", _uuid, primary_key=True),
+    sa.Column("skill_id", _uuid, primary_key=True),
+    sa.Column("required", sa.Boolean, nullable=False),
+    sa.Column("created_at", _ts, nullable=False, server_default=sa.FetchedValue()),
+)
+
+change_requests = sa.Table(
+    "change_requests",
+    metadata,
+    sa.Column("id", _uuid, primary_key=True),
+    sa.Column("project_id", _uuid, nullable=False),
+    sa.Column("source", sa.Text, nullable=False),  # notes | edits | progress
+    sa.Column("input_text", sa.Text),
+    sa.Column("status", sa.Text, nullable=False),
+    sa.Column("impact", JSONB),
+    sa.Column("answers", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    sa.Column("base_run_id", _uuid),
+    sa.Column("proposed_run_id", _uuid),
+    sa.Column("error", sa.Text),
+    sa.Column("requested_by", _uuid),
+    sa.Column("created_at", _ts, nullable=False, server_default=sa.FetchedValue()),
+    sa.Column("decided_at", _ts),
 )
