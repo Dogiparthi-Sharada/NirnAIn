@@ -176,8 +176,11 @@ scope_items = sa.Table(
     sa.Column("id", _uuid, primary_key=True),
     sa.Column("project_id", _uuid, nullable=False),
     sa.Column("intake_run_id", _uuid),
+    sa.Column("source_document_id", _uuid),
     sa.Column("category", scope_category, nullable=False),
     sa.Column("text", sa.Text, nullable=False),
+    sa.Column("original_text", sa.Text),
+    sa.Column("source_quote", sa.Text),
     sa.Column("confidence", sa.REAL),
     sa.Column("status", scope_status, nullable=False),
     sa.Column("origin", item_origin, nullable=False),
@@ -199,7 +202,9 @@ employees = sa.Table(
     metadata,
     sa.Column("id", _uuid, primary_key=True),
     sa.Column("org_id", _uuid, nullable=False),
+    sa.Column("user_id", _uuid),
     sa.Column("full_name", sa.Text, nullable=False),
+    sa.Column("role_title", sa.Text),
     sa.Column("weekly_capacity_hours", sa.Numeric(5, 1), nullable=False),
     sa.Column("hourly_rate_cents", sa.BigInteger),
     sa.Column("is_contractor", sa.Boolean, nullable=False),
@@ -214,6 +219,25 @@ employee_skills = sa.Table(
     sa.Column("proficiency", sa.SmallInteger, nullable=False),
 )
 
+wbs_nodes = sa.Table(
+    "wbs_nodes",
+    metadata,
+    sa.Column("id", _uuid, primary_key=True),
+    sa.Column("project_id", _uuid, nullable=False),
+    sa.Column("parent_id", _uuid),
+    sa.Column("level", sa.SmallInteger, nullable=False),
+    sa.Column("sort_order", sa.Integer, nullable=False),
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("description", sa.Text),
+    sa.Column("duration_days", sa.Integer),
+    sa.Column("effort_hours", sa.Numeric(8, 1)),
+    sa.Column("owner_employee_id", _uuid),
+    sa.Column("scope_item_id", _uuid),
+    sa.Column("origin", item_origin, nullable=False),
+    sa.Column("created_at", _ts, nullable=False),
+    sa.Column("updated_at", _ts, nullable=False),
+)
+
 # A view (security_invoker): WBS codes derived from tree position.
 wbs_nodes_with_code = sa.Table(
     "wbs_nodes_with_code",
@@ -222,10 +246,16 @@ wbs_nodes_with_code = sa.Table(
     sa.Column("project_id", _uuid, nullable=False),
     sa.Column("parent_id", _uuid),
     sa.Column("level", sa.SmallInteger, nullable=False),
+    sa.Column("sort_order", sa.Integer, nullable=False),
     sa.Column("name", sa.Text, nullable=False),
+    sa.Column("description", sa.Text),
     sa.Column("duration_days", sa.Integer),
     sa.Column("effort_hours", sa.Numeric(8, 1)),
     sa.Column("owner_employee_id", _uuid),
+    sa.Column("scope_item_id", _uuid),
+    sa.Column("origin", item_origin, nullable=False),
+    sa.Column("created_at", _ts, nullable=False),
+    sa.Column("updated_at", _ts, nullable=False),
     sa.Column("code", sa.Text, nullable=False),
     sa.Column("path", ARRAY(sa.Integer), nullable=False),
 )
@@ -247,6 +277,8 @@ dependencies = sa.Table(
     sa.Column("successor_id", _uuid, nullable=False),
     sa.Column("type", dependency_type, nullable=False),
     sa.Column("lag_days", sa.Integer, nullable=False),
+    sa.Column("origin", item_origin, nullable=False),
+    sa.Column("created_at", _ts, nullable=False),
 )
 
 constraint_sets = sa.Table(
@@ -254,7 +286,9 @@ constraint_sets = sa.Table(
     metadata,
     sa.Column("project_id", _uuid, primary_key=True),
     sa.Column("budget_total_cents", sa.BigInteger),
+    sa.Column("contingency_pct", sa.Numeric(5, 2), nullable=False),
     sa.Column("labor_cap_cents", sa.BigInteger),
+    sa.Column("infra_cap_cents", sa.BigInteger),
     sa.Column("budget_mode", constraint_mode, nullable=False),
     sa.Column("budget_penalty", sa.REAL, nullable=False),
     sa.Column("start_date", sa.Date),
@@ -267,6 +301,7 @@ constraint_sets = sa.Table(
     sa.Column("skill_mode", constraint_mode, nullable=False),
     sa.Column("allow_contractors", sa.Boolean, nullable=False),
     sa.Column("contractor_rate_cents", sa.BigInteger),
+    sa.Column("updated_at", _ts, nullable=False),
 )
 
 milestones = sa.Table(
@@ -278,6 +313,7 @@ milestones = sa.Table(
     sa.Column("due_date", sa.Date, nullable=False),
     sa.Column("wbs_node_id", _uuid),
     sa.Column("mode", constraint_mode, nullable=False),
+    sa.Column("created_at", _ts, nullable=False),
 )
 
 allocations = sa.Table(
@@ -287,6 +323,7 @@ allocations = sa.Table(
     sa.Column("project_id", _uuid, primary_key=True),
     sa.Column("week_start", sa.Date, primary_key=True),
     sa.Column("hours", sa.Numeric(5, 1), nullable=False),
+    sa.Column("run_id", _uuid),
 )
 
 optimization_runs = sa.Table(
@@ -309,6 +346,8 @@ optimization_runs = sa.Table(
     sa.Column("result", JSONB),
     sa.Column("error", sa.Text),
     sa.Column("requested_by", _uuid),
+    sa.Column("applied_at", _ts),
+    sa.Column("applied_by", _uuid),
     sa.Column("started_at", _ts),
     sa.Column("finished_at", _ts),
     sa.Column("created_at", _ts, nullable=False),
