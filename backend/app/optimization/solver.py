@@ -26,9 +26,11 @@ constraints below, `conflicts.py` words the infeasibility explanations.
   other projects, against daily capacity = weekly hours / working days.
   Stretched tasks fit exactly, so only overlapping work can exceed it.
   Hard mode forbids that. Soft mode lets each chosen task move part of its
-  daily load, o[t,r], into overtime and pays `capacity_penalty` per hour of
-  overtime on every day the task runs (o[t,r] · d[t,r]): the over-allocated
-  hours, overestimated only when tasks partly overlap. Overbooking is then
+  daily load, o[t,r], into overtime and pays `capacity_penalty` plus the
+  overtime premium (`costing.py`: 1.5x an employee's rate, nothing extra
+  for a contractor) per hour of overtime on every day the task runs
+  (o[t,r] · d[t,r]): the over-allocated hours, overestimated only when
+  tasks partly overlap. Overbooking is then
   chosen only when it saves more than stretching, waiting or reassigning.
   Bookings elsewhere make a task wait rather than stretch. Contractor
   profiles have no capacity limit: they stand for as many specialists as
@@ -42,8 +44,12 @@ constraints below, `conflicts.py` words the infeasibility explanations.
   times `deadline_penalty_per_day`. A milestone on a summary node covers its
   leaf tasks; milestones without a WBS node are informational.
 * Budget: labor cost = Σ x[t,r] · hours_t · rate_r (the effort, so a
-  stretched task costs the same). `budget_total_cents` and `labor_cap_cents`
-  both cap it (infra cost isn't modelled). Hard -> a constraint, soft ->
+  stretched task costs the same). Employees are costed at their company
+  rate, else the standard $85/h; team contractors at their own rate, else
+  the project's contractor rate (`model.planned_rate_cents`). The overtime
+  premium is in the objective and the reported cost, not in this cap.
+  `budget_total_cents` and `labor_cap_cents` both cap it (infra cost isn't
+  modelled). Hard -> a constraint, soft ->
   `budget_penalty` per $1,000 over.
 * Objective, in cents: labor cost + $200 per working day of makespan + soft
   penalties + $500 per task moved off its current owner (keeps

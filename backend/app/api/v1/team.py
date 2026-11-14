@@ -6,9 +6,11 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Response, status
 
 from app.api.deps import EmployeeId, ProjectId, SkillId, Team
-from app.core.errors import ConflictError, ForbiddenError, NotFoundError
+from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableError
 from app.domain.planning import planning_weeks
 from app.domain.team import (
+    CONTRACTOR_RATE_DETAIL,
+    EMPLOYEE_RATE_DETAIL,
     ProjectSkill,
     ProjectSkillCreate,
     ProjectSkillUpdate,
@@ -42,6 +44,17 @@ async def _members(team: Team, project: ProjectRef) -> list[TeamMember]:
     return await team.members(project, planning_weeks(start, end, datetime.now(UTC).date()))
 
 
+async def _contractor_rate(team: Team, project_id: uuid.UUID, *rates: int | None) -> int:
+    """The first rate given, else the project's confirmed contractor rate (D1).
+
+    Contractors are costed at their own rate, so one is required: 422 without it.
+    """
+    for rate in (*rates, await team.confirmed_contractor_rate(project_id)):
+        if rate is not None:
+            return rate
+    raise UnprocessableError(CONTRACTOR_RATE_DETAIL)
+
+
 async def _member(team: Team, project: ProjectRef, employee_id: uuid.UUID) -> TeamMember:
     found = next((m for m in await _members(team, project) if m.employee_id == employee_id), None)
     if found is None:
@@ -70,19 +83,33 @@ async def add_team_member(project_id: ProjectId, body: TeamMemberCreate, team: T
     current = await team.member_names(project_id)
     if body.full_name.casefold() in {name.casefold() for name in current.values()}:
         raise ConflictError(f"{body.full_name} is already on the team")
+    contractor = body.worker_type == "contractor"
+    if not contractor and body.hourly_rate_cents is not None:
+        raise UnprocessableError(EMPLOYEE_RATE_DETAIL)
     employee_id = await team.find_employee(project.org_id, body.full_name)
+    if employee_id in current:
+        raise ConflictError(f"{body.full_name} is already on the team")
+    known = await team.employee_rate(employee_id) if employee_id is not None else None
+    rate = (
+        await _contractor_rate(team, project_id, body.hourly_rate_cents, known)
+        if contractor
+        else None
+    )
     if employee_id is None:
         employee_id = await team.create_employee(
             project.org_id,
             body.full_name,
             body.role_title,
             body.hours_per_week,
-            hourly_rate_cents=body.hourly_rate_cents,
+            is_contractor=contractor,
+            hourly_rate_cents=rate,
         )
-    elif employee_id in current:
-        raise ConflictError(f"{body.full_name} is already on the team")
-    elif body.hourly_rate_cents is not None:
-        await team.set_hourly_rate(employee_id, body.hourly_rate_cents)
+    else:
+        # Reusing the organization's record: it takes the type given here; an
+        # employee keeps the rate on record.
+        await team.set_worker_type(employee_id, contractor)
+        if rate is not None:
+            await team.set_hourly_rate(employee_id, rate)
     await team.add_member(project_id, employee_id, body.role_title, body.hours_per_week)
     await team.add_employee_skills(
         employee_id, await team.ensure_skills(project.org_id, body.skills)
@@ -93,7 +120,7 @@ async def add_team_member(project_id: ProjectId, body: TeamMemberCreate, team: T
 @router.patch(
     "/projects/{projectId}/team/{employeeId}",
     response_model=TeamMember,
-    summary="Change a team member's role, hours on this project, rate, skills or name",
+    summary="Change a team member's role, hours on this project, type, rate, skills or name",
 )
 async def update_team_member(
     project_id: ProjectId, employee_id: EmployeeId, body: TeamMemberUpdate, team: Team
@@ -109,8 +136,7 @@ async def update_team_member(
         ):
             raise ConflictError(f"{body.full_name} is already on the team")
         await team.rename_employee(employee_id, body.full_name)
-    if body.rate_changed:
-        await team.set_hourly_rate(employee_id, body.hourly_rate_cents)
+    await _update_pay(team, project, employee_id, body)
     changes = body.member_changes()
     if changes:
         await team.update_member(project_id, employee_id, changes)
@@ -119,6 +145,26 @@ async def update_team_member(
             employee_id, await team.ensure_skills(project.org_id, body.skills)
         )
     return await _member(team, project, employee_id)
+
+
+async def _update_pay(
+    team: Team, project: ProjectRef, employee_id: uuid.UUID, body: TeamMemberUpdate
+) -> None:
+    """Apply `workerType` and `hourlyRateCents` with the D1 rules (422 when they break)."""
+    if body.worker_type is None and not body.rate_changed:
+        return
+    member = await _member(team, project, employee_id)
+    worker_type = body.worker_type or member.worker_type
+    if worker_type == "employee":
+        if body.hourly_rate_cents is not None:
+            raise UnprocessableError(EMPLOYEE_RATE_DETAIL)
+    else:
+        given = body.hourly_rate_cents if body.rate_changed else member.hourly_rate_cents
+        rate = await _contractor_rate(team, project.id, given)
+        if rate != member.hourly_rate_cents:
+            await team.set_hourly_rate(employee_id, rate)
+    if worker_type != member.worker_type:
+        await team.set_worker_type(employee_id, worker_type == "contractor")
 
 
 @router.delete(

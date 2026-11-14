@@ -14,12 +14,8 @@ from datetime import date
 
 from app.optimization.baseline import dependency_offset, task_dependencies
 from app.optimization.calendar import week_index, workday_date
-from app.optimization.load import (
-    TENTHS,
-    allocation_blocks,
-    daily_capacity_tenths,
-    daily_tenths,
-)
+from app.optimization.costing import daily_load, plan_cost
+from app.optimization.load import TENTHS, allocation_blocks, daily_capacity_tenths
 from app.optimization.model import Plan, PlanningInput, Resource, SolveOutcome, Task
 
 
@@ -78,26 +74,12 @@ class ReportContext:
         return min(pct, 100) if res.kind == "contractor" else pct
 
     def over_allocated(self, plan: Plan, resource_id: str) -> bool:
-        """Whether the person's load exceeds their daily capacity on any working day.
-
-        Each task's effort is spread over the days the plan gives it, as in the solver.
-        """
+        """Whether the person's load exceeds their daily capacity on any working day."""
         res = self.resources.get(resource_id)
         if res is None or res.kind != "employee":
             return False
         capacity = daily_capacity_tenths(res.weekly_capacity_hours, self.per_week)
-        span = plan.makespan
-        load = [0] * span
-        for block in self.blocks.get(resource_id, []):
-            for day in range(block.lo, min(block.hi, span)):
-                load[day] += block.tenths
-        for scheduled in plan.tasks.values():
-            if scheduled.resource_id == resource_id and not self.tasks[scheduled.task_id].done:
-                demand = daily_tenths(
-                    self.tasks[scheduled.task_id], planned_days(plan, scheduled.task_id)
-                )
-                for day in range(scheduled.start, scheduled.end):
-                    load[day] += demand
+        load = daily_load(self.inp, plan, resource_id, self.blocks)
         return any(tenths > capacity for tenths in load)
 
     def name(self, resource_id: str | None) -> str:
@@ -107,14 +89,8 @@ class ReportContext:
         return res.name if res else "Unassigned"
 
     def cost(self, plan: Plan) -> int:
-        return sum(
-            round(
-                self.tasks[scheduled.task_id].hours
-                * self.resources[scheduled.resource_id].rate_cents
-            )
-            for scheduled in plan.tasks.values()
-            if scheduled.resource_id is not None and scheduled.resource_id in self.resources
-        )
+        """Labor cost of the plan, overtime premium included (`costing.plan_cost`)."""
+        return plan_cost(self.inp, self.resources, plan, self.blocks)
 
     def tight_predecessors(self, plan: Plan, task_id: str) -> list[str]:
         """Predecessors whose dependency holds with no slack in `plan` (planned durations)."""

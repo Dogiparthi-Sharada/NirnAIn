@@ -25,6 +25,8 @@ from typing import Any, Literal
 
 from app.optimization import formatting as fmt
 from app.optimization.calendar import workday_date
+from app.optimization.costing import plan_cost
+from app.optimization.load import allocation_blocks
 from app.optimization.model import PlanningInput, Resource, SolveOutcome, Task
 from app.optimization.solver import SolveControl, SolveOptions, solve
 
@@ -124,21 +126,18 @@ def _finish(inp: PlanningInput, outcome: SolveOutcome) -> date:
 
 
 def _costs(inp: PlanningInput, outcome: SolveOutcome) -> tuple[int, int, list[Resource]]:
-    """(total labor cost, specialist cost, specialist profiles used)."""
+    """(total labor cost with the overtime premium, specialist cost, specialist profiles used)."""
     assert outcome.plan is not None  # noqa: S101 - callers check
     tasks = {task.id: task for task in inp.tasks}
     resources = {resource.id: resource for resource in outcome.resources}
-    total = specialist_cost = 0
+    specialist_cost = 0
     used: dict[str, Resource] = {}
     for scheduled in outcome.plan.tasks.values():
         resource = resources.get(scheduled.resource_id) if scheduled.resource_id else None
-        if resource is None:
-            continue
-        cost = round(tasks[scheduled.task_id].hours * resource.rate_cents)
-        total += cost
-        if resource.kind == "contractor":
-            specialist_cost += cost
+        if resource is not None and resource.kind == "contractor":
+            specialist_cost += round(tasks[scheduled.task_id].hours * resource.rate_cents)
             used[resource.id] = resource
+    total = plan_cost(inp, resources, outcome.plan, allocation_blocks(inp))
     return total, specialist_cost, list(used.values())
 
 

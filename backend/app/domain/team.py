@@ -1,9 +1,15 @@
-"""The team on a project, the skills it needs, and the plan lock on its inputs."""
+"""The team on a project, the skills it needs, and the plan lock on its inputs.
+
+Every team member is an employee (already in the company) or a contractor
+(`employees.is_contractor`, round-2 decision D1). Employees are costed at
+the rate on their company record, never one typed here; contractors need
+an hourly rate, the project's confirmed contractor rate being the default.
+"""
 
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
@@ -17,6 +23,10 @@ HoursPerWeek = Annotated[int, Field(ge=1, le=80)]
 # Cents per hour; up to $1M/h so a typo can't overflow the labor cost.
 HourlyRateCents = Annotated[int, Field(ge=0, le=100_000_000)]
 SkillNames = Annotated[list[SkillName], Field(max_length=50)]
+WorkerType = Literal["employee", "contractor"]
+
+EMPLOYEE_RATE_DETAIL = "Employee rates come from the company record."
+CONTRACTOR_RATE_DETAIL = "Enter the contractor's hourly rate."
 
 
 def clean_skill_names(names: list[str]) -> list[str]:
@@ -46,18 +56,21 @@ class TeamMember(CamelModel):
     full_name: str
     role_title: str | None
     hours_per_week: float
-    # The organization employee's rate; null = planned at the optimizer's default rate.
+    worker_type: WorkerType
+    # Employee: the company record's rate (null = the standard rate);
+    # contractor: their contracted rate.
     hourly_rate_cents: int | None
     booked_hours: float
     skills: list[str]
 
 
 class TeamMemberCreate(InputModel):
-    """A person to add; a rate is stored on the organization employee (null keeps theirs)."""
+    """A person to add. Only contractors take a rate (stored on the organization record)."""
 
     full_name: PersonName
     role_title: RoleTitle
     hours_per_week: HoursPerWeek
+    worker_type: WorkerType = "employee"
     hourly_rate_cents: HourlyRateCents | None = None
     skills: SkillNames = Field(default_factory=list)
 
@@ -73,14 +86,13 @@ class TeamMemberCreate(InputModel):
 
 
 class TeamMemberUpdate(InputModel):
-    """Partial update; `fullName` and `hourlyRateCents` change the organization's employee.
-
-    `hourlyRateCents: null` clears the rate, so the person is planned at the default rate.
-    """
+    """Partial update; `fullName`, `workerType` and a contractor's `hourlyRateCents`
+    change the organization's record. A contractor's rate can't be cleared."""
 
     full_name: PersonName | None = None
     role_title: RoleTitle | None = None
     hours_per_week: HoursPerWeek | None = None
+    worker_type: WorkerType | None = None
     hourly_rate_cents: HourlyRateCents | None = None
     skills: SkillNames | None = None
 
@@ -112,7 +124,7 @@ class TeamMemberUpdate(InputModel):
 
     @property
     def rate_changed(self) -> bool:
-        """Whether the body sets the rate (to a value, or to null for the default)."""
+        """Whether the body sends a rate (null included)."""
         return "hourly_rate_cents" in self.model_fields_set
 
 

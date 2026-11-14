@@ -53,7 +53,7 @@ def test_ready_sheet_rows_and_sources() -> None:
         "deadline",
         "specialists",
         "team",
-        "rates",
+        "employeeCost",
         "skills",
         "contingency",
         "workingDays",
@@ -77,7 +77,7 @@ def test_ready_sheet_rows_and_sources() -> None:
     )
     assert rows["specialists"][:2] == ("Allowed · $175/h (estimated)", "confirmed")
     assert rows["team"] == ("Mark Chen, Lisa Park · capacity can flex", "confirmed", "Step 5")
-    assert rows["rates"] == ("2 people at their own rate", "yours", "Step 5")
+    assert rows["employeeCost"] == ("No employees on the team", "default", "Company record")
     assert rows["skills"][0] == "1 · nobody has SAP Integration yet · must hold"
     assert rows["contingency"][:2] == ("0%", "default")
     assert rows["milestones"] == ("Apr 15 and Jul 31 · soft", "yours", "Step 5")
@@ -131,30 +131,41 @@ def test_facts_from_input_and_org_fallback_team() -> None:
     assert rows["specialists"].source == "needs_you"
 
 
-def test_people_without_a_rate_are_shown_at_the_default() -> None:
-    team = ["Priya Raman", "Leo Martins", "Ana Souza"]
-    rows = {
-        row.key: row for row in build_sheet(_ready_facts(team=team, default_rate_team=team)).rows
-    }
-    assert (rows["rates"].label, rows["rates"].value, rows["rates"].source) == (
-        "Hourly rates",
-        "3 people at the $85/h default rate",
-        "default",
+def test_employees_without_a_company_rate_are_shown_at_the_standard_rate() -> None:
+    team = ["Priya Raman", "Leo Martins", "Ana Souza", "Dana Lee"]
+    staff = team[:3]
+    facts = _ready_facts(team=team, employees=staff, standard_rate_employees=staff)
+    rows = {row.key: row for row in build_sheet(facts).rows}
+    assert (rows["employeeCost"].label, rows["employeeCost"].value) == (
+        "Employee cost",
+        "3 employees at the standard $85/h (no company rate on record)",
     )
-    some = _ready_facts(team=team, default_rate_team=["Ana Souza"], team_from_project=False)
-    rates = next(row for row in build_sheet(some).rows if row.key == "rates")
-    assert rates.value == "1 person at the $85/h default rate (Ana Souza) · 2 at their own rate"
-    assert (rates.source, rates.from_) == ("default", "Organization")
-    nobody = next(row for row in build_sheet(_ready_facts(team=[])).rows if row.key == "rates")
-    assert nobody.value == "Nobody yet; anyone without a rate is planned at the $85/h default rate"
+    assert (rows["employeeCost"].source, rows["employeeCost"].from_) == (
+        "default",
+        "Company record",
+    )
+    some = _ready_facts(team=team, employees=staff, standard_rate_employees=["Ana Souza"])
+    row = next(row for row in build_sheet(some).rows if row.key == "employeeCost")
+    assert (
+        row.value
+        == "1 employee at the standard $85/h (no company rate on record) · 2 at their company rate"
+    )
+    rated = _ready_facts(team=team, employees=staff)
+    row = next(row for row in build_sheet(rated).rows if row.key == "employeeCost")
+    assert (row.value, row.source) == ("3 employees at their company rate", "confirmed")
 
     inp = make_input(
         employees=(
             Employee("e1", "Mark Chen", hourly_rate_cents=10_000),
             Employee("e2", "Ana Souza"),
+            Employee("e3", "Dana Lee", hourly_rate_cents=15_000, is_contractor=True),
         )
     )
-    assert facts_from_input(inp).default_rate_team == ["Ana Souza"]
+    facts = facts_from_input(inp)
+    assert (facts.employees, facts.standard_rate_employees) == (
+        ["Mark Chen", "Ana Souza"],
+        ["Ana Souza"],
+    )
 
 
 def test_quote_must_name_the_amount() -> None:

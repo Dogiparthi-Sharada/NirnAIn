@@ -65,8 +65,10 @@ class InputFacts:
     specialist_rate_confirmed: bool = False
     team: Sequence[str] = ()
     team_from_project: bool = False
-    # People without an hourly rate, planned at the default rate.
-    default_rate_team: Sequence[str] = ()
+    # Team members who are employees (not contractors), and those of them with no
+    # company rate on record, costed at the standard rate.
+    employees: Sequence[str] = ()
+    standard_rate_employees: Sequence[str] = ()
     capacity_mode: str = "soft"
     skills: Sequence[SkillFact] = ()
     task_skill_gaps: Sequence[str] = ()
@@ -107,8 +109,11 @@ def facts_from_input(inp: PlanningInput, **database_facts: Any) -> InputFacts:
         must_finish_by=constraints.must_finish_by,
         contractor_rate_cents=constraints.contractor_rate_cents,
         team=[employee.name for employee in inp.employees],
-        default_rate_team=[
-            employee.name for employee in inp.employees if employee.hourly_rate_cents is None
+        employees=[employee.name for employee in inp.employees if not employee.is_contractor],
+        standard_rate_employees=[
+            employee.name
+            for employee in inp.employees
+            if not employee.is_contractor and employee.hourly_rate_cents is None
         ],
         capacity_mode=constraints.capacity_mode,
         task_skill_gaps=_task_skill_gaps(inp),
@@ -135,8 +140,8 @@ def quote_states_amount(quote: str, cents: int) -> bool:
 def inputs_hash(inp: PlanningInput) -> str:
     """SHA-256 of what the solver will use (other projects' bookings and today excluded).
 
-    Hours, rates and skills of every person are part of it, so editing any of
-    them invalidates a confirmed sheet.
+    Hours, type, rates and skills of every person are part of it, so editing
+    any of them invalidates a confirmed sheet.
     """
     snapshot = inp.to_snapshot()
     snapshot.pop("allocations", None)

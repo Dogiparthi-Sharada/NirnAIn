@@ -22,11 +22,13 @@ RunStatus = Literal["optimal", "feasible", "infeasible", "timeout", "failed"]
 ResourceKind = Literal["employee", "contractor"]
 
 DEFAULT_HOURS_PER_DAY = 8.0
-# People added in the app often have no rate yet. They are planned at a blended
-# IT rate ($85/h): priced at $0 they would make every budget meaningless and
-# attract all the work, and a team average is $0 when nobody has a rate. The
+# Employees are costed at the rate on their company record. Without one they are
+# planned at the standard internal rate ($85/h, a blended IT rate): priced at $0
+# they would make every budget meaningless and attract all the work. The
 # confirmation sheet lists who is planned at this default.
 DEFAULT_HOURLY_RATE_CENTS = 8_500
+# Overtime is billed at 1.5x an employee's cost and at a contractor's own rate (D1).
+EMPLOYEE_OVERTIME_MULTIPLIER = 1.5
 CONTRACTOR_WEEKLY_HOURS = 40.0
 MAX_PROFICIENCY = 5
 
@@ -390,6 +392,8 @@ class Resource:
     rate_cents: int
     skills: Mapping[str, int]
     employee_id: str | None = None
+    # Billed per hour worked above their capacity (= rate_cents for contractors).
+    overtime_rate_cents: int = 0
 
     def proficiency(self, skill_id: str) -> int:
         return self.skills.get(skill_id, 0)
@@ -403,11 +407,24 @@ def qualified(resource: Resource, task: Task) -> bool:
     return resource.skill_gap(task) == 0
 
 
-def planned_rate_cents(employee: Employee) -> int:
-    """The hourly rate the optimizer plans this person at (their own, else the default)."""
+def planned_rate_cents(employee: Employee, contractor_rate_cents: int | None = None) -> int:
+    """The hourly rate the optimizer plans this person at.
+
+    Their own rate (an employee's company rate, a contractor's contracted one);
+    else, for a contractor, the project's contractor rate; else the standard rate.
+    """
     if employee.hourly_rate_cents is not None:
         return employee.hourly_rate_cents
+    if employee.is_contractor and contractor_rate_cents is not None:
+        return contractor_rate_cents
     return DEFAULT_HOURLY_RATE_CENTS
+
+
+def overtime_rate_cents(employee: Employee, rate_cents: int) -> int:
+    """What an hour above their capacity costs: 1.5x for employees, the rate for contractors."""
+    if employee.is_contractor:
+        return rate_cents
+    return round(rate_cents * EMPLOYEE_OVERTIME_MULTIPLIER)
 
 
 def build_resources(inp: PlanningInput) -> tuple[Resource, ...]:
@@ -416,22 +433,25 @@ def build_resources(inp: PlanningInput) -> tuple[Resource, ...]:
     Contractors are added only when `allow_contractors` is on, a contractor
     rate is set, and some task has no fully qualified employee. Tasks are
     grouped by the set of skills they need; each group gets one profile with
-    proficiency 5 in those skills. People without a rate are planned at
-    `DEFAULT_HOURLY_RATE_CENTS`.
+    proficiency 5 in those skills. Team members are priced by
+    `planned_rate_cents` and `overtime_rate_cents`.
     """
-    resources = [
-        Resource(
-            id=employee.id,
-            name=employee.name,
-            kind="employee",
-            weekly_capacity_hours=employee.weekly_capacity_hours,
-            rate_cents=planned_rate_cents(employee),
-            skills=dict(employee.skills),
-            employee_id=employee.id,
-        )
-        for employee in inp.employees
-    ]
     constraints = inp.constraints
+    resources: list[Resource] = []
+    for employee in inp.employees:
+        rate = planned_rate_cents(employee, constraints.contractor_rate_cents)
+        resources.append(
+            Resource(
+                id=employee.id,
+                name=employee.name,
+                kind="employee",
+                weekly_capacity_hours=employee.weekly_capacity_hours,
+                rate_cents=rate,
+                skills=dict(employee.skills),
+                employee_id=employee.id,
+                overtime_rate_cents=overtime_rate_cents(employee, rate),
+            )
+        )
     if not constraints.allow_contractors or constraints.contractor_rate_cents is None:
         return tuple(resources)
 
@@ -453,6 +473,7 @@ def build_resources(inp: PlanningInput) -> tuple[Resource, ...]:
                 weekly_capacity_hours=CONTRACTOR_WEEKLY_HOURS,
                 rate_cents=constraints.contractor_rate_cents,
                 skills=dict.fromkeys(key, MAX_PROFICIENCY),
+                overtime_rate_cents=constraints.contractor_rate_cents,
             )
         )
     return tuple(resources)

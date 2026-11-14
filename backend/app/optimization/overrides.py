@@ -50,7 +50,7 @@ def _with_duration(task: Task, days: int) -> Task:
 def _newcomer(entry: Mapping[str, Any], skill_ids: Mapping[str, str]) -> Employee:
     """A person joining the project as a resource. Skills are matched to the work
     packages' required skills by name; a missing rate stays null, so the optimizer prices
-    them like the rest of the team (see `build_resources`)."""
+    them by `model.planned_rate_cents` (the standard rate for an employee)."""
     rate = entry.get("hourlyRateCents")
     return Employee(
         id=str(entry["employeeId"]),

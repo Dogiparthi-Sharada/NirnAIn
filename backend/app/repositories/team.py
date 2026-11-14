@@ -92,6 +92,7 @@ class TeamRepository:
                         "role_title"
                     ),
                     member.c.hours_per_week,
+                    employee.c.is_contractor,
                     employee.c.hourly_rate_cents,
                     sa.func.coalesce(other.c.total, 0).label("total"),
                 )
@@ -111,6 +112,7 @@ class TeamRepository:
                 full_name=row.full_name,
                 role_title=row.role_title,
                 hours_per_week=float(row.hours_per_week),
+                worker_type="contractor" if row.is_contractor else "employee",
                 hourly_rate_cents=row.hourly_rate_cents,
                 booked_hours=average_weekly_hours(float(row.total), len(weeks)),
                 skills=names.get(row.employee_id, []),
@@ -186,6 +188,34 @@ class TeamRepository:
             )
         )
         return employee_id
+
+    async def employee_rate(self, employee_id: uuid.UUID) -> int | None:
+        """The hourly rate on the organization's record (None when there is none)."""
+        stmt = sa.select(employees.c.hourly_rate_cents).where(employees.c.id == employee_id)
+        rate = (await self._conn.execute(stmt)).scalar()
+        return None if rate is None else int(rate)
+
+    async def set_worker_type(self, employee_id: uuid.UUID, is_contractor: bool) -> None:
+        """Mark the organization's record as a contractor or an employee."""
+        await self._conn.execute(
+            sa.update(employees)
+            .where(employees.c.id == employee_id)
+            .values(is_contractor=is_contractor)
+        )
+
+    async def confirmed_contractor_rate(self, project_id: uuid.UUID) -> int | None:
+        """The project's contractor rate once the PM confirmed it (None otherwise)."""
+        sets = constraint_sets
+        row = (
+            await self._conn.execute(
+                sa.select(sets.c.contractor_rate_cents, sets.c.specialist_rate_confirmed).where(
+                    sets.c.project_id == project_id
+                )
+            )
+        ).first()
+        if row is None or not row.specialist_rate_confirmed:
+            return None
+        return None if row.contractor_rate_cents is None else int(row.contractor_rate_cents)
 
     async def set_hourly_rate(self, employee_id: uuid.UUID, hourly_rate_cents: int | None) -> None:
         """The organization employee's rate (None: planned at the optimizer's default)."""

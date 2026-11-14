@@ -17,6 +17,7 @@ from functools import partial
 from ortools.sat.python import cp_model
 
 from app.optimization import conflicts
+from app.optimization.load import TENTHS
 from app.optimization.model import Conflict, Resource, Task
 from app.optimization.problem import Problem
 
@@ -240,11 +241,13 @@ class ModelBuilder:
                 continue
             if self.constraints.capacity_mode == "soft":
                 # Overtime tenths per day x the days the task runs = over-allocated
-                # tenth-hours (an overestimate only when tasks partly overlap).
+                # tenth-hours (an overestimate only when tasks partly overlap), at the
+                # soft-capacity penalty plus what overtime costs on top of the rate.
+                premium = round((resource.overtime_rate_cents - resource.rate_cents) / TENTHS)
                 self._penalize(
                     cp_model.LinearExpr.weighted_sum(
                         [variable for variable, _ in overtime],
-                        [days * per_tenth for _, days in overtime],
+                        [days * (per_tenth + premium) for _, days in overtime],
                     )
                 )
             else:
