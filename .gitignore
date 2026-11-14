@@ -34,6 +34,9 @@ __pycache__/
 .coverage
 htmlcov/
 
+# API end-to-end suite reports (tests/e2e/api/README.md)
+tests/e2e/api/reports/
+
 # Supabase CLI local state
 supabase/.temp/
 supabase/.branches/
