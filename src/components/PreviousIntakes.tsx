@@ -1,8 +1,14 @@
 /**
- * "Previous Intakes" card on AI Project Intake: this project's intake runs, newest first, from
- * `GET /projects/{projectId}/intake/runs` (see `useIntakeRuns`). Refetches whenever the latest run
- * starts or finishes so a re-analysis shows up without a reload.
+ * The "Previous Intakes" card on AI Project Intake: the project's intake runs, newest first.
+ *
+ * Purpose: The PM sees what each analysis found and whether it ran with AI or the no-AI rules
+ * reader; the list refreshes when the latest run starts or finishes, so a re-analysis shows up
+ * without a reload.
+ * How it fits: Rendered by `screens/AIProjectIntake.tsx`; reads
+ * `GET /projects/{projectId}/intake/runs` through `useIntakeRuns`; layer: component.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { formatDateTime } from '@/lib/format'
 import { useIntakeRuns } from '@/lib/create'
 import type { IntakeRun } from '@/lib/types'
@@ -10,6 +16,7 @@ import type { IntakeRun } from '@/lib/types'
 const SHOWN = 6
 const ROW_STYLE = { padding: '6px 0', borderBottom: '1px solid var(--muted)' } as const
 
+/** One run's result in words: items found (and whether AI read them), failed, cancelled or running. */
 function outcome(run: IntakeRun): string {
   switch (run.status) {
     case 'succeeded':

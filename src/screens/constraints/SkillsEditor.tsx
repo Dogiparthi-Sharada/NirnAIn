@@ -1,14 +1,15 @@
 /**
- * The Required skills card on step 5 (approved mockup views/constraints-team.js `renderSkills`):
- * the skills this project needs, Required or Optional, who on the team has each one, and the gaps,
- * with the skills Must hold / Can flex switch.
+ * The Required skills card on step 5: the skills the project needs, who has each one and the gaps.
  *
- * Skills rule: Must hold = work goes only to people who have the skill (or to an outside specialist
- * if the PM allows one); Can flex = it may go to someone without it, with ramp-up time added. A
- * required skill nobody has is a gap: it makes the specialist question count and is called out
- * below the table. Data: `GET/POST/PATCH/DELETE …/skills` (contract [B]; names are unique,
- * case-insensitive); every change refreshes the step 6 confirmation sheet.
+ * Purpose: Must hold sends work only to people who have the skill (or an allowed specialist); Can
+ * flex may give it to someone without it, with ramp-up time. A required skill nobody has is a gap:
+ * it makes the specialist question count and is called out below the table.
+ * How it fits: Port of the mockup's views/constraints-team.js `renderSkills`; rendered by
+ * `screens/Constraints.tsx`; uses the skill hooks in `lib/inputs.ts` (contract [B]; names unique,
+ * case-insensitive); layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { Fragment, useState } from 'react'
 import { errorMessage } from '@/lib/api'
 import { policyOf, type PolicyInputs, type PolicyRisk } from '@/lib/constraintPolicy'
@@ -105,6 +106,7 @@ export function SkillsEditor({ projectId, policy, risks, onSavePolicy }: {
     return ''
   }
 
+  /** Adds the typed skill (Required or Optional) unless the name is empty or already listed. */
   function add() {
     const name = cleanName(newName)
     const problem = nameError(name, null)
@@ -119,6 +121,7 @@ export function SkillsEditor({ projectId, policy, risks, onSavePolicy }: {
     )
   }
 
+  /** Renames a skill; a clash or empty name is explained in a toast. */
   function rename(skill: ProjectSkill, text: string) {
     const name = cleanName(text)
     const problem = nameError(name, skill.skillId)
@@ -126,11 +129,13 @@ export function SkillsEditor({ projectId, policy, risks, onSavePolicy }: {
     else if (name !== skill.name) updateSkill.mutate({ skillId: skill.skillId, patch: { name } }, { onError: reportFailure })
   }
 
+  /** Switches a skill between Required and Optional. */
   function setNeed(skill: ProjectSkill, required: boolean) {
     if (skill.required === required) return
     updateSkill.mutate({ skillId: skill.skillId, patch: { required } }, { onError: reportFailure })
   }
 
+  /** Removes a skill from the project's list. */
   function remove(skill: ProjectSkill) {
     removeSkill.mutate(skill.skillId, { onSuccess: () => toast(`${skill.name} removed.`), onError: reportFailure })
   }

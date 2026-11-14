@@ -1,11 +1,12 @@
 /**
- * The WBS Builder's header actions (mockup views/wbs.js `.hdr .row`): the Chart / List switch,
- * + Add Deliverable, + Add Work Package and AI Validate. Kept apart from `screens/WBSBuilder.tsx`,
- * which owns the data and the API calls, so the screen stays readable.
+ * The WBS Builder's header actions: Chart / List, + Add Deliverable, + Add Work Package and AI Validate.
  *
- * A button that can't be used yet says why (title): a work package goes under a deliverable, and
- * there is nothing to validate before the WBS has nodes. While a new node is being saved the add
- * buttons wait, so a double click never adds it twice.
+ * Purpose: A button that can't be used yet says why (a work package goes under a deliverable;
+ * there is nothing to validate before the WBS has nodes), and the add buttons wait while a node
+ * saves so a double click never adds it twice.
+ * How it fits: Port of the mockup's views/wbs.js `.hdr .row`; rendered by
+ * `screens/WBSBuilder.tsx`, which owns the data and the API calls; layer: component.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
 
 const ADDING_REASON = 'Adding\u2026 wait for the new row before adding another.'

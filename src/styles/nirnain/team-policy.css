@@ -1,15 +1,15 @@
 /**
- * NirnAIn mockup · styles/team-policy.css
+ * Step 5 additions and the step 6 constraint check: policy switches, team and skills editors, the advice card.
  *
- * PURPOSE
- *   Step 5 additions and the step 6 constraint check: Must hold / Can flex switches with
- *   their explanation and warnings, the team and skills editors, and the advice card on
- *   Optimization Results.
- *
- * DEPENDS ON   styles/base.css (colour tokens, .card, .btn, .in), styles/workflow.css (.seg)
- * AUTHOR       Sharada Dogiparthi
- * CREATED      2026-11-11
+ * Purpose: Styles the Must hold / Can flex switches with their explanation and warnings, the team
+ * and skills editors and the advice card on Optimization Results.
+ * How it fits: Approved mockup stylesheet (styles/team-policy.css by Sharada Dogiparthi,
+ * 2026-11-11), rules ported unchanged; imported by `index.css`; builds on `base.css` and
+ * `workflow.css`; layer: styles.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
+
 
 /* ---- Card heading with the switch on the right ---- */
 .card-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}

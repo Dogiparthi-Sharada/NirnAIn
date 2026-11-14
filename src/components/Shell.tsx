@@ -1,14 +1,16 @@
 /**
- * The signed-in app frame (mockup index.html `#app`, scripts/core/router.js, styles/shell.css):
- * `aside#sidebar` with the brand, the workflow steps, the current project and the account menu;
- * `main#main` for the screen; the docked NirnAIn AI panel `aside#chat` (or the floating
- * `#chat-open` button when it is closed).
+ * The signed-in app frame: sidebar with the workflow steps, the screen and the docked AI panel.
  *
- * Step locks follow the design: steps 2–6 need an open project (the project in the URL, or on the
- * dashboard the one picked there), step 7 needs an applied plan (`GET …/plan-versions` non-empty;
- * errors count as locked). Rendered by `App.tsx` around every signed-in route, inside
- * `OrgProvider`; sign-out goes through `useAuth().signOut`.
+ * Purpose: Step locks follow the design: steps 2–6 need an open project (the one in the URL, or on
+ * the dashboard the one picked there) and step 7 needs an applied plan (errors count as locked).
+ * The assistant panel's open state is remembered, and the screen scrolls to the top on every
+ * navigation.
+ * How it fits: Port of the mockup's index.html `#app`, scripts/core/router.js and
+ * styles/shell.css; rendered by `App.tsx` around every signed-in route inside `OrgProvider`;
+ * sign-out goes through `useAuth().signOut`; layer: component.
+ * Created: 2026-09-24 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 import { useAuth } from '@/auth/useAuth'
@@ -27,6 +29,7 @@ const ROLE_LABELS: Record<string, string> = { owner: 'Owner', admin: 'Admin', pm
 const CHAT_OPEN_KEY = 'nirnain.assistant.open'
 const WIDE_SCREEN_QUERY = '(min-width: 1100px)'
 
+/** Whether the assistant panel starts open: the remembered choice, else open on wide screens. */
 function initialChatOpen(): boolean {
   try {
     const stored = window.localStorage.getItem(CHAT_OPEN_KEY)
@@ -37,6 +40,7 @@ function initialChatOpen(): boolean {
   return window.matchMedia(WIDE_SCREEN_QUERY).matches
 }
 
+/** Remembers whether the assistant panel is open. */
 function persistChatOpen(open: boolean) {
   try {
     window.localStorage.setItem(CHAT_OPEN_KEY, String(open))
@@ -78,6 +82,7 @@ export default function Shell({ children }: { children: ReactNode }) {
     else openChatRef.current?.focus()
   }, [chatOpen])
 
+  /** Opens or closes the assistant panel, remembers it and moves focus to match. */
   function toggleChat(open: boolean) {
     focusAfterToggle.current = true
     setChatOpen(open)
@@ -120,6 +125,7 @@ function Sidebar({ projectId, identity }: { projectId: string | undefined; ident
   const hasProject = Boolean(projectId && project.data)
   const hasPlan = (planVersions.data?.length ?? 0) > 0
 
+  /** The sidebar entry for the current URL (dashboard, a flow step or none). */
   function activeStep(): FlowStepKey | 'dashboard' | null {
     if (pathname === '/dashboard') return 'dashboard'
     if (pathname.startsWith('/projects/new')) return 'create'
@@ -128,6 +134,7 @@ function Sidebar({ projectId, identity }: { projectId: string | undefined; ident
   }
   const active = activeStep()
 
+  /** Why a flow step can't be opened yet, or null when it can. */
   function lockReason(step: FlowStepKey): string | null {
     if (step === 'create') return null
     if (!hasProject) return 'Open or create a project first'
@@ -201,6 +208,7 @@ function Sidebar({ projectId, identity }: { projectId: string | undefined; ident
 
 /* ─────────────────────────── Account identity ─────────────────────────── */
 
+/** The first non-empty string among `keys` in the Supabase user metadata. */
 function metadataString(metadata: Record<string, unknown> | undefined, ...keys: string[]): string | null {
   for (const key of keys) {
     const value = metadata?.[key]
@@ -246,9 +254,11 @@ function UserMenu({ identity }: { identity: AccountIdentity }) {
   useEffect(() => {
     if (!open) return
     signOutRef.current?.focus()
+    /** Closes the menu on a click outside it. */
     function onPointerDown(event: PointerEvent) {
       if (!containerRef.current?.contains(event.target as Node)) setOpen(false)
     }
+    /** Closes the menu on Escape and returns focus to its button. */
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         setOpen(false)
@@ -263,6 +273,7 @@ function UserMenu({ identity }: { identity: AccountIdentity }) {
     }
   }, [open])
 
+  /** Signs out and confirms it in a toast. */
   async function handleSignOut() {
     setSigningOut(true)
     try {

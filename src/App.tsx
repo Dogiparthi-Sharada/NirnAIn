@@ -1,3 +1,16 @@
+/**
+ * The app's routes and providers: public pages, auth screens and the signed-in planning flow.
+ *
+ * Purpose: One route table decides who sees what: the landing page and auth screens are public
+ * (signed-in users skip the auth pages), and every planning screen needs a session and an
+ * organization and renders inside the shell, where a page error stays inside the page so
+ * navigation keeps working.
+ * How it fits: Loaded by `main.tsx` once the configuration is valid; wires `QueryClientProvider`,
+ * the router, `AuthProvider`, the route guards, `OrgProvider`, `Shell` and every screen;
+ * layer: config.
+ * Created: 2026-09-24 · Version: 1.0 (NirnAIn demo release)
+ */
+
 import { QueryClientProvider } from '@tanstack/react-query'
 import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation } from 'react-router'
 import { queryClient } from './lib/queryClient'
@@ -5,7 +18,7 @@ import AuthProvider from './auth/AuthProvider'
 import { PublicOnly, RequireAuth } from './auth/guards'
 import OrgProvider from './org/OrgProvider'
 import Shell from './components/Shell'
-import { AppErrorBoundary, NotFound, RouteError } from './components/ErrorPages'
+import { NotFound, RouteError } from './components/ErrorPages'
 import ToastHost from './components/Toast'
 import Login from './screens/Login'
 import Signup from './screens/Signup'
@@ -26,6 +39,7 @@ import Constraints from './screens/Constraints'
 import OptimizationResults from './screens/OptimizationResults'
 import ChangesVersions from './screens/ChangesVersions'
 
+/** Provides the session to every route and mounts the app-wide toast once. */
 function RootLayout() {
   return (
     <AuthProvider>
@@ -41,6 +55,7 @@ function RegisterRedirect() {
   return <Navigate to={{ pathname: '/signup', search }} replace />
 }
 
+/** The signed-in frame: resolves the organization, then renders the shell around the screen. */
 function AppLayout() {
   return (
     <OrgProvider>
@@ -107,12 +122,11 @@ const router = createBrowserRouter([
   },
 ])
 
+/** The whole app: the query client around the router. */
 export default function App() {
   return (
-    <AppErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>
-    </AppErrorBoundary>
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
   )
 }

@@ -1,32 +1,20 @@
 /**
- * Shared bits of the Changes & Versions screen (step 7): provenance chips, the animated
- * step list, and the formatting the mockup uses (weeks, short date ranges).
+ * Shared bits of the Changes & Versions screen: the animated step list and the mockup's formatting.
  *
- * Used by `ChangesVersions.tsx` and the `changes/*` panels. Durations on the wire are
- * working days (1 week = 5); plan dates are ISO calendar dates rendered in UTC.
+ * Purpose: Keeps step 7's wording consistent: weeks from working days (1 week = 5), short date
+ * ranges in UTC, and each change's value in the unit of its kind.
+ * How it fits: Used by `screens/ChangesVersions.tsx` and `screens/changes/*`; re-exports the
+ * provenance `Chip` from `components/InputsKit.tsx`; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
-import { useEffect, useState, type ReactNode } from 'react'
+
+import { useEffect, useState } from 'react'
 import { formatDate, formatMoney } from '@/lib/format'
 import type { DetectedChange, NewMember } from '@/lib/changes'
+import { DAYS_PER_WEEK } from '@/lib/wbs'
 
-export const DAYS_PER_WEEK = 5
+export { Chip } from '@/components/InputsKit'
 export const DAY_MS = 86_400_000
-
-type ChipKind = 'stated' | 'confirmed' | 'inferred' | 'assumed' | 'missing' | 'default' | 'yours'
-const CHIP: Record<ChipKind, [string, string]> = {
-  stated: ['st-stated', 'Stated'],
-  confirmed: ['st-confirmed', '✓ Confirmed'],
-  inferred: ['st-inferred', 'Inferred'],
-  assumed: ['st-assumed', 'Assumed'],
-  missing: ['st-missing', 'Not found'],
-  default: ['st-default', 'Default'],
-  yours: ['st-yours', 'Yours'],
-}
-
-/** Provenance chip from the approved design (`chip()` in the mockup); `children` overrides the label. */
-export function Chip({ kind, children }: { kind: ChipKind; children?: ReactNode }) {
-  return <span className={`chip ${CHIP[kind][0]}`}>{children ?? CHIP[kind][1]}</span>
-}
 
 /** Advances through `count` steps every 700 ms while `active` (purely visual progress for slow calls). */
 export function useSteps(active: boolean, count: number): number {
@@ -36,7 +24,7 @@ export function useSteps(active: boolean, count: number): number {
       setStep(0)
       return
     }
-    const timer = window.setInterval(() => setStep((step) => Math.min(step + 1, count - 1)), 700)
+    const timer = window.setInterval(() => setStep((current) => Math.min(current + 1, count - 1)), 700)
     return () => window.clearInterval(timer)
   }, [active, count])
   return step
@@ -76,6 +64,7 @@ export function day(iso: string): number {
   return Date.parse(`${iso.slice(0, 10)}T00:00:00Z`)
 }
 
+/** A timestamp as a short UTC date ("Mar 10"). */
 export function shortDay(timestamp: number): string {
   return shortDate.format(timestamp)
 }
@@ -86,7 +75,8 @@ export function range(bar: { start: string; end: string } | null): string {
   return `${shortDate.format(day(bar.start))}–${shortDate.format(day(bar.end))}`
 }
 
-function num(value: number | string | null): number | null {
+/** The value when it is a number, else null. */
+function numberOrNull(value: number | string | null): number | null {
   return typeof value === 'number' ? value : null
 }
 
@@ -94,14 +84,14 @@ function num(value: number | string | null): number | null {
 export function changeValue(change: DetectedChange, value: number | string | null): string {
   switch (change.kind) {
     case 'budget':
-      return formatMoney(num(value))
+      return formatMoney(numberOrNull(value))
     case 'deadline':
       return typeof value === 'string' ? formatDate(value) : '—'
     case 'duration':
-      return weeks(num(value))
+      return weeks(numberOrNull(value))
     case 'capacity':
     case 'team':
-      return num(value) === 0 ? 'off the project' : value == null ? '—' : `${value}h/week`
+      return numberOrNull(value) === 0 ? 'off the project' : value == null ? '—' : `${value}h/week`
     default:
       return typeof value === 'string' ? value : '—'
   }
@@ -128,8 +118,8 @@ export function changeTitle(change: DetectedChange): string {
   const label = change.targetLabel ?? (change.candidates.length ? 'A work package' : '')
   switch (change.kind) {
     case 'budget': {
-      const from = num(change.from)
-      const to = num(change.to)
+      const from = numberOrNull(change.from)
+      const to = numberOrNull(change.to)
       return from !== null && to !== null && to < from ? 'Budget cut' : 'Budget change'
     }
     case 'deadline':
@@ -140,7 +130,7 @@ export function changeTitle(change: DetectedChange): string {
       return change.to === 0 ? `${label} leaves the project` : `${label}: hours per week`
     case 'team':
       if (change.action === 'remove') return `Remove ${label}`
-      return change.member ? `Add ${memberSummary(change.member, num(change.to))}` : `Add ${label}`
+      return change.member ? `Add ${memberSummary(change.member, numberOrNull(change.to))}` : `Add ${label}`
     default:
       return typeof change.to === 'string' ? change.to : 'Scope change'
   }

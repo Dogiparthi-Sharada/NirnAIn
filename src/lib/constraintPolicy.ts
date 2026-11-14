@@ -1,16 +1,16 @@
 /**
- * Must hold / Can flex: recommendations and risky combinations
- * (port of the approved mockup's scripts/rules/constraint-policy.js).
+ * Must hold / Can flex rules: the recommended setting per constraint and the risky combinations.
  *
- * The project manager decides whether each constraint is a hard limit; the solver follows.
- * This module recommends a default per constraint and flags combinations that would make the
- * plan misleading. Constraints shows a warning next to the card it concerns; Optimization
- * Results repeats the same items in its "Constraint check" card.
- *
- * Why "hard deadline + flexible capacity" is flagged: it is valid maths, but the solver then
- * meets the date by booking overtime, so the plan looks on time while people are scheduled
- * above their hours — exactly the slip the PM needs to see.
+ * Purpose: The project manager decides whether each constraint is a hard limit and the solver
+ * follows; this module recommends a default and flags combinations that would make the plan
+ * misleading. "Hard deadline + flexible capacity" is flagged because the solver then meets the
+ * date with overtime, so the plan looks on time while people are booked above their hours.
+ * How it fits: Port of the mockup's scripts/rules/constraint-policy.js; Constraints shows each
+ * warning next to its card and Optimization Results repeats them in its "Constraint check" card;
+ * layer: hook/lib.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { formatMoney } from './format'
 
 export type PolicyKey = 'budget' | 'deadline' | 'capacity' | 'skills'
@@ -57,16 +57,19 @@ export interface PolicyRisk {
   fix: string
 }
 
+/** The budget as money for the help text ("the budget" when none is set). */
 function money(cents: number | null): string {
   return cents == null ? 'the budget' : formatMoney(cents, 'USD')
 }
 
+/** An ISO date as "Sep 30, 2025" ("the deadline" when none is set). */
 function longDate(iso: string | null): string {
   if (!iso) return 'the deadline'
   const day = new Date(`${iso}T00:00:00`)
   return day.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+/** An ISO date as "Sep 30" ("the deadline" when none is set). */
 function shortDate(iso: string | null): string {
   if (!iso) return 'the deadline'
   const day = new Date(`${iso}T00:00:00`)

@@ -1,18 +1,15 @@
 /**
- * The add / edit form under the team table on step 5 (approved mockup views/constraints-team.js
- * `openMemberForm` / `saveMember`): name, role, type (employee or contractor), hours per week on
- * this project, for contractors only the hourly rate, and skills.
+ * The add / edit form under the team table on step 5: name, role, worker type, hours, rate and skills.
  *
- * Cost rule: an employee's cost comes from their company record (else the standard $85/h), so the
- * form asks no rate for them; a contractor's rate is required, unless the project has a confirmed
- * contractor rate, which then applies when the field is left blank.
- *
- * The form checks what it can before saving (a name, a role, no second person with the same name,
- * hours a whole number from 1 to 80, a contractor's rate in dollars) and lists every problem at
- * once; the server's answer (for example a 409 duplicate) is shown in the same box. Skills are
- * picked from the project's skill list; skills a person has outside that list are kept when they
- * are edited.
+ * Purpose: An employee's cost comes from their company record, so the form asks no rate for them;
+ * a contractor's rate is required unless the project has a confirmed contractor rate. The form
+ * checks what it can before saving and lists every problem at once, with the server's answer (e.g.
+ * a 409 duplicate) in the same box.
+ * How it fits: Port of the mockup's views/constraints-team.js `openMemberForm` / `saveMember`;
+ * rendered by `screens/constraints/TeamEditor.tsx`; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useEffect, useRef, useState } from 'react'
 import { errorMessage } from '@/lib/api'
 import { parseDollars } from '@/lib/constraints'
@@ -27,6 +24,7 @@ import {
   type TeamMemberInput,
   type WorkerType,
 } from '@/lib/inputs'
+import { toggledIn } from '@/lib/sets'
 
 const NEW_MEMBER_HOURS = '40'
 
@@ -59,15 +57,12 @@ export function MemberForm({ member, team, skills, skillsLoading, projectContrac
 
   const contractor = workerType === 'contractor'
 
+  /** Picks or unpicks a skill for the person. */
   function togglePick(skillName: string) {
-    setPicked((previous) => {
-      const next = new Set(previous)
-      if (next.has(skillName)) next.delete(skillName)
-      else next.add(skillName)
-      return next
-    })
+    setPicked((previous) => toggledIn(previous, skillName))
   }
 
+  /** Checks the form and hands the person to the parent, or lists every problem. */
   function save() {
     const fullName = name.trim()
     const roleTitle = role.trim()

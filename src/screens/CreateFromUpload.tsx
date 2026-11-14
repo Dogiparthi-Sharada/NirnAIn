@@ -1,14 +1,17 @@
 /**
- * Step 1b, Create Project from a meeting transcript or document (mockup create-upload.js).
+ * Step 1b, Create Project from a meeting transcript or document.
  *
- * Input: one file (PDF, Word, transcript) and/or pasted notes. "Read it" sends the source to
- * `POST /orgs/{orgId}/project-drafts/extract`, which saves nothing and returns each project value
- * with its quote and status. Review: the PM checks every value in `DraftReviewForm`; an amber
- * banner lists what still needs them (missing values, unconfirmed inferences) and turns red when
- * Create is clicked too early. Create is never disabled. Create then makes the project (step
- * 'scope'), keeps the file as a project document, starts the AI intake on it and opens Scope
- * Review with router state `{ fromUpload: true, sourceName }` (see `useCreateFromDraft`).
+ * Purpose: "Read it" sends one file and/or pasted notes to the draft extractor, which saves
+ * nothing and returns each value with its quote and status; the PM checks every value, an amber
+ * banner lists what still needs them and turns red when Create is clicked too early. Create is
+ * never disabled.
+ * How it fits: Port of the mockup's create-upload.js; route `projects/new/upload` in `App.tsx`;
+ * uses `useExtractDraft` and `useCreateFromDraft` (`lib/create.ts`), the rules in
+ * `lib/draftReview.ts` and `components/DraftReviewForm.tsx`; Create opens Scope Review with
+ * `{ fromUpload, sourceName }`; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { GapBanner, StatusChip, useBannerFocus } from '@/components/CreateForm'
@@ -59,6 +62,10 @@ export default function CreateFromUpload() {
     document.title = 'Create Project from a document · NirnAIn'
   }, [])
 
+  /**
+   * Takes the first picked file as the source (audio is refused until transcription exists) and says when
+   * more were picked.
+   */
   function attach(files: File[]) {
     setFileError(null)
     const picked = files[0]
@@ -73,6 +80,7 @@ export default function CreateFromUpload() {
     if (files.length > 1) setFileError(`One file at a time: reading ${picked.name}.`)
   }
 
+  /** Sends the file or the pasted notes to be read into a draft and starts the review. */
   function read() {
     if (!file && !notes.trim()) return
     extract.mutate(file ? { file } : { text: notes }, {
@@ -85,26 +93,31 @@ export default function CreateFromUpload() {
     })
   }
 
+  /** Drops the draft and returns to the source step. */
   function backToSource() {
     setDraft(null)
     setReview(null)
     extract.reset()
   }
 
+  /** Stores the PM's edit of one review value. */
   function change(key: ReviewKey, value: string) {
     setReview((previous) => (previous ? { ...previous, [key]: { ...previous[key], value } } : previous))
   }
 
+  /** Marks an inferred review value as confirmed by the PM. */
   function confirm(key: ReviewKey) {
     setReview((previous) => (previous ? { ...previous, [key]: { ...previous[key], confirmed: true } } : previous))
   }
 
+  /** Scrolls to a review field and focuses it (from a banner link). */
   function jump(key: string) {
     const element = document.getElementById(REVIEW_IDS[key as ReviewKey])
     element?.scrollIntoView({ block: 'center' })
     element?.focus()
   }
 
+  /** Creates the project (or a draft) from the reviewed values, or shows what still needs the PM. */
   async function save(intent: ReviewIntent) {
     if (!draft || !review || saving) return
     if (reviewNeeds(review, intent).length > 0) {

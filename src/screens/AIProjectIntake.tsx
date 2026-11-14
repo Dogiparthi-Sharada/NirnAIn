@@ -1,17 +1,17 @@
 /**
- * Step 2, AI Project Intake (mockup intake.js): paste notes and/or attach documents, run the AI
- * intake, and see what it found before Scope Review.
+ * Step 2, AI Project Intake: paste notes or attach documents, run the AI intake and see what it found.
  *
- * Data: the latest run (`useLatestIntakeRun`, polled while queued/running), the project's documents
- * (`POST/GET/DELETE …/documents`, text extracted server-side), the run history ("Previous Intakes",
- * `GET …/intake/runs`) and the extracted scope items (counted by evidence). Projects created from an
- * upload already had their intake run at creation; the `#in-from-upload` note says so, read from the
- * server's runs and documents (`creationSource`), so it shows in every browser.
- *
- * Analyze says why it is disabled (nothing to read yet, or an upload still going), and the status
- * line only says "✓ Analysis complete" for a run started on this visit; an earlier run is shown as
- * the last analysis.
+ * Purpose: The PM gives the AI the project's notes and checks the result before Scope Review.
+ * Analyze says why it can't start (nothing to read yet, or an upload still going), and "✓ Analysis
+ * complete" shows only for a run started on this visit. Projects created from an upload already
+ * had their intake at creation; the `#in-from-upload` note says so in every browser
+ * (`creationSource`).
+ * How it fits: Port of the mockup's intake.js; route `projects/:projectId/intake` in `App.tsx`;
+ * uses the latest run (polled while it works), the project's documents, the run history and the
+ * extracted scope items; layer: screen.
+ * Created: 2026-09-24 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router'
 import DocumentUpload, { checkFile, type UploadEntry } from '@/components/DocumentUpload'
@@ -19,7 +19,16 @@ import PreviousIntakes from '@/components/PreviousIntakes'
 import { errorMessage as describeError, isApiError } from '@/lib/api'
 import { creationSource, useIntakeRuns, type ScopeItemWithEvidence } from '@/lib/create'
 import { formatDateTime } from '@/lib/format'
-import { useDeleteDocument, useDocuments, useLatestIntakeRun, useProject, useScopeItems, useStartIntakeRun, useUploadDocument } from '@/lib/queries'
+import {
+  isRunning,
+  useDeleteDocument,
+  useDocuments,
+  useLatestIntakeRun,
+  useProject,
+  useScopeItems,
+  useStartIntakeRun,
+  useUploadDocument,
+} from '@/lib/queries'
 import { useStepNav } from '@/lib/steps'
 import { PlanInForceBanner } from './changes/InForceBanner'
 
@@ -76,6 +85,7 @@ export default function AIProjectIntake() {
     })),
   ]
 
+  /** Checks and uploads picked files one by one, showing each while it uploads and the first problem. */
   async function addFiles(files: File[]) {
     setUploadError(null)
     for (const file of files) {
@@ -96,6 +106,7 @@ export default function AIProjectIntake() {
     }
   }
 
+  /** Deletes an attached document. */
   function removeFile(key: string) {
     setUploadError(null)
     documentDelete.mutate(key, { onError: (error) => setUploadError(describeError(error)) })
@@ -103,7 +114,7 @@ export default function AIProjectIntake() {
 
   const run = latest.data ?? null
   const status = run?.status ?? null
-  const analyzing = startRun.isPending || status === 'queued' || status === 'running'
+  const analyzing = startRun.isPending || isRunning(status)
   const analyzed = status === 'succeeded'
   const startError = startRun.error && isApiError(startRun.error) ? startRun.error.message : null
   const errorText = startError ?? (status === 'failed' ? (run?.error ?? 'The analysis failed. Try again.') : null)
@@ -127,6 +138,10 @@ export default function AIProjectIntake() {
   else if (analyzed && startedHere) [statusText, statusColor] = [`✓ Analysis complete — ${run?.itemsExtracted ?? 0} items extracted`, 'var(--green)']
   else if (analyzed && run) statusText = `Last analysis ${formatDateTime(run.finishedAt ?? run.createdAt)}: ${run.itemsExtracted ?? 0} items extracted`
 
+  /**
+   * Starts an intake run on the pasted notes (and attached documents) unless one is running or Analyze is
+   * blocked.
+   */
   function handleAnalyze() {
     if (analyzing || blocked) return
     setStartedHere(true)
@@ -261,6 +276,7 @@ export default function AIProjectIntake() {
  */
 function FoundSummary({ items, loading, failed, byRules }: { items: ScopeItemWithEvidence[] | undefined; loading: boolean; failed: boolean; byRules: boolean }) {
   const found = (items ?? []).filter((item) => item.origin === 'ai' && item.status !== 'removed')
+  /** Number of found items with the given evidence. */
   const count = (evidence: string) => found.filter((item) => item.evidence === evidence).length
   const hasEvidence = found.some((item) => item.evidence)
   return (

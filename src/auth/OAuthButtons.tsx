@@ -1,16 +1,16 @@
 /**
- * "Continue with Google / Microsoft" buttons and the "or … with email" divider of the sign-in and
- * create-account screens (mockup views/auth.js).
+ * "Continue with Google / Microsoft" buttons and the "or … with email" divider of the sign-in screens.
  *
- * Starts Supabase OAuth (`signInWithOAuth`, PKCE) and remembers `next` in session storage so
- * `AuthCallback` can send the user on after the provider round trip; the redirect URL itself stays
- * exact, as the providers require. Errors are mapped to friendly copy and handed to the screen.
- *
- * Only providers the auth server has enabled are offered: GoTrue's public `GET /auth/v1/settings`
- * (anon key in the `apikey` header, as supabase-js sends it) lists them under `external`. A
- * disabled provider would answer with a raw JSON error page (QA P-08), so its button, and the
- * divider when none is left, are hidden; nothing shows until the settings are known.
+ * Purpose: Only providers the auth server has enabled may be offered: a disabled provider answers
+ * with a raw JSON error page (QA P-08), so those buttons, and the divider when none is left, are
+ * hidden until GoTrue's public settings list them. The provider redirect URL stays exact, so
+ * `next` waits in session storage during the round trip.
+ * How it fits: Used by `screens/Login.tsx` and `screens/Signup.tsx`; starts Supabase OAuth (PKCE)
+ * and maps errors through `auth/errors.ts`; `screens/AuthCallback.tsx` finishes the round trip;
+ * layer: auth.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { getEnv } from '@/lib/env'
@@ -64,6 +64,9 @@ export default function OAuthButtons({ next, disabled, onPendingChange, onError 
   const [pending, setPending] = useState<OAuthProvider | null>(null)
   const enabled = useEnabledProviders()
 
+  /**
+   * Starts the OAuth redirect for `provider`; on failure clears the busy state and reports a friendly error.
+   */
   async function start(provider: OAuthProvider) {
     setPending(provider)
     onPendingChange?.(true)

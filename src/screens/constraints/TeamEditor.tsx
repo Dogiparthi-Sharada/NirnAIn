@@ -1,17 +1,16 @@
 /**
- * The Team & capacity card on step 5 (approved mockup views/constraints-team.js): who works on
- * this project, their role, whether they are an employee or a contractor and where their cost
- * comes from, the hours per week each can give it, how much of that other projects already book
- * (utilization) and their skills, with the capacity Must hold / Can flex switch.
+ * The Team & capacity card on step 5: who works on the project, their cost basis, hours, utilization and skills.
  *
- * Cost rule: employees are costed at their company rate (else the standard $85/h); contractors at
- * their own rate (else the project's confirmed contractor rate). Both count toward the budget.
- *
- * Capacity rule: Must hold = nobody is scheduled beyond the hours entered here; Can flex = people
- * may be scheduled up to 25% above them (overtime), at a penalty. Hours are edited inline (whole
- * numbers 1–80; anything else is explained and reverted). Data: `GET/POST/PATCH/DELETE
- * …/team` (contract [B]); every change refreshes the step 6 confirmation sheet.
+ * Purpose: Employees are costed at their company rate (else the standard $85/h) and contractors at
+ * their own rate (else the project's contractor rate). Capacity Must hold schedules nobody beyond
+ * their hours; Can flex allows up to 25% overtime at a penalty. Hours are edited inline (whole
+ * numbers 1–80; anything else is explained and reverted).
+ * How it fits: Port of the mockup's views/constraints-team.js; rendered by
+ * `screens/Constraints.tsx`; uses the team hooks in `lib/inputs.ts` (contract [B]) and
+ * `screens/constraints/MemberForm.tsx`; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useState } from 'react'
 import { UtilBar } from '@/components/InputsKit'
 import { errorMessage } from '@/lib/api'
@@ -141,12 +140,14 @@ export function TeamEditor({ projectId, projectContractorRateCents, policy, risk
   const formSaving = addMember.isPending || updateMember.isPending
   const formError = formFor === 'new' ? addMember.error : updateMember.error
 
+  /** Opens the member form for a new person or one on the team. */
   function openForm(target: string) {
     addMember.reset()
     updateMember.reset()
     setFormFor(target)
   }
 
+  /** Adds the new person or saves only what changed for an existing one, then closes the form. */
   function saveForm(input: TeamMemberInput) {
     if (!editing) {
       addMember.mutate(newMemberBody(input), {
@@ -173,6 +174,7 @@ export function TeamEditor({ projectId, projectContractorRateCents, policy, risk
     )
   }
 
+  /** Saves a person's hours per week, or explains the rule in a toast. */
   function saveHours(member: ProjectTeamMember, text: string) {
     const hours = Number(text)
     if (text.trim() === '' || !isWholeHours(hours)) {
@@ -182,6 +184,7 @@ export function TeamEditor({ projectId, projectContractorRateCents, policy, risk
     updateHours.mutate({ employeeId: member.employeeId, patch: { hoursPerWeek: hours } }, { onError: reportFailure })
   }
 
+  /** Removes a person from the project (closing their form if it is open). */
   function remove(member: ProjectTeamMember) {
     if (formFor === member.employeeId) setFormFor(null)
     removeMember.mutate(member.employeeId, {

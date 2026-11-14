@@ -1,7 +1,12 @@
 /**
- * Build-time configuration (Vite inlines `import.meta.env.VITE_*` at build).
- * Validated once at startup; `main.tsx` renders a config error screen instead
- * of the app when anything is missing or malformed.
+ * Build-time configuration: reads and validates the `VITE_*` variables once at startup.
+ *
+ * Purpose: A build with missing or malformed configuration must say so plainly instead of failing
+ * on the first request, and the browser may only ever see the publishable Supabase key.
+ * How it fits: `main.tsx` checks `envResult` and shows `ConfigErrorPage` instead of the app when
+ * anything is wrong; `lib/api.ts` and `lib/supabase.ts` read the validated values through
+ * `getEnv`; layer: config.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
  */
 
 export interface AppEnv {
@@ -18,6 +23,9 @@ export interface EnvProblem {
 
 export type EnvResult = { ok: true; env: AppEnv } | { ok: false; problems: EnvProblem[] }
 
+/**
+ * Reads one URL variable; records a problem and returns '' when it is unset or not an absolute http(s) URL.
+ */
 function readUrl(name: string, raw: string | undefined, problems: EnvProblem[]): string {
   const value = raw?.trim() ?? ''
   if (!value) {
@@ -34,6 +42,7 @@ function readUrl(name: string, raw: string | undefined, problems: EnvProblem[]):
   }
 }
 
+/** Checks every required variable and returns the config or the list of problems. */
 function validate(): EnvResult {
   const problems: EnvProblem[] = []
   const supabaseUrl = readUrl('VITE_SUPABASE_URL', import.meta.env.VITE_SUPABASE_URL, problems)
@@ -52,7 +61,7 @@ export const envResult: EnvResult = validate()
 export function getEnv(): AppEnv {
   if (!envResult.ok) {
     throw new Error(
-      `Invalid configuration: ${envResult.problems.map((p) => `${p.name} ${p.message}`).join('; ')}`,
+      `Invalid configuration: ${envResult.problems.map((problem) => `${problem.name} ${problem.message}`).join('; ')}`,
     )
   }
   return envResult.env

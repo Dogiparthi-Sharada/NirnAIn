@@ -1,12 +1,16 @@
 /**
- * The docked NirnAIn AI panel (mockup scripts/views/chat.js, `aside#chat`): a greeting that names
- * the current screen, starter prompts, the conversation log and the question form.
+ * The docked NirnAIn AI panel: greeting, starter prompts, conversation log and question form.
  *
- * Questions go to `POST /api/v1/assistant/messages {projectId?, page, messages}` (via `useAssistant`)
- * with the conversation so far. When the assistant is unavailable the panel answers with general
- * guidance from `lib/assistant.ts`, labelled as such. The panel stays mounted while closed (hidden)
- * so the conversation survives closing and reopening; Escape inside it closes it.
+ * Purpose: The PM can ask about the screen they are on; when the assistant is unavailable the
+ * panel answers with labelled general guidance from `lib/assistant.ts` instead of inventing
+ * project facts. The panel stays mounted while closed so the conversation survives closing and
+ * reopening, and Escape inside it closes it.
+ * How it fits: Port of the mockup's scripts/views/chat.js (`aside#chat`); rendered by
+ * `components/Shell.tsx`; sends questions through `useAssistant` (`POST
+ * /api/v1/assistant/messages`); layer: component.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent, type Ref } from 'react'
 import { errorMessage } from '@/lib/api'
 import { ASSISTANT_SUGGESTIONS, assistantUnavailable, guidanceReply, MAX_HISTORY, MAX_MESSAGE_CHARS } from '@/lib/assistant'
@@ -52,10 +56,15 @@ export default function AIChat({
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight })
   }, [messages, typing])
 
+  /** Adds a message to the log with the next local id. */
   function append(message: Omit<ChatMessage, 'id'>) {
     setMessages((previous) => [...previous, { ...message, id: nextId.current++ }])
   }
 
+  /**
+   * Sends a question with the conversation so far (guidance and error replies left out); a failure becomes a
+   * labelled guidance or error reply.
+   */
   function ask(text: string) {
     const trimmed = text.trim()
     if (!trimmed || typing) return
@@ -82,11 +91,13 @@ export default function AIChat({
     )
   }
 
+  /** Sends the typed question when the form is submitted. */
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     ask(question)
   }
 
+  /** Closes the panel on Escape without letting the key reach the page. */
   function onKeyDown(event: KeyboardEvent<HTMLElement>) {
     if (event.key === 'Escape') {
       event.stopPropagation()

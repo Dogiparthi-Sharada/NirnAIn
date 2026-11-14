@@ -1,219 +1,36 @@
 /**
- * Data layer of step 7, Changes & Versions: API types and TanStack Query hooks.
+ * Data layer of step 7, Changes & Versions: TanStack Query hooks and run helpers.
  *
- * After a plan is applied, a change (meeting notes, direct edits or a progress update) is
- * analysed by the backend into detected changes and questions; once answered, it is re-planned
- * with C1's optimizer against the plan in force and approved or rejected. This module mirrors
- * the backend models (`app/domain/changes.py`, plan versions from `app/domain/plan.py`), wraps
- * every endpoint the flow uses (plan versions, change requests, team, re-plan run, comparison,
- * decision, notes extraction) and keeps the cache fresh: approving a plan invalidates every
- * query it changes. Used by `src/screens/ChangesVersions.tsx` and `src/screens/changes/`.
+ * Purpose: After a plan is applied, a change (meeting notes, direct edits or a progress update) is
+ * analysed by the backend into detected changes and questions; once answered it is re-planned
+ * against the plan in force and approved or rejected. Approving a plan invalidates every query it
+ * changes.
+ * How it fits: Wraps every endpoint of the flow (plan versions, change requests, team, re-plan
+ * run, comparison, decision, notes extraction) for `screens/ChangesVersions.tsx` and
+ * `screens/changes/*`; re-exports the wire types from `changeTypes.ts`; layer: hook/lib.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch, isApiError } from './api'
-import { queryKeys } from './queries'
+import type {
+  ChangeComparison,
+  ChangeEdits,
+  ChangePerson,
+  ChangeRequest,
+  ChangeSource,
+  KeepDate,
+  KeepDateRemedy,
+  KeepDateRemedyId,
+  PlanOverrides,
+  PlanVersion,
+} from './changeTypes'
+import { isRunning, pollWhileRunning, queryKeys } from './queries'
+import { projectPath } from './queries/paths'
 import type { OptimizationRun, RunResult, RunStatus, TeamMember } from './types'
 
-/* ───────────────────────────── Types (backend: app/domain/changes.py) ───────────────────────────── */
-
-/** An applied plan: Plan v1, v2… (BE1 `GET /projects/{id}/plan-versions`, oldest first). */
-export interface PlanVersion {
-  version: number
-  runId: string
-  appliedAt: string | null
-  completionDate: string | null
-  expectedCostCents: number | null
-  solver: string | null
-  label: string | null
-}
-
-export type ChangeSource = 'notes' | 'edits' | 'progress'
-export type ChangeKind = 'budget' | 'deadline' | 'duration' | 'capacity' | 'scope' | 'team'
-/** team: someone joins / leaves the project; scope: a requirement is added / removed. */
-export type ChangeAction = 'add' | 'remove'
-export type ChangeStatus = 'draft' | 'analyzing' | 'ready' | 'replanning' | 'proposed' | 'approved' | 'rejected' | 'failed'
-
-export interface TargetOption {
-  id: string
-  label: string
-  from: number | null
-  to: number | null
-}
-
-/** Employees are already in the company (costed from their company record); contractors bring their own rate. */
-export type WorkerType = 'employee' | 'contractor'
-
-/**
- * Someone joining the project mid-way. An employee has no rate here; a contractor needs one
- * (the project's contractor rate is the default when set; otherwise the API answers 422).
- */
-export interface NewMember {
-  fullName: string
-  roleTitle: string
-  /** Whole hours per week on this project, 1–80. */
-  hoursPerWeek: number
-  skills: string[]
-  workerType: WorkerType
-  hourlyRateCents?: number | null
-}
-
-/** A newcomer in the re-plan overrides, with the organization employee the change reserved for them. */
-export interface AddedMember extends NewMember {
-  employeeId: string
-}
-
-/**
- * budget = cents, deadline = ISO date, duration = working days, capacity = hours/week (0 = leaves),
- * scope = text, team = hours/week of who joins (`member`; null until the notes say) or leaves (0).
- */
-export interface DetectedChange {
-  id: string
-  kind: ChangeKind
-  action: ChangeAction | null
-  member: NewMember | null
-  target: string | null
-  targetLabel: string | null
-  from: number | string | null
-  to: number | string | null
-  quote: string | null
-  speaker: string | null
-  confidence: number
-  note: string | null
-  candidates: TargetOption[]
-  /** The policy the notes state with a new budget or deadline ("must hold" = hard); absent on older changes. */
-  mode?: 'hard' | 'soft' | null
-}
-
-export interface ChangeQuestion {
-  id: string
-  kind: 'budget' | 'deadline' | 'duration' | 'capacity' | 'target' | 'team' | 'rate'
-  changeId: string
-  tier: 'high' | 'blocking'
-  text: string
-  why: string | null
-  options: { value: string; label: string }[]
-}
-
-export interface ChangeImpact {
-  changes: DetectedChange[]
-  questions: ChangeQuestion[]
-  affects: {
-    tasks: { id: string; code: string; name: string }[]
-    people: { id: string; name: string }[]
-    costCents: number | null
-    completionDate: string | null
-  }
-  /** `rules` when the deterministic reader ran (no AI key), else the Claude model id. */
-  model: string
-}
-
-/** Body of `overrides` on C1's `POST /projects/{id}/optimization/runs`. */
-export interface PlanOverrides {
-  budgetTotalCents?: number
-  mustFinishBy?: string
-  durationDays?: Record<string, number>
-  hoursPerWeek?: Record<string, number>
-  addMembers?: AddedMember[]
-  removeMembers?: string[]
-  /** The policy the notes state with the chosen budget / deadline (sent to the re-plan as is). */
-  budgetMode?: 'hard' | 'soft'
-  deadlineMode?: 'hard' | 'soft'
-}
-
-export interface ChangeRequest {
-  id: string
-  projectId: string
-  source: ChangeSource
-  inputText: string | null
-  status: ChangeStatus
-  impact: ChangeImpact | null
-  answers: Record<string, string>
-  baseRunId: string | null
-  baseVersion: number | null
-  proposedRunId: string | null
-  proposedRunStatus: RunStatus | null
-  error: string | null
-  createdAt: string
-  decidedAt: string | null
-  /** Set once every question is answered. */
-  overrides: PlanOverrides | null
-}
-
-export interface ChangeEdits {
-  budgetTotalCents?: number
-  mustFinishBy?: string
-  durationDays?: Record<string, number>
-  hoursPerWeek?: Record<string, number>
-  /** Percent complete per work package (100 = done). */
-  progress?: Record<string, number>
-  /** People joining the project (at most 10). */
-  addMembers?: NewMember[]
-  /** Employee ids of team members leaving the project. */
-  removeMembers?: string[]
-}
-
-export interface PlanBar {
-  start: string
-  end: string
-  owner: string | null
-}
-
-export interface CompareRow {
-  wbsNodeId: string
-  code: string
-  name: string
-  groupCode: string | null
-  groupName: string | null
-  before: PlanBar | null
-  after: PlanBar | null
-  shiftDays: number | null
-  ownerChanged: boolean
-  why: string | null
-}
-
-export interface PlanSide {
-  runId: string
-  version: number | null
-  status: RunStatus
-  expectedCostCents: number | null
-  completionDate: string | null
-  budgetCents: number | null
-  mustFinishBy: string | null
-}
-
-export interface ChangeComparison {
-  base: PlanSide
-  proposed: PlanSide
-  rows: CompareRow[]
-}
-
-/**
- * A priced way to keep the target date after a re-plan slips (C1/H11 `result.remedies[]`), or to
- * get a plan at all; `combined` (round 3, R6) changes several inputs together when no single one
- * is enough (absent on older servers).
- */
-export type KeepDateRemedyId = 'specialist' | 'overtime' | 'move_deadline' | 'combined'
-
-export interface KeepDateRemedy {
-  id: KeepDateRemedyId
-  title: string
-  detail: string
-  /** Extra cost versus the re-planned plan, in cents. */
-  costCents: number | null
-  completionDate: string | null
-  /** What the combined option changes, e.g. `{kind: 'deadline', label: 'Move go-live to Jun 24, 2027'}`. */
-  changes?: { kind: 'deadline' | 'budget' | 'specialist' | 'capacity'; label: string }[]
-}
-
-/** What the re-plan says about the date: the date it tried to keep and how far it slipped. */
-export interface KeepDate {
-  completionDate: string | null
-  /** For a step 7 re-plan: the completion date of the plan in force. */
-  targetDate: string | null
-  /** Working days after `targetDate` (0 = on time). */
-  slipDays: number
-  remedies: KeepDateRemedy[]
-}
+export type * from './changeTypes'
+export { isRunning }
 
 interface DateSummary {
   completionDate?: string | null
@@ -232,17 +49,6 @@ export function keepDateOf(run: OptimizationRun): KeepDate {
   }
 }
 
-/** Who is on the project and the hours each gives it (B's team, else the org pool). */
-export interface ChangePerson {
-  employeeId: string
-  fullName: string
-  hoursPerWeek: number
-}
-
-/* ───────────────────────────── Hooks ───────────────────────────── */
-
-const RUN_POLL_MS = 2000
-
 const keys = {
   versions: (projectId: string) => ['projects', projectId, 'plan-versions'] as const,
   changes: (projectId: string) => ['projects', projectId, 'changes'] as const,
@@ -251,29 +57,30 @@ const keys = {
   compare: (changeId: string, runId: string) => ['changes', changeId, 'compare', runId] as const,
 }
 
-const project = (projectId: string, suffix: string) => `/api/v1/projects/${encodeURIComponent(projectId)}${suffix}`
-const change = (changeId: string, suffix = '') => `/api/v1/changes/${encodeURIComponent(changeId)}${suffix}`
-
-export function isRunning(status: RunStatus | null | undefined): boolean {
-  return status === 'queued' || status === 'running'
+/** `/api/v1/changes/{changeId}{suffix}`, with the id URL-encoded. */
+function changePath(changeId: string, suffix = ''): string {
+  return `/api/v1/changes/${encodeURIComponent(changeId)}${suffix}`
 }
 
+/** True when a run ended with a usable plan (optimal or feasible). */
 export function isSolved(status: RunStatus | null | undefined): boolean {
   return status === 'optimal' || status === 'feasible'
 }
 
+/** Fetches the applied plan versions (Plan v1, v2…), oldest first. */
 export function usePlanVersions(projectId: string) {
   return useQuery({
     queryKey: keys.versions(projectId),
-    queryFn: ({ signal }) => apiFetch<PlanVersion[]>(project(projectId, '/plan-versions'), { signal }),
+    queryFn: ({ signal }) => apiFetch<PlanVersion[]>(projectPath(projectId, '/plan-versions'), { signal }),
     enabled: Boolean(projectId),
   })
 }
 
+/** Fetches the project's change requests, newest first. */
 export function useChanges(projectId: string, enabled = true) {
   return useQuery({
     queryKey: keys.changes(projectId),
-    queryFn: ({ signal }) => apiFetch<ChangeRequest[]>(project(projectId, '/changes'), { signal }),
+    queryFn: ({ signal }) => apiFetch<ChangeRequest[]>(projectPath(projectId, '/changes'), { signal }),
     enabled: Boolean(projectId) && enabled,
   })
 }
@@ -285,44 +92,48 @@ export function useChangeTeam(projectId: string, enabled = true) {
     queryFn: async ({ signal }): Promise<ChangePerson[]> => {
       try {
         const team = await apiFetch<{ employeeId: string; fullName: string; hoursPerWeek: number }[]>(
-          project(projectId, '/team'),
+          projectPath(projectId, '/team'),
           { signal },
         )
         if (team.length > 0) return team.map(({ employeeId, fullName, hoursPerWeek }) => ({ employeeId, fullName, hoursPerWeek }))
       } catch (error) {
         if (!isApiError(error) || error.status !== 404) throw error
       }
-      const pool = await apiFetch<TeamMember[]>(project(projectId, '/capacity'), { signal })
+      const pool = await apiFetch<TeamMember[]>(projectPath(projectId, '/capacity'), { signal })
       return pool.map((member) => ({ employeeId: member.employeeId, fullName: member.fullName, hoursPerWeek: member.weeklyCapacityHours }))
     },
     enabled: Boolean(projectId) && enabled,
   })
 }
 
+/** Puts a change request into the cached list: replaced in place when known, else added first. */
 function upsert(list: ChangeRequest[] | undefined, item: ChangeRequest): ChangeRequest[] {
   if (!list) return [item]
   return list.some((entry) => entry.id === item.id) ? list.map((entry) => (entry.id === item.id ? item : entry)) : [item, ...list]
 }
 
+/** Returns a function that writes a saved change request into the cached list. */
 function useStoreChange(projectId: string) {
   const queryClient = useQueryClient()
   return (item: ChangeRequest) => queryClient.setQueryData<ChangeRequest[]>(keys.changes(projectId), (previous) => upsert(previous, item))
 }
 
+/** Creates a change request from notes, edits or a progress update and caches it. */
 export function useCreateChange(projectId: string) {
   const store = useStoreChange(projectId)
   return useMutation({
     mutationFn: (body: { source: ChangeSource; text?: string; edits?: ChangeEdits }) =>
-      apiFetch<ChangeRequest>(project(projectId, '/changes'), { method: 'POST', json: body }),
+      apiFetch<ChangeRequest>(projectPath(projectId, '/changes'), { method: 'POST', json: body }),
     onSuccess: store,
   })
 }
 
+/** Saves the answers to a change's questions and caches the updated change. */
 export function useAnswerChange(projectId: string) {
   const store = useStoreChange(projectId)
   return useMutation({
     mutationFn: ({ changeId, answers }: { changeId: string; answers: Record<string, string> }) =>
-      apiFetch<ChangeRequest>(change(changeId), { method: 'PATCH', json: { answers } }),
+      apiFetch<ChangeRequest>(changePath(changeId), { method: 'PATCH', json: { answers } }),
     onSuccess: store,
   })
 }
@@ -332,7 +143,7 @@ export function useReplan(projectId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: { overrides: PlanOverrides; changeRequestId: string; baselineRunId: string | null; remedy?: KeepDateRemedyId }) =>
-      apiFetch<OptimizationRun>(project(projectId, '/optimization/runs'), { method: 'POST', json: body }),
+      apiFetch<OptimizationRun>(projectPath(projectId, '/optimization/runs'), { method: 'POST', json: body }),
     onSuccess: (run) => {
       queryClient.setQueryData(keys.run(projectId, run.id), run)
       void queryClient.invalidateQueries({ queryKey: keys.changes(projectId) })
@@ -344,27 +155,32 @@ export function useReplan(projectId: string) {
 export function useRun(projectId: string, runId: string | null) {
   return useQuery({
     queryKey: keys.run(projectId, runId ?? ''),
-    queryFn: ({ signal }) => apiFetch<OptimizationRun>(project(projectId, `/optimization/runs/${encodeURIComponent(runId ?? '')}`), { signal }),
+    queryFn: ({ signal }) => apiFetch<OptimizationRun>(projectPath(projectId, `/optimization/runs/${encodeURIComponent(runId ?? '')}`), { signal }),
     enabled: Boolean(projectId && runId),
-    refetchInterval: (query) => (isRunning(query.state.data?.status) ? RUN_POLL_MS : false),
+    refetchInterval: (query) => pollWhileRunning(query.state.data?.status),
   })
 }
 
+/** Fetches the before/after comparison of a change's re-plan against the plan in force. */
 export function useCompare(changeId: string | null, runId: string | null, enabled: boolean) {
   return useQuery({
     queryKey: keys.compare(changeId ?? '', runId ?? ''),
     queryFn: ({ signal }) =>
-      apiFetch<ChangeComparison>(change(changeId ?? '', `/compare?runId=${encodeURIComponent(runId ?? '')}`), { signal }),
+      apiFetch<ChangeComparison>(changePath(changeId ?? '', `/compare?runId=${encodeURIComponent(runId ?? '')}`), { signal }),
     enabled: Boolean(changeId && runId) && enabled,
   })
 }
 
+/**
+ * Approves or rejects a change; an approval applies a new plan version, so every query it changes is
+ * refreshed.
+ */
 export function useDecideChange(projectId: string) {
   const queryClient = useQueryClient()
   const store = useStoreChange(projectId)
   return useMutation({
     mutationFn: ({ changeId, decision, runId }: { changeId: string; decision: 'approve' | 'reject'; runId?: string | null }) =>
-      apiFetch<ChangeRequest>(change(changeId, `/${decision}`), {
+      apiFetch<ChangeRequest>(changePath(changeId, `/${decision}`), {
         method: 'POST',
         json: decision === 'approve' && runId ? { runId } : {},
       }),
@@ -383,7 +199,6 @@ export function useDecideChange(projectId: string) {
         ['projects', projectId, 'skills'],
         queryKeys.scopeItems(projectId),
         ['projects', projectId, 'overview'],
-        queryKeys.notifications,
         ['orgs'],
       ]) {
         void queryClient.invalidateQueries({ queryKey: key })

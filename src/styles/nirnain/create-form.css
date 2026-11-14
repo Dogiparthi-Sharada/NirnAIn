@@ -1,15 +1,16 @@
 /**
- * NirnAIn mockup · styles/create-form.css
+ * Create Project layout: numbered section cards, the sticky checklist and action bar, and the gap banner.
  *
- * PURPOSE
- *   Calmer Create Project layout: numbered section cards, a sticky "Required to continue"
- *   checklist on the right, a sticky action bar at the bottom, and a prominent banner
- *   that lists missing required fields. Shared by the manual form and the upload review.
- *
- * DEPENDS ON   styles/base.css (colour tokens, .card, .field, .in)
- * AUTHOR       Sharada Dogiparthi
- * CREATED      2026-11-11
+ * Purpose: A calmer form: the "Required to continue" checklist stays on the right, actions stay at
+ * the bottom and a prominent banner lists missing required fields; shared by the manual form and
+ * the upload review.
+ * How it fits: Approved mockup stylesheet (styles/create-form.css by Sharada Dogiparthi,
+ * 2026-11-11), rules ported unchanged; imported by `index.css`; builds on `base.css`;
+ * layer: styles.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
+
 
 /* ---- Two columns: form on the left, checklist rail on the right ----
    The breakpoint uses the page's own width (container query), not the window's, because

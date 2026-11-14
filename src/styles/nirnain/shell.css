@@ -1,12 +1,11 @@
 /**
- * NirnAIn mockup · styles/shell.css
+ * Chrome around the screens: the signed-in app shell (sidebar, main area, assistant panel).
  *
- * PURPOSE
- *   Chrome around the screens: the mockup bar and the signed-in app shell.
- *
- * DEPENDS ON   styles/base.css (colour tokens)
- * AUTHOR       Sharada Dogiparthi
- * CREATED      2026-11-11
+ * Purpose: Gives the signed-in frame the approved design's sidebar, workflow steps, account menu
+ * and docked assistant.
+ * How it fits: Approved mockup stylesheet (styles/shell.css by Sharada Dogiparthi, 2026-11-11),
+ * rules ported unchanged; imported by `index.css`; used by `components/Shell.tsx`; layer: styles.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
 
 /* ---- Mockup bar: the dark strip on top (screen jumper, label toggle). Not part of the product. ---- */

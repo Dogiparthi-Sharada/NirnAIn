@@ -1,12 +1,13 @@
 /**
  * Scope Review's own list of scope items, removed ones included.
  *
- * What: the project's scope items fetched with `?includeRemoved=true`, plus a helper that
- * merges an added or edited item into that list. Why: removed items must stay listed with
- * Undo after a reload (QA S-15); the shared `useScopeItems` list (AI Intake, WBS Builder) keeps
- * leaving them out. How it fits: the key sits under `queryKeys.scopeItems`, so every refresh
- * of the shared list (a new intake run) refreshes this one too. Used by `ScopeReview.tsx`.
+ * Purpose: Removed items must stay listed with Undo after a reload (QA S-15), while the shared
+ * `useScopeItems` list (AI Intake, WBS Builder) keeps leaving them out.
+ * How it fits: Used by `screens/ScopeReview.tsx`; its key sits under `queryKeys.scopeItems`, so
+ * every refresh of the shared list (a new intake run) refreshes this one too; layer: screen.
+ * Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { apiFetch } from '@/lib/api'

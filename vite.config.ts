@@ -1,3 +1,14 @@
+/**
+ * Vite build and dev-server configuration, including the Figma Make plugins.
+ *
+ * Purpose: Builds the React app with Tailwind v4 and the `@` path alias; the Figma Make plugins
+ * (site configuration, error overlay replay, React refresh fallback, Make kit) must stay intact so
+ * the project keeps working inside Figma Make.
+ * How it fits: Used by `pnpm dev` and `pnpm build` (and Figma Make's preview); reads
+ * `.figma/make/site.json`; layer: config.
+ * Created: 2026-09-24 · Version: 1.0 (NirnAIn demo release)
+ */
+
 import { defineConfig, type HtmlTagDescriptor, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'

@@ -1,13 +1,15 @@
 /**
- * Step 1a, Create Project by hand (mockup create-form.js): four short numbered sections (two
- * required, two optional), a sticky "Required to continue" checklist and a gap banner.
+ * Step 1a, Create Project by hand: four numbered sections, the "Required to continue" checklist and a gap banner.
  *
- * Continue and Save Draft are never disabled: a blocked click lists every gap in the banner (each a
- * link that focuses its field) and outlines the fields red. Continue creates the project
- * (`POST /orgs/{orgId}/projects`, status planning, step intake), uploads any attached files as
- * project documents and opens AI Project Intake; Save Draft needs only a name. The rules live in
- * `lib/createForm.ts`; the shared pieces in `components/CreateForm.tsx`.
+ * Purpose: Continue and Save Draft are never disabled: a blocked click lists every gap in the
+ * banner (each a link that focuses its field) and outlines the fields red. Continue creates the
+ * project, uploads any attached files as project documents and opens AI Project Intake; Save Draft
+ * needs only a name.
+ * How it fits: Port of the mockup's create-form.js; route `projects/new/form` in `App.tsx`; rules
+ * in `lib/createForm.ts`, shared pieces in `components/CreateForm.tsx`; layer: screen.
+ * Created: 2026-09-24 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { useOrg } from '@/org/useOrg'
@@ -66,7 +68,11 @@ export default function CreateProject() {
     document.title = 'Create Project · NirnAIn'
   }, [])
 
-  function update<K extends FieldName>(key: K, value: FormState[K]) {
+  /**
+   * Stores one field's value; after the first submit the form re-validates live so the banner shrinks as gaps
+   * are fixed.
+   */
+  function update<TField extends FieldName>(key: TField, value: FormState[TField]) {
     const next = { ...form, [key]: value }
     setForm(next)
     // After the first click, re-validate live so the banner shrinks as gaps are fixed.
@@ -85,6 +91,7 @@ export default function CreateProject() {
     })
   }
 
+  /** The shared props of a field's control: id, name, invalid outline and error description. */
   function bind(name: FieldName) {
     const id = FIELD_IDS[name]
     return {
@@ -96,6 +103,10 @@ export default function CreateProject() {
     }
   }
 
+  /**
+   * Validates for the intent, creates the project, uploads attached files and moves on; server field errors
+   * go back on the form.
+   */
   async function submit(intent: Intent) {
     if (busy.current) return
     setSubmitted(intent)
@@ -136,6 +147,7 @@ export default function CreateProject() {
     }
   }
 
+  /** Submitting the form (Enter) means Continue. */
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     void submit('continue')

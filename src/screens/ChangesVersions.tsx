@@ -1,15 +1,15 @@
 /**
- * Step 7, Changes & Versions (`/projects/:projectId/changes`), ported from the approved
- * mockup (`views/changes.js`, `changes-impact.js`, `changes-compare.js`).
+ * Step 7, Changes & Versions: record what changed after a plan was applied, re-plan and approve the next version.
  *
- * Something changed after a plan was applied: new meeting notes, direct edits or a
- * progress update. NirnAIn shows what it affects, re-plans with as little disruption as
- * possible (C1's optimizer, the plan in force as baseline) and keeps Plan vN in force until
- * Plan vN+1 is approved. Locked until a plan is applied (BE1's plan versions are empty).
- *
- * Data: `src/lib/changes.ts` (plan versions, change requests, re-plan run, comparison).
- * Panels live in `src/screens/changes/`.
+ * Purpose: New meeting notes, direct edits or a progress update are analysed into what they
+ * affect; NirnAIn re-plans with as little disruption as possible against the plan in force and
+ * keeps Plan vN in force until Plan vN+1 is approved. The step is locked until a plan is applied.
+ * How it fits: Port of the mockup's views/changes.js, changes-impact.js and changes-compare.js;
+ * route `projects/:projectId/changes` in `App.tsx`; data from `lib/changes.ts`, panels in
+ * `screens/changes/*`; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { errorMessage } from '@/lib/api'

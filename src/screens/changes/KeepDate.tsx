@@ -1,17 +1,14 @@
 /**
- * "Ways to keep the date" on step 7 (round 2, D2): after a re-plan that finishes later than
- * the plan in force, or finds no plan at all, the PM sees how far it slipped and the priced
- * ways to keep the date, and decides. Nothing is chosen automatically.
+ * "Ways to keep the date" on step 7, after a re-plan that finishes later or finds no plan at all.
  *
- * Data: the re-plan run's `result.summary` (completionDate, targetDate, slipDays) and
- * `result.remedies[]` (`keepDateOf` in `src/lib/changes.ts`). "Use this option" re-plans the
- * change with that `remedy` (plus its overrides, change id and baseline); "Accept {date}"
- * approves the slipped plan as it is, or, when no plan was found, re-plans with the new date.
- * Markup: the mockup's advice card ("Your call") from the Optimization Results screen. An
- * infeasible re-plan's wording follows its conflict (budget, date, skills or hours, QA NEW-7h)
- * and "Change these together" (R6 `combined`) lists every change it makes; overtime always
- * shows its paid hours (helpers shared with step 6 in `optimization/KeepDateCard.tsx`).
+ * Purpose: The PM sees how far the re-plan slipped and the priced ways to keep the date, and
+ * decides; nothing is chosen automatically. "Use this option" re-plans with that remedy; "Accept
+ * {date}" approves the slipped plan, or re-plans with the new date when no plan was found.
+ * How it fits: Rendered by `ChangeImpact.tsx` from the run's summary and remedies (`keepDateOf`);
+ * shares wording and markup with step 6's `optimization/KeepDateCard.tsx`; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import type { KeepDate, KeepDateRemedyId } from '@/lib/changes'
 import { formatDate } from '@/lib/format'
 import { blockerWording, changeCount, optionCost, RemedyChanges } from '../optimization/KeepDateCard'

@@ -1,8 +1,13 @@
 /**
- * Rows of the step 7 impact card: each detected change (kind, before → after, the verbatim
- * quote from the notes) and the questions it raises, rendered with the mockup's `.chg`,
- * `.flag`, `.q` and `.opt` patterns. Used by `ChangeImpact`, which saves each answer.
+ * Rows of the step 7 impact card: each detected change and the questions it raises.
+ *
+ * Purpose: Shows each change's kind, before → after and the verbatim quote from the notes, so the
+ * PM can check it against what was said before answering.
+ * How it fits: Rendered by `ChangeImpact.tsx`, which saves each answer; uses the mockup's `.chg`,
+ * `.flag`, `.q` and `.opt` patterns; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import type { ChangeQuestion, ChangeSource, DetectedChange } from '@/lib/changes'
 import { Chip, changeTitle, changeValue, kindLabel } from './ui'
 

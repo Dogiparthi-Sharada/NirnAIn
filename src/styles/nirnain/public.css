@@ -1,12 +1,10 @@
 /**
- * NirnAIn mockup · styles/public.css
+ * Public page styles: the landing page and the auth screens.
  *
- * PURPOSE
- *   Public pages: landing and the four auth screens.
- *
- * DEPENDS ON   styles/base.css (colour tokens)
- * AUTHOR       Sharada Dogiparthi
- * CREATED      2026-11-11
+ * Purpose: Gives the public pages the approved design's header, hero, sections and sign-in panels.
+ * How it fits: Approved mockup stylesheet (styles/public.css by Sharada Dogiparthi, 2026-11-11),
+ * rules ported unchanged; imported by `index.css`; builds on `base.css`; layer: styles.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
 
 /* ---- Landing page (route /). ---- */

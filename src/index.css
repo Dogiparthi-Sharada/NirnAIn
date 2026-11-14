@@ -1,3 +1,14 @@
+/**
+ * The app's stylesheet entry: fonts, Tailwind theme and utilities, the approved NirnAIn styles and app-only rules.
+ *
+ * Purpose: The approved design is built on browser defaults plus its own base styles, so Tailwind
+ * is loaded without Preflight; theme tokens live here (Tailwind v4 has no config file) and
+ * `@import`s stay first.
+ * How it fits: Imported once by `main.tsx`; pulls in `styles/nirnain/*.css` in the design's order;
+ * layer: styles.
+ * Created: 2026-09-24 · Version: 1.0 (NirnAIn demo release)
+ */
+
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
 /* Tailwind theme + utilities without Preflight: the approved NirnAIn design (styles/nirnain)
    is built on browser defaults plus its own base.css. */

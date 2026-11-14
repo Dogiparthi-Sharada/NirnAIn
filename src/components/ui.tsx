@@ -1,20 +1,18 @@
-import {
-  useId,
-  useState,
-  type ButtonHTMLAttributes,
-  type CSSProperties,
-  type InputHTMLAttributes,
-  type ReactNode,
-  type Ref,
-} from 'react'
-import { PASSWORD_RULES } from '@/auth/password'
+/**
+ * Shared UI primitives: spinners, the button and the error state.
+ *
+ * Purpose: Every data view needs the same loading and error states and an accessible button with
+ * visible focus and a busy state that doesn't shift the layout.
+ * How it fits: Used by the auth guards, `org/OrgProvider.tsx` and screens; layer: component.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+ */
 
-function cx(...classes: (string | false | null | undefined)[]): string {
-  return classes.filter(Boolean).join(' ')
-}
+import type { ButtonHTMLAttributes } from 'react'
+import { cx } from '@/lib/classNames'
 
 /* ─────────────────────────── Spinner ─────────────────────────── */
 
+/** A spinning circle; decorative (hidden from screen readers). */
 export function Spinner({ size = 16, className }: { size?: number; className?: string }) {
   return (
     <svg
@@ -31,6 +29,7 @@ export function Spinner({ size = 16, className }: { size?: number; className?: s
   )
 }
 
+/** A centred spinner with a label, announced politely, for whole-page loading. */
 export function FullPageSpinner({ label = 'Loading' }: { label?: string }) {
   return (
     <div role="status" aria-live="polite" className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
@@ -57,6 +56,10 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: 'sm' | 'md' | 'lg'
 }
 
+/**
+ * A button in the primary, secondary or ghost style that shows a spinner while `loading` without changing its
+ * width.
+ */
 export function Button({
   variant = 'primary',
   loading = false,
@@ -96,209 +99,9 @@ export function Button({
   )
 }
 
-/* ─────────────────────────── Alert ─────────────────────────── */
-
-type AlertTone = 'error' | 'success' | 'info' | 'warning'
-
-const ALERT_TONES: Record<AlertTone, string> = {
-  error: 'border-[#E6BDB8] bg-[#F3D9D5] text-[#8A2F3D]',
-  success: 'border-[#BFD1AE] bg-[#EEF2E6] text-[#3E6339]',
-  info: 'border-border bg-background text-secondary-foreground',
-  warning: 'border-[#f1d9b8] bg-[#fdf3e7] text-[#8a5518]',
-}
-
-export function Alert({
-  tone = 'error',
-  title,
-  children,
-  action,
-  onDismiss,
-}: {
-  tone?: AlertTone
-  title?: string
-  children?: ReactNode
-  action?: ReactNode
-  onDismiss?: () => void
-}) {
-  return (
-    <div
-      role={tone === 'error' ? 'alert' : 'status'}
-      className={cx('flex items-start gap-3 rounded-[4px] border px-3.5 py-3 text-[13px] leading-5', ALERT_TONES[tone])}
-    >
-      <AlertIcon tone={tone} />
-      <div className="min-w-0 flex-1">
-        {title && <div className="font-semibold">{title}</div>}
-        {children && <div className={title ? 'mt-0.5' : undefined}>{children}</div>}
-        {action && <div className="mt-2">{action}</div>}
-      </div>
-      {onDismiss && (
-        <button
-          type="button"
-          onClick={onDismiss}
-          aria-label="Dismiss"
-          className="-m-1 rounded p-1 opacity-70 hover:opacity-100 focus-visible:outline-2 focus-visible:outline-current cursor-pointer"
-        >
-          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-            <path d="M6 6l12 12M18 6L6 18" />
-          </svg>
-        </button>
-      )}
-    </div>
-  )
-}
-
-function AlertIcon({ tone }: { tone: AlertTone }) {
-  const common = { 'aria-hidden': true, width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, className: 'mt-0.5 shrink-0' }
-  if (tone === 'success') {
-    return (
-      <svg {...common}>
-        <circle cx="12" cy="12" r="9" />
-        <path d="M8 12.5l2.5 2.5L16 9.5" />
-      </svg>
-    )
-  }
-  if (tone === 'info') {
-    return (
-      <svg {...common}>
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 11v5M12 8h.01" />
-      </svg>
-    )
-  }
-  return (
-    <svg {...common}>
-      <path d="M12 3l9.5 17h-19L12 3z" />
-      <path d="M12 10v4M12 17h.01" />
-    </svg>
-  )
-}
-
-/* ─────────────────────────── Form fields ─────────────────────────── */
-
-export const inputClass = cx(
-  'w-full rounded-[4px] border border-border bg-white px-3 py-[9px] text-sm text-foreground',
-  'placeholder:text-[#A99A8E] outline-none transition-[border-color,box-shadow]',
-  'focus:border-primary focus:shadow-[0_0_0_3px_rgba(114,47,55,0.16)]',
-  'aria-[invalid=true]:border-[#A83A4A] aria-[invalid=true]:focus:shadow-[0_0_0_3px_rgba(196,80,106,0.16)]',
-  'disabled:bg-background disabled:text-[#8F7B74]',
-)
-
-interface TextFieldProps extends InputHTMLAttributes<HTMLInputElement> {
-  ref?: Ref<HTMLInputElement>
-  label: string
-  error?: string | null
-  hint?: ReactNode
-  labelAside?: ReactNode
-  trailing?: ReactNode
-}
-
-export function TextField({ label, error, hint, labelAside, trailing, id, className, ...rest }: TextFieldProps) {
-  const autoId = useId()
-  const inputId = id ?? autoId
-  const hintId = hint ? `${inputId}-hint` : undefined
-  const errorId = error ? `${inputId}-error` : undefined
-  return (
-    <div className={cx('mb-4', className)}>
-      <div className="mb-1.5 flex items-baseline justify-between">
-        <label htmlFor={inputId} className="block text-xs font-semibold uppercase tracking-[0.05em] text-secondary-foreground">
-          {label}
-        </label>
-        {labelAside}
-      </div>
-      <div className="relative">
-        <input
-          id={inputId}
-          aria-invalid={error ? true : undefined}
-          aria-describedby={[errorId, hintId].filter(Boolean).join(' ') || undefined}
-          className={cx(inputClass, trailing ? 'pr-11' : undefined)}
-          {...rest}
-        />
-        {trailing && <div className="absolute inset-y-0 right-0 flex items-center pr-1.5">{trailing}</div>}
-      </div>
-      {error && (
-        <p id={errorId} className="mt-1.5 text-xs text-[#A83A4A]">
-          {error}
-        </p>
-      )}
-      {hint && (
-        <div id={hintId} className="mt-1.5 text-xs text-muted-foreground">
-          {hint}
-        </div>
-      )}
-    </div>
-  )
-}
-
-export function PasswordField(props: Omit<TextFieldProps, 'type' | 'trailing'>) {
-  const [visible, setVisible] = useState(false)
-  return (
-    <TextField
-      {...props}
-      type={visible ? 'text' : 'password'}
-      spellCheck={false}
-      autoCapitalize="off"
-      trailing={
-        <button
-          type="button"
-          onClick={() => setVisible((v) => !v)}
-          aria-label={visible ? 'Hide password' : 'Show password'}
-          aria-pressed={visible}
-          className="rounded-[3px] p-1.5 text-muted-foreground hover:text-primary focus-visible:outline-2 focus-visible:outline-primary cursor-pointer"
-        >
-          {visible ? <EyeOffIcon /> : <EyeIcon />}
-        </button>
-      }
-    />
-  )
-}
-
-function EyeIcon() {
-  return (
-    <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  )
-}
-
-function EyeOffIcon() {
-  return (
-    <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 3l18 18" />
-      <path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6" />
-      <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
-    </svg>
-  )
-}
-
-/** Live checklist shown under new-password inputs. Always rendered, so it never shifts the layout. */
-export function PasswordChecklist({ password, id }: { password: string; id?: string }) {
-  return (
-    <ul id={id} aria-label="Password requirements" className="grid grid-cols-2 gap-x-4 gap-y-1">
-      {PASSWORD_RULES.map((rule) => {
-        const met = rule.test(password)
-        return (
-          <li key={rule.id} className={cx('flex items-center gap-1.5 text-xs transition-colors', met ? 'text-[#4F7A4A]' : 'text-[#8F7B74]')}>
-            <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-              {met ? <path d="M5 12.5l4.5 4.5L19 7.5" /> : <circle cx="12" cy="12" r="3.5" />}
-            </svg>
-            <span>
-              {rule.label}
-              <span className="sr-only">{met ? ' (met)' : ' (not met)'}</span>
-            </span>
-          </li>
-        )
-      })}
-    </ul>
-  )
-}
-
 /* ─────────────────────────── Data states ─────────────────────────── */
 
-export function Skeleton({ className, style }: { className?: string; style?: CSSProperties }) {
-  return <div aria-hidden="true" className={cx('animate-pulse rounded-[4px] bg-muted', className)} style={style} />
-}
-
+/** A load-failure message with an optional Try again button. */
 export function ErrorState({
   title = "We couldn't load this",
   message,

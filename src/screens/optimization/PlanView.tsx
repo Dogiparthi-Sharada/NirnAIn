@@ -1,12 +1,15 @@
 /**
- * The plan state of Optimization Results (`#opt-plan`; port of the mockup's views/optimize-plan.js).
+ * The plan state of Optimization Results: KPIs, ways to keep the date, Constraint check, timeline, details, Export and Apply.
  *
- * Shows the applied banner, the contractor-rate confirmation, the run's KPIs, the ways to keep the
- * date when the plan finishes late (`KeepDateCard`), the Constraint check, the timeline and the
- * detail tabs, then Export and Apply. Apply stays disabled while the plan books a contractor at a
- * rate nobody confirmed; confirming saves that rate as the project's contractor rate
- * (`contractorRateCents`, `specialistRateConfirmed: true`), the default for contractors on step 5. Applying makes the run the next plan version (v1, v2 …) and opens step 7.
+ * Purpose: Apply stays disabled while the plan books a contractor at a rate nobody confirmed;
+ * confirming saves that rate as the project's contractor rate (the default for contractors on step
+ * 5). Applying makes the run the next plan version (v1, v2 …) and opens step 7.
+ * How it fits: Port of the mockup's views/optimize-plan.js (`#opt-plan`); rendered by
+ * `screens/OptimizationResults.tsx`; composes `KeepDateCard`, `ConstraintCheck`, `PlanGantt` and
+ * `PlanDetails`; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { errorMessage } from '@/lib/api'

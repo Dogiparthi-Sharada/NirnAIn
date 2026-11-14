@@ -1,14 +1,16 @@
 /**
- * The inline editor of one WBS row (step 4, `components/WbsTable.tsx`): the Name, Duration, Owner
- * and Save / Cancel cells that replace the row's read-only cells while it is being edited.
+ * The inline editor of one WBS row: Name, Duration, Owner, skills and Save / Cancel cells.
  *
- * Why a component of its own: the editor checks what the PM typed before anything is saved, and
- * says why inline instead of silently dropping or changing a value (QA W-07, W-08). A name can't be
- * blank. Weeks must be a plain number of zero or more (blank = no estimate yet), at most what the
- * server accepts; a fraction is rounded to whole working days and the editor shows the result
- * ("1.5 w = 8 days") before saving. Enter saves, Escape cancels. A work package also picks the
- * skills it needs from the project's list (`WbsSkillPicks`); they are sent only when changed.
+ * Purpose: The editor checks what the PM typed before anything is saved and says why inline
+ * instead of silently dropping or changing a value (QA W-07, W-08): a name can't be blank, weeks
+ * must be a plain number of zero or more within the server's limit, and a fraction shows its
+ * rounding to working days before saving. Enter saves, Escape cancels; skills are sent only when
+ * changed.
+ * How it fits: Rendered by `components/WbsTable.tsx` in place of a row's read-only cells; uses the
+ * rules in `lib/wbs.ts` and the picker in `components/WbsSkillPicks.tsx`; layer: component.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useRef, useState, type KeyboardEvent } from 'react'
 import { DAYS_PER_WEEK, parseWeeks, skillChoices, useSkillPicks, type SkillOptions, type WbsTreeNode } from '@/lib/wbs'
 import type { WbsNodePatch } from '@/lib/types'
@@ -41,6 +43,9 @@ export default function WbsEditCells({ node, owners, skillOptions, onSave, onCan
   const choices = skillChoices(skillOptions.skills, node.skills)
   const weeksNoteId = `wbs-weeks-note-${node.id}`
 
+  /**
+   * Checks the typed values, focuses the first problem, else saves the changes (skills only when changed).
+   */
   function save() {
     const trimmedName = name.trim()
     const found: Problems = {}
@@ -65,6 +70,7 @@ export default function WbsEditCells({ node, owners, skillOptions, onSave, onCan
     onSave(patch)
   }
 
+  /** Enter saves and Escape cancels; the keys don't reach the table's own shortcuts. */
   function editKeys(event: KeyboardEvent) {
     event.stopPropagation()
     if (event.key === 'Enter') save()

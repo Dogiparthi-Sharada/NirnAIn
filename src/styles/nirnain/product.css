@@ -1,10 +1,13 @@
 /**
- * NirnAIn · styles/nirnain/product.css
+ * Product overrides on top of the approved mockup styles.
  *
- * Product overrides on top of the approved mockup styles (mockup handoff 2026-11-13):
- * the mockup reserves 42px at the top for its reviewer bar and shows build labels;
- * the product has neither.
+ * Purpose: The mockup reserves 42px at the top for its reviewer bar and shows build labels; the
+ * product has neither, and keyboard focus stays visible everywhere.
+ * How it fits: Imported last by `index.css` so it wins over the mockup styles (mockup handoff
+ * 2026-11-13); layer: styles.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 #app{height:100vh}
 .tag.t-live,.tag.t-mock,.tag.t-pr,.tag.t-new,.tag.t-build,details.bts,.mockonly,.mocknote{display:none}
 :focus-visible{outline:2px solid var(--pr);outline-offset:2px}

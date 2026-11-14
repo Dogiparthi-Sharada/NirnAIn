@@ -1,12 +1,13 @@
 /**
- * Plan vN+1 against Plan vN on step 7: KPIs side by side with deltas, the Gantt with the
- * in-force plan dashed underneath, what moved and why, and the decision buttons.
+ * Plan vN+1 against Plan vN on step 7: KPIs with deltas, the Gantt, what moved and why, and the decision.
  *
- * Data comes from GET /changes/{id}/compare (rows per work package, both plans' cost,
- * finish date and budget). "Approve" applies the proposed run (it becomes the next
- * version and the change's values become the project's inputs); "Keep" rejects the
- * change and Plan vN stays in force. Who joins or leaves the team comes from the change.
+ * Purpose: "Approve" applies the proposed run (it becomes the next version and the change's values
+ * become the project's inputs); "Keep" rejects the change and Plan vN stays in force.
+ * How it fits: Rendered by `ChangeImpact.tsx`; data from `GET /changes/{id}/compare`; draws
+ * `PlanGantt.tsx`; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import type { AddedMember, ChangeComparison, CompareRow } from '@/lib/changes'
 import { errorMessage } from '@/lib/api'
 import { formatDate, formatMoney } from '@/lib/format'
@@ -202,6 +203,7 @@ export function PlanComparison({
   )
 }
 
+/** One KPI tile: label, value and detail. */
 function Kpi({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
     <div className="kpi">
@@ -212,6 +214,7 @@ function Kpi({ label, value, detail }: { label: string; value: string; detail: s
   )
 }
 
+/** One work package that moved: what changed, its dates before and after, owner and why. */
 function MovedRow({ row }: { row: CompareRow }) {
   let change: string
   if (row.before === null) change = 'Added'

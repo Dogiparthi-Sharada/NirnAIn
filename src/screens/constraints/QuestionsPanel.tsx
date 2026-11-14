@@ -1,16 +1,16 @@
 /**
- * "Questions that change the plan" on step 5 (approved mockup views/constraints.js `#qpanel`):
- * confirmed effort from step 4, "Can we bring in an outside specialist?" (with the specialist's
- * hourly rate once the answer is Yes) and "Is <date> a hard deadline?", plus the low-impact
- * settings we checked without asking.
+ * "Questions that change the plan" on step 5: confirmed effort, the outside specialist and the hard deadline.
  *
- * Business rules: we only ask when the answer changes the schedule or the cost. "Don't know" is
- * planned with the safer assumption (no specialist, hard deadline) and the plan says so. The
- * deadline answer is the same setting as the Deadline card's Must hold / Can flex. A specialist's
- * cost rests on a rate; until the PM confirms it (or enters the agreed rate) the plan marks the
- * cost as estimated and step 6 asks again before applying. The confirmed rate is stored as the
- * project's contractor rate, which contractors on the team without a rate of their own then use.
+ * Purpose: We only ask when the answer changes the schedule or the cost. "Don't know" is planned
+ * with the safer assumption (no specialist, hard deadline) and the plan says so; a specialist's
+ * cost stays estimated until the PM confirms the rate, which is then stored as the project's
+ * contractor rate.
+ * How it fits: Port of the mockup's views/constraints.js `#qpanel`; rendered by
+ * `screens/Constraints.tsx`; the answers are saved through `lib/constraints.ts` (the deadline
+ * answer is the Deadline card's switch); layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { Chip } from '@/components/InputsKit'
@@ -27,7 +27,7 @@ import {
   type ConstraintChanges,
 } from '@/lib/constraints'
 import { formatDate } from '@/lib/format'
-import type { ConstraintInputs, DeadlineAnswerValue, SpecialistAnswer } from '@/lib/inputs'
+import { perHourText, type ConstraintInputs, type DeadlineAnswerValue, type SpecialistAnswer } from '@/lib/inputs'
 import { DEFAULT_SPECIALIST_RATE_CENTS } from '@/lib/optimize'
 import { stepPath } from '@/lib/steps'
 import { toast } from '@/lib/toast'
@@ -54,10 +54,6 @@ const DEADLINE_OPTIONS: Option<DeadlineAnswerValue>[] = [
   { value: 'soft', label: 'Can move' },
   { value: 'unknown', label: "Don't know" },
 ]
-
-function hourlyRate(cents: number): string {
-  return `$${(cents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}/h`
-}
 
 /** "Yes / No / Don't know" pills; the picked one is filled. */
 function AnswerOptions<Value extends string>({ name, label, options, picked, onPick }: {
@@ -126,6 +122,10 @@ function SpecialistRate({ constraints, onSave }: { constraints: ConstraintInputs
   const rateCents = constraints.contractorRateCents ?? DEFAULT_SPECIALIST_RATE_CENTS
   const confirmed = Boolean(constraints.specialistRateConfirmed)
 
+  /**
+   * Saves the specialist's hourly rate (a typed rate counts as confirmed); a blank field goes back to the
+   * estimate.
+   */
   function commitRate(text: string) {
     const cents = parseDollars(text)
     if (cents === null) {
@@ -155,14 +155,14 @@ function SpecialistRate({ constraints, onSave }: { constraints: ConstraintInputs
         {confirmed ? <Chip kind="confirmed" /> : <Chip kind="inferred">Estimated</Chip>}
         {!confirmed && (
           <button className="btn sm" id="con-rate-confirm" type="button" onClick={() => onSave({ contractorRateCents: rateCents, specialistRateConfirmed: true })}>
-            Confirm {hourlyRate(rateCents)}
+            Confirm {perHourText(rateCents)}
           </button>
         )}
       </div>
       {!confirmed && (
         <p className="small muted" style={{ margin: '6px 0 0' }}>
           {constraints.contractorRateCents == null
-            ? `The rate isn\u2019t in your notes. We use ${hourlyRate(rateCents)}, a typical market rate, until you confirm it or enter the agreed rate.`
+            ? `The rate isn\u2019t in your notes. We use ${perHourText(rateCents)}, a typical market rate, until you confirm it or enter the agreed rate.`
             : 'Confirm the rate so the plan\u2019s cost is firm.'}
         </p>
       )}

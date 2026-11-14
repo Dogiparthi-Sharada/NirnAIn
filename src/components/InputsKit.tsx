@@ -1,8 +1,13 @@
 /**
- * Small pieces of the approved design shared by Scope Review, WBS Builder and Constraints:
- * provenance chips, the step-gate banner, the plan-in-force banner, the toast and the utilization
- * bar.
+ * Small design pieces shared by the planning screens: provenance chips, gate and plan-in-force banners, the screen toast and the utilization bar.
+ *
+ * Purpose: Steps 3–6 must explain themselves the same way: a blocked Continue lists what is
+ * missing as links, and an applied plan says that edits take effect on the next run.
+ * How it fits: Used by `screens/ScopeReview.tsx`, `screens/WBSBuilder.tsx`,
+ * `screens/Constraints.tsx`, `screens/OptimizationResults.tsx` and their parts; layer: component.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { usePlanVersions, versionInForce } from '@/lib/inputs'
@@ -23,9 +28,10 @@ const CHIP = {
 
 export type ChipKind = keyof typeof CHIP
 
+/** A provenance chip; `children` replaces the default label. */
 export function Chip({ kind, children }: { kind: ChipKind; children?: ReactNode }) {
-  const [cls, label] = CHIP[kind]
-  return <span className={`chip ${cls}`}>{children ?? label}</span>
+  const [className, label] = CHIP[kind]
+  return <span className={`chip ${className}`}>{children ?? label}</span>
 }
 
 /** Moves focus to an element of the page (a gate link target). */
@@ -68,13 +74,13 @@ export function GateBanner({ id, lead, items, open, focusKey }: {
         <>
           <b>&#9888; {lead}</b>
           <ul>
-            {items.map((item, i) => (
-              <li key={i}>
+            {items.map((item, index) => (
+              <li key={index}>
                 {item.target || item.onClick ? (
                   <a
                     href="#"
-                    onClick={(e) => {
-                      e.preventDefault()
+                    onClick={(event) => {
+                      event.preventDefault()
                       if (item.onClick) item.onClick()
                       else if (item.target) jumpTo(item.target)
                     }}
@@ -93,18 +99,25 @@ export function GateBanner({ id, lead, items, open, focusKey }: {
   )
 }
 
-/** A short message at the bottom of the screen for about 4 seconds. */
-export function useToast(): [ReactNode, (message: string) => void] {
+const TOAST_MS = 3800
+
+/**
+ * A screen's own short message at the bottom of the screen for about four seconds (the mockup's
+ * toast). `keepMounted` keeps the hidden live region in the DOM between messages.
+ */
+export function useToast({ keepMounted = true }: { keepMounted?: boolean } = {}): [ReactNode, (message: string) => void] {
   const [message, setMessage] = useState<string | null>(null)
   const timer = useRef<number | undefined>(undefined)
+  /** Shows `text`, replacing any message on screen, and hides it after a few seconds. */
   const show = useCallback((text: string) => {
     setMessage(text)
     window.clearTimeout(timer.current)
-    timer.current = window.setTimeout(() => setMessage(null), 3800)
+    timer.current = window.setTimeout(() => setMessage(null), TOAST_MS)
   }, [])
   useEffect(() => () => window.clearTimeout(timer.current), [])
+  if (!keepMounted && !message) return [null, show]
   const node = (
-    <div className="toast" role="status" aria-live="polite" hidden={!message}>
+    <div className="toast" role="status" aria-live="polite" hidden={keepMounted ? !message : undefined}>
       {message}
     </div>
   )
@@ -143,6 +156,7 @@ export function PlanInForceBanner({ projectId, id }: { projectId: string; id: st
   )
 }
 
+/** The breadcrumb from the dashboard to the current step. */
 export function Crumb({ trail }: { trail: string[] }) {
   return (
     <div className="crumb">

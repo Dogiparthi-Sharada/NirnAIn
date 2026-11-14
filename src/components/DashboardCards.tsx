@@ -1,11 +1,14 @@
 /**
- * The per-project dashboard cards (mockup scripts/views/dashboard.js, styles/dashboard-project.css):
- * KPIs `#d-kpis`, delivery health `#d-health`, open risks `#d-risks`, notifications `#d-notes` and AI
- * findings `#d-findings`, all from one project's overview (`lib/overview.ts`).
+ * The per-project dashboard cards: KPIs, delivery health, open risks, notifications and AI findings.
  *
- * "Never invent": values the project doesn't have yet show the design's dashes and explanations
- * ("Available after planning", "Not tracked yet") instead of numbers.
+ * Purpose: Never invent: values the project doesn't have yet show the design's dashes and
+ * explanations ("Available after planning", "Not tracked yet") instead of numbers.
+ * How it fits: Port of the mockup's scripts/views/dashboard.js (`#d-kpis`, `#d-health`,
+ * `#d-risks`, `#d-notes`, `#d-findings`); rendered by `screens/Dashboard.tsx` from one project's
+ * overview (`lib/overview.ts`); layer: component.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { Fragment } from 'react'
 import { Link } from 'react-router'
 import { formatDate, formatDateTime, formatMoney } from '@/lib/format'
@@ -38,6 +41,7 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub: string 
 /** Progress, budget, milestones and open risks. */
 export function DashboardKpis({ overview }: { overview: ProjectOverview }) {
   const { project, plan, milestones, risks } = overview
+  /** Formats cents in the project's currency. */
   const money = (cents: number) => formatMoney(cents, project.currency)
   const budgetSub =
     project.budgetCents == null

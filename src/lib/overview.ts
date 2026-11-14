@@ -1,9 +1,13 @@
 /**
- * Per-project dashboard data: `GET /api/v1/projects/{projectId}/overview` (contract [A1],
- * backend `app/domain/overview.py`). The server never invents values: what isn't tracked comes back
- * null and the dashboard says so ("Not tracked yet", "Available after planning").
- * Used by `screens/Dashboard.tsx` and `components/DashboardCards.tsx`.
+ * Per-project dashboard data from `GET /api/v1/projects/{projectId}/overview`.
+ *
+ * Purpose: The server never invents values: what isn't tracked comes back null and the dashboard
+ * says so ("Not tracked yet", "Available after planning").
+ * How it fits: Contract [A1] (backend `app/domain/overview.py`); used by `screens/Dashboard.tsx`
+ * and `components/DashboardCards.tsx`; layer: hook/lib.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from './api'
 import type { AppNotification, ProjectStatus } from './types'

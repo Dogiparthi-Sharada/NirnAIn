@@ -1,9 +1,11 @@
 /**
- * NirnAIn · styles/nirnain/public-product.css
+ * Product adjustments to the approved public pages.
  *
- * Product adjustments to the approved public pages (mockup styles/public.css, imported unchanged):
- * the mockup reserves 42px for its reviewer bar above the landing header and the sign-in screens,
- * and is drawn for a desktop window. Loaded by `auth/AuthLayout.tsx` and `screens/LandingPage.tsx`.
+ * Purpose: The mockup reserves 42px for its reviewer bar above the landing header and the sign-in
+ * screens and is drawn for a desktop window; the product has no bar and must fit smaller windows.
+ * How it fits: Imported by `auth/AuthLayout.tsx`, which the sign-in screens and the landing page
+ * load; overrides `public.css`; layer: styles.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
 
 /* No reviewer bar in the product. */

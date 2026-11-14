@@ -1,10 +1,13 @@
 /**
- * `/auth/confirm`: where links in auth emails land (sign-up confirmation, password reset, email
- * change, invites). The email carries a one-time `token_hash`, verified with Supabase `verifyOtp`,
- * so the link works in any browser or device — unlike the PKCE `?code=` flow of `/auth/callback`,
- * which only works in the browser that started it. Recovery links continue to `/reset-password`;
- * others to `?next=` (validated by `safeNext`).
+ * `/auth/confirm`: where links in auth emails land (sign-up confirmation, password reset, email change, invites).
+ *
+ * Purpose: The email carries a one-time `token_hash` verified with Supabase `verifyOtp`, so the
+ * link works in any browser or device, unlike the PKCE `?code=` flow of `/auth/callback`. Recovery
+ * links continue to `/reset-password`, others to `?next=` (validated by `safeNext`).
+ * How it fits: Route in `App.tsx`; framed by `auth/AuthLayout.tsx`; layer: screen.
+ * Created: 2026-10-03 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import type { EmailOtpType } from '@supabase/supabase-js'
@@ -15,6 +18,7 @@ import { FullPageSpinner } from '@/components/ui'
 
 const EMAIL_OTP_TYPES: readonly EmailOtpType[] = ['signup', 'invite', 'magiclink', 'recovery', 'email_change', 'email']
 
+/** True when the link's `type` is one of the email OTP types Supabase can verify. */
 function isEmailOtpType(value: string | null): value is EmailOtpType {
   return value !== null && (EMAIL_OTP_TYPES as readonly string[]).includes(value)
 }

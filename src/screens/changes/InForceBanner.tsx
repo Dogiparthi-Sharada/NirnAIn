@@ -1,12 +1,15 @@
 /**
- * The "Plan vN is in force" info banner of the input steps (round 2, D3).
+ * The "Plan vN is in force" banner of the input steps.
  *
- * Why: inputs stay editable after a plan is applied; the PM must know an edit only reaches
- * the plan through a new run on step 6 (applied as the next version), and that step 7 is
- * where to record why the plan changed. How it fits: shown at the top of AI Project Intake
- * (step 2) and Scope Review (step 3); it reads the applied plan versions through
- * `usePlanVersions` (`src/lib/changes.ts`) and renders nothing while no plan is applied.
+ * Purpose: Inputs stay editable after a plan is applied, so the PM must know an edit only reaches
+ * the plan through a new run on step 6 (applied as the next version) and that step 7 records why
+ * the plan changed.
+ * How it fits: Shown at the top of AI Project Intake and Scope Review; reads the applied plan
+ * versions through `usePlanVersions` (`lib/changes.ts`) and renders nothing while no plan is
+ * applied; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { Link } from 'react-router'
 import { usePlanVersions } from '@/lib/changes'
 import { stepPath } from '@/lib/steps'

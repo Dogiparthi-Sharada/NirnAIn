@@ -1,13 +1,16 @@
 /**
- * The solving and infeasible states of Optimization Results (port of `#opt-solving` and
- * `#opt-infeasible` in the mockup's views/optimize.js).
+ * The solving and infeasible states of Optimization Results.
  *
- * Solving mirrors the run's real status (queued → "Building model", running → "Solving"); the
- * screen polls the run meanwhile. Infeasible lists the constraints that can't all hold
- * (`run.iis`) and the priced remedies the backend computed (`run.result.remedies`); picking one
- * and pressing "Re-solve with this change" starts a new run with that remedy. The wording names
- * the kind of conflict, and "Change these together" lists every change it makes.
+ * Purpose: Solving mirrors the run's real status (queued → "Building model", running → "Solving")
+ * while the screen polls it. Infeasible lists the constraints that can't all hold and the priced
+ * remedies the backend computed; "Re-solve with this change" starts a new run with the chosen
+ * remedy.
+ * How it fits: Port of `#opt-solving` and `#opt-infeasible` in the mockup's views/optimize.js;
+ * rendered by `screens/OptimizationResults.tsx`; shares wording with `KeepDateCard.tsx`;
+ * layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { formatDate, formatMoney } from '@/lib/format'

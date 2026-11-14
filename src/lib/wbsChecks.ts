@@ -1,21 +1,15 @@
 /**
- * WBS Builder (step 4) validation data: the free built-in checks from `GET …/wbs/checks`, always
- * as of now, and what is left of the last `wbs_validate` AI review. Used by
- * `components/WbsValidationCard.tsx`.
+ * WBS Builder validation data: the free built-in checks and what is left of the last AI review.
  *
- * Business rules:
- * - The built-in checks (`check_structure` in backend/app/ai/wbs_validate.py) cost nothing, so the
- *   card never shows an old copy: every WBS mutation hook invalidates them (`queries.ts`, `wbs.ts`)
- *   and every visit refetches them.
- * - The AI review costs tokens, so it never re-runs by itself after an edit. Its own items (missing
- *   or duplicate work, …) keep the time it ran; once the WBS changed after the review read it, the
- *   card says so and offers a re-check.
- * - A finding is never shown twice: while the live checks are available, the review's copies of the
- *   built-in checks are dropped.
- * - Step 4 doesn't warn about step 5 (the team comes later): owners are optional and skills are only
- *   named until there is a team. Such lines are 'info' and never counted; the owner and skill
- *   warnings older jobs stored are not shown at all.
+ * Purpose: The built-in checks cost nothing, so every WBS change invalidates them and the card
+ * never shows an old copy; the AI review costs tokens, so it never re-runs by itself and its
+ * findings keep the time they ran. A finding is never shown twice, and step 5 matters (owners,
+ * skills before there is a team) are info only.
+ * How it fits: Reads `GET …/wbs/checks` and the latest `wbs_validate` job for
+ * `components/WbsValidationCard.tsx`; layer: hook/lib.
+ * Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from './api'
 import { queryKeys } from './queries'

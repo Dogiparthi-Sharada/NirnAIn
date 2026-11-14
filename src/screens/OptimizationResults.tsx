@@ -1,22 +1,17 @@
 /**
- * Step 6, Optimization Results (port of the approved mockup's views/optimize*.js).
+ * Step 6, Optimization Results: confirm the inputs, solve, and review, apply or export the plan.
  *
- * One screen, four states, picked from the latest run and the inputs sheet:
- * 1. confirm — "Check the inputs the solver will use": shown when there is no run yet, when the
- *    inputs changed after the latest run, or after "Run again". Approving starts a run from the
- *    inputs the sheet shows: their hash goes along, and the server refuses (409, the sheet reloads)
- *    when they changed since.
- * 2. solving — while the run is queued or running (`useLatestRun` polls it).
- * 3. infeasible — the conflicting constraints and priced remedies; a remedy starts a new run.
- * 4. plan — KPIs, the ways to keep the date when it slips, Constraint check, timeline, details,
- *    rate confirmation, Apply and Export. A remedy picked there starts a new run, as in 3.
- * A failed or timed-out run shows its error with "Run again".
- *
- * Inputs stay editable after a plan is applied, so when the plan in force no longer matches them
- * (`hash !== appliedHash` on the inputs sheet) the plan view says so and offers a re-run. A plan not
- * applied yet that was solved from other inputs (`hash !== run.options.inputsHash`) can't be applied
- * (the server refuses it too): Apply is disabled with the reason, next to "Run again".
+ * Purpose: One screen with four states picked from the latest run and the inputs sheet: confirm
+ * (nothing runs until the PM approves this exact set of inputs; the server refuses with 409 when
+ * they changed since), solving, infeasible (conflicts and priced remedies) and plan. The plan in
+ * force says when the inputs changed after it was applied, and a plan solved from other inputs
+ * can't be applied.
+ * How it fits: Port of the mockup's views/optimize*.js; route `projects/:projectId/optimization`
+ * in `App.tsx`; the states live in `screens/optimization/*` and the data in `lib/optimize.ts` and
+ * `lib/queries`; layer: screen.
+ * Created: 2026-09-24 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useRef, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { policyRisks } from '@/lib/constraintPolicy'
@@ -33,11 +28,12 @@ import {
   type PlanRun,
   type RunRequest,
 } from '@/lib/optimize'
-import { useConstraints, useLatestRun } from '@/lib/queries'
+import { isRunning, useConstraints, useLatestRun } from '@/lib/queries'
+import { useToast } from '@/components/InputsKit'
 import { ConfirmSheet } from './optimization/ConfirmSheet'
 import { PlanView } from './optimization/PlanView'
 import { InfeasibleState, SolvingState } from './optimization/RunStates'
-import { ProblemAlert, QuietNote, useToast } from './optimization/ui'
+import { ProblemAlert, QuietNote } from './optimization/ui'
 
 /** Header chip: "OPTIMAL OR-Tools · 2.4s" (amber for a feasible, not proven optimal, plan). */
 function SolverChip({ run }: { run: PlanRun }) {
@@ -62,23 +58,25 @@ export default function OptimizationResults() {
   // Set in the click itself: `startRun.isPending` (which disables the buttons) only arrives with
   // the next render, after a double-click's second click (NFR-005).
   const startingRef = useRef(false)
-  const [toast, showToast] = useToast()
+  const [toast, showToast] = useToast({ keepMounted: false })
   // "Run again" re-opens the sheet; "View the last plan" dismisses the inputs-changed sheet.
   const [sheetRequested, setSheetRequested] = useState(false)
   const [stalePlanAccepted, setStalePlanAccepted] = useState(false)
 
   const run: PlanRun | null = latest.data ?? null
   const status = run?.status ?? null
-  const solving = startRun.isPending || status === 'queued' || status === 'running'
+  const solving = startRun.isPending || isRunning(status)
   const constraints = constraintsQuery.data as ConstraintAnswers | undefined
   // Wait for the skill list so the skill-gap warning doesn't pop in late; if it fails, skip that check.
   const policy = constraints && !skills.isPending ? policyInputsOf(constraints, skills.data, inputs.data) : null
   const risks = policy ? policyRisks(policy) : []
   const runHash = comparableInputsHash(run)
   const checkingStaleness = Boolean(runHash && inputs.isPending)
+  // Stale inputs: they changed after the latest run was solved, so the sheet asks again first.
   const inputsChanged = Boolean(runHash && inputs.data?.hash && runHash !== inputs.data.hash)
   const showSheet = !run || sheetRequested || (inputsChanged && !stalePlanAccepted)
   const planShown = !solving && !showSheet && (status === 'optimal' || status === 'feasible')
+  // Plan in force: once applied, the plan says so when today's inputs no longer match it.
   const appliedHash = inputs.data?.appliedHash
   const changedSinceApplied = Boolean(run?.version != null && appliedHash && inputs.data?.hash && inputs.data.hash !== appliedHash)
   const outdatedPlan = solvedOnOtherInputs(run, inputs.data?.hash)

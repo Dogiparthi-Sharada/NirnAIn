@@ -1,15 +1,16 @@
 /**
- * The Budget and Deadline cards on step 5 (approved mockup views/constraints.js): the money and
- * date limits the plan must respect, each with its Must hold / Can flex switch.
+ * The Budget and Deadline cards on step 5: the money and date limits, each with its Must hold / Can flex switch.
  *
- * Every field saves when the PM leaves it (see `CommitInput`). A budget amount follows step 1's
- * rules (more than $0, at most $100B); one that breaks them stays in the field with the reason
- * underneath. Other values the server would reject are explained in a toast and the field falls
- * back to the saved value. Money is integer cents on the wire and shown in whole dollars. The
- * chips say where a value came from: "Stated" when the notes
- * say it (with the quote), "Yours" when a person entered it, "Default" when we filled it in.
- * The Deadline switch is the deadline question: changing one changes the other.
+ * Purpose: Every field saves when the PM leaves it. A budget amount follows step 1's rules (more
+ * than $0, at most $100B) and stays in the field with the reason when it breaks them; other values
+ * the server would reject are explained in a toast and revert. Chips say where a value came from
+ * (Stated, Yours, Default), and the Deadline switch is the deadline question.
+ * How it fits: Port of the mockup's views/constraints.js; rendered by `screens/Constraints.tsx`;
+ * uses `CommitInput`, `PolicyControls` and the number rules in `lib/constraints.ts`;
+ * layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useState } from 'react'
 import { Chip, type ChipKind } from '@/components/InputsKit'
 import { policyOf, type PolicyInputs, type PolicyRisk } from '@/lib/constraintPolicy'
@@ -44,10 +45,12 @@ export function BudgetCard({ constraints, policy, risks, onSave, budgetSource }:
   // An amount that can't be saved stays in its field with the reason underneath, as on step 1.
   const [moneyProblems, setMoneyProblems] = useState<Partial<Record<MoneyField, string>>>({})
 
+  /** Shows (or clears) the reason a money field can't be saved. */
   function showMoneyProblem(field: MoneyField, problem: string | null) {
     setMoneyProblems((previous) => ({ ...previous, [field]: problem ?? undefined }))
   }
 
+  /** Saves a money limit, or keeps the typed amount with its problem (returns false). */
   function commitMoney(field: MoneyField, text: string): boolean {
     const problem = moneyLimitProblem(text)
     showMoneyProblem(field, problem)
@@ -56,6 +59,7 @@ export function BudgetCard({ constraints, policy, risks, onSave, budgetSource }:
     return true
   }
 
+  /** Saves the contingency percentage, or explains in a toast why it can't. */
   function commitContingency(text: string) {
     const percent = parsePercent(text)
     if (Number.isNaN(percent)) toast('Contingency must be a percentage from 0 to 100.')
@@ -64,6 +68,7 @@ export function BudgetCard({ constraints, policy, risks, onSave, budgetSource }:
 
   const hasBudget = constraints.budgetTotalCents != null
   const budgetChip = !hasBudget ? <Chip kind="default">Not set</Chip> : <Chip kind={budgetSource ? SOURCE_CHIP[budgetSource] : 'yours'} />
+  /** One money input with its inline problem message. */
   const moneyField = (field: MoneyField, id: string) => {
     const problem = moneyProblems[field]
     return (
@@ -131,6 +136,7 @@ export function BudgetCard({ constraints, policy, risks, onSave, budgetSource }:
 
 const WORKING_DAY_CHOICES = [4, 5, 6]
 
+/** "5 days (Mon–Fri)" or "N days". */
 function workingDaysLabel(days: number): string {
   return days === 5 ? '5 days (Mon\u2013Fri)' : `${days} days`
 }
@@ -157,6 +163,7 @@ export function DeadlineCard({ constraints, policy, risks, onSave }: CardProps) 
     else onSave({ startDate: start, mustFinishBy: finish })
   }
 
+  /** Saves a milestone's new due date; a milestone can't lose its date. */
   function commitMilestone(position: number, dueDate: string) {
     if (!dueDate) {
       toast('A milestone needs a date.')

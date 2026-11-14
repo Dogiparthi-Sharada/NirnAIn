@@ -1,12 +1,14 @@
 /**
- * Create account (`/signup`, mockup views/auth.js `#v-signup`): Google / Microsoft OAuth or email
- * sign-up through Supabase Auth.
+ * Create account (`/signup`): Google / Microsoft OAuth or email sign-up through Supabase Auth.
  *
- * Client checks mirror the server policy (`auth/password.ts`) and focus the first invalid field.
- * The full name goes into the user metadata (`full_name`) for the profile row. When the project
- * requires email confirmation Supabase returns no session and the user goes to `/check-email`;
- * otherwise straight on to `?next=` (validated by `safeNext`) or the dashboard.
+ * Purpose: Client checks mirror the server's password policy and focus the first invalid field;
+ * the full name goes into the user metadata (`full_name`) for the profile row.
+ * How it fits: Port of the mockup's views/auth.js `#v-signup`; when email confirmation is required
+ * Supabase returns no session and the user goes to `screens/CheckEmail.tsx`, otherwise on to
+ * `?next=` or the dashboard; layer: screen.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { supabase } from '@/lib/supabase'
@@ -53,6 +55,7 @@ export default function Signup() {
   const busy = submitting || oauthPending
   const confirmMismatch = confirm.length > 0 && confirm !== password
 
+  /** The form's problems keyed by field (empty when it can be sent). */
   function validate(): FieldErrors {
     const errors: FieldErrors = {}
     if (!firstName.trim()) errors.firstName = 'Enter your first name.'
@@ -65,6 +68,7 @@ export default function Signup() {
     return errors
   }
 
+  /** Checks the form, then creates the account; goes to Check your email when confirmation is required. */
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const errors = validate()

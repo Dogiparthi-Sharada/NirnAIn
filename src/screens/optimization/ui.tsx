@@ -1,8 +1,14 @@
 /**
- * Small building blocks shared by the Optimization Results states: provenance chips, the toast,
- * and the error/loading notes, all in the approved design's classes (`.chip`, `.toast`, `.alert`).
+ * Small building blocks of the Optimization Results states: provenance chips and the error and loading notes.
+ *
+ * Purpose: Keeps the states in the approved design's classes (`.chip`, `.alert`) with one wording
+ * for where an input came from.
+ * How it fits: Used by `screens/OptimizationResults.tsx` and `screens/optimization/*`;
+ * layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+
+import type { ReactNode } from 'react'
 import { errorMessage } from '@/lib/api'
 import type { InputSource } from '@/lib/optimize'
 
@@ -19,26 +25,6 @@ const SOURCE_CHIP: Record<InputSource, { className: string; label: string }> = {
 export function SourceChip({ source }: { source: InputSource }) {
   const chip = SOURCE_CHIP[source] ?? SOURCE_CHIP.default
   return <span className={`chip ${chip.className}`}>{chip.label}</span>
-}
-
-const TOAST_MS = 3800
-
-/** A short message at the bottom of the screen for about four seconds (like the mockup's toast). */
-export function useToast(): [ReactNode, (message: string) => void] {
-  const [message, setMessage] = useState<string | null>(null)
-  const timer = useRef<number | undefined>(undefined)
-  useEffect(() => () => window.clearTimeout(timer.current), [])
-  const show = useCallback((text: string) => {
-    setMessage(text)
-    window.clearTimeout(timer.current)
-    timer.current = window.setTimeout(() => setMessage(null), TOAST_MS)
-  }, [])
-  const element = message ? (
-    <div className="toast" role="status" aria-live="polite">
-      {message}
-    </div>
-  ) : null
-  return [element, show]
 }
 
 /** Red alert for a failed request, with an optional retry. */

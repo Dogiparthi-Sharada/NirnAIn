@@ -1,11 +1,13 @@
 /**
- * Upload tiles, drop zone and attached-file list from the approved design (mockup views/files.js).
+ * Upload tiles, drop zone and attached-file list from the approved design.
  *
- * Shared by the manual Create Project form (files upload after the project exists), Create from
- * upload (one source file to read) and AI Project Intake (uploads straight to the project). It only
- * picks files and shows their state; callers do the uploading. `checkFile` is the client-side
- * pre-check (type, no video, 100 MB) — the server checks again with the same rules and messages.
+ * Purpose: The PM can add notes, documents and transcripts in one place; `checkFile` pre-checks
+ * type, video and the 100 MB limit with the same rules and messages the server applies again.
+ * How it fits: Port of the mockup's views/files.js; shared by the manual Create Project form,
+ * Create from upload and AI Project Intake, which do the uploading themselves; layer: component.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useId, useRef, useState, type DragEvent } from 'react'
 
 const TILES = [
@@ -20,8 +22,6 @@ const TILES = [
   { key: 'transcript', icon: '💬', label: 'Transcript', sub: 'Meeting text', accept: '.txt,.vtt,.srt,.md,text/plain,text/vtt' },
   { key: 'audio', icon: '🎙', label: 'Audio', sub: 'MP3, WAV, M4A · transcription coming soon', accept: '.mp3,.wav,.m4a,.ogg,.webm,.aac,.flac,audio/*' },
 ] as const
-
-export type TileKey = (typeof TILES)[number]['key']
 
 const ALL_ACCEPT = TILES.map((tile) => tile.accept).join(',')
 const SUPPORTED_EXTENSIONS = /\.(pdf|docx|txt|vtt|srt|md|mp3|wav|m4a|ogg|webm|aac|flac)$/i
@@ -105,6 +105,7 @@ export default function DocumentUpload({
   const hintId = useId()
   const videoNoteId = useId()
 
+  /** Opens the file picker limited to one tile's file types. */
   function browse(accept: string) {
     const input = inputRef.current
     if (!input || disabled) return
@@ -112,6 +113,7 @@ export default function DocumentUpload({
     input.click()
   }
 
+  /** Hands the dropped files to the caller (unless the zone is disabled). */
   function onDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault()
     setDragOver(false)

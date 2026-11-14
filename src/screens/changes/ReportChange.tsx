@@ -1,14 +1,14 @@
 /**
- * "Report a change" card of step 7: the three ways a change comes in.
+ * "Report a change" card of step 7: new meeting notes, edited inputs or a progress update.
  *
- * - New meeting notes: pasted or read from a file, then the backend finds what changed
- *   (Claude when configured, else its rule-based reader, which never invents values).
- * - Edit inputs: budget, deadline, one work package's duration, hours per person.
- * - Progress update: % complete per work package; the rest becomes the remaining duration.
- *
- * Edits and progress (`EditPanes.tsx`) are sent as structured `edits`; nothing is parsed.
- * Every pane posts through `useCreateChange` (POST /projects/{id}/changes).
+ * Purpose: Notes are pasted or read from a file and the backend finds what changed (Claude when
+ * configured, else its rule-based reader, which never invents values); edits and progress are sent
+ * as structured values, never parsed.
+ * How it fits: Rendered by `screens/ChangesVersions.tsx`; every pane posts through
+ * `useCreateChange`; uses `EditPanes.tsx`; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useRef, useState } from 'react'
 import { errorMessage } from '@/lib/api'
 import { readNotesFile, useCreateChange, type ChangeEdits, type ChangeRequest, type ChangeSource, type PlanVersion } from '@/lib/changes'
@@ -39,6 +39,7 @@ export function ReportChange({
   const [tab, setTab] = useState<ChangeSource>('notes')
   const create = useCreateChange(projectId)
   const step = useSteps(create.isPending, READ_STEPS.length)
+  /** Creates the change request and hands it to the screen. */
   const submit: Submit = (body) => create.mutate(body, { onSuccess: onCreated })
 
   return (
@@ -98,6 +99,7 @@ function NotesPane({ orgId, busy, onSubmit }: { orgId: string | null; busy: bool
   else if (reading) blocked = 'Reading the file…'
   else if (!text.trim()) blocked = 'Paste the meeting notes or upload a file first.'
 
+  /** Reads an uploaded notes file and appends its text to the notes. */
   const onFile = async (file: File | undefined) => {
     if (!file) return
     setFileError(null)

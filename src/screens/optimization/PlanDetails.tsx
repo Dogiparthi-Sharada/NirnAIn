@@ -1,8 +1,13 @@
 /**
- * The plan's detail tabs on Optimization Results: task reassignments, schedule changes and
- * resource utilization, straight from the run result (port of the tab card in the mockup's
- * views/optimize-plan.js). Tabs follow the WAI-ARIA pattern: arrow keys move between them.
+ * The plan's detail tabs on Optimization Results: task reassignments, schedule changes and resource utilization.
+ *
+ * Purpose: Shows the run result's details as it came from the solver; the tabs follow the WAI-ARIA
+ * pattern so arrow keys move between them.
+ * How it fits: Port of the tab card in the mockup's views/optimize-plan.js; rendered by
+ * `PlanView.tsx`; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useRef, useState, type KeyboardEvent } from 'react'
 import type { PlanResult } from '@/lib/optimize'
 

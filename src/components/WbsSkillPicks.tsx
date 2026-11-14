@@ -1,13 +1,15 @@
 /**
- * Work-package skills on the WBS Builder (step 4, D6): the chips a package row shows, and the
- * picker of its edit row, which chooses from the project's skill list (step 5, Constraints).
+ * Work-package skills on the WBS Builder: the chips a row shows and the picker of its edit row.
  *
- * Why: the optimizer gives a Required skill's work only to people who have it (or to a contractor
- * the PM allows), and it finds that work through these tags. A chip is red when nobody on the team
- * has the skill, green when someone does, and grey when the skill isn't on the project's list
- * (e.g. an AI tag). Skills a package already has outside the list stay pickable, so they can be
- * kept or removed. While the server can't save skills yet, the picker is replaced by the reason.
+ * Purpose: The optimizer gives a Required skill's work only to people who have it (or to an
+ * allowed contractor) and finds that work through these tags. A chip is red when nobody on the
+ * team has the skill, green when someone does and grey when it isn't on the project's list; skills
+ * outside the list stay pickable so they can be kept or removed.
+ * How it fits: Used by `components/WbsTable.tsx` and `components/WbsEditCells.tsx`; picks from the
+ * project's skill list (step 5) via `lib/wbs.ts`; layer: component.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import type { KeyboardEvent } from 'react'
 import { Link } from 'react-router'
 import type { ProjectSkill } from '@/lib/inputs'

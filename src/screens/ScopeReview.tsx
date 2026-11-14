@@ -1,3 +1,15 @@
+/**
+ * Step 3, Scope Review: accept, edit or remove each item the AI extracted, by category.
+ *
+ * Purpose: The WBS is built from the accepted scope, so every item must be decided before
+ * Continue; items quoted from the notes can be accepted in one click, removed items keep their
+ * Undo after a reload (QA S-15) and a blank edit is refused with a reason (QA S-06).
+ * How it fits: Route `projects/:projectId/scope` in `App.tsx`; uses its own scope list
+ * (`scope/items.ts`), the gate rules (`scope/gate.ts`), the item rows (`scope/ItemRow.tsx`) and
+ * `components/InputsKit.tsx`; layer: screen.
+ * Created: 2026-09-24 · Version: 1.0 (NirnAIn demo release)
+ */
+
 import { useMemo, useState } from 'react'
 import { useParams } from 'react-router'
 import { Chip, Crumb, GateBanner, useToast } from '@/components/InputsKit'
@@ -23,8 +35,9 @@ const SECTION_COLOR: Record<ScopeCategory, string> = {
   missing_info: '#F3EADB',
 }
 
+/** Lists the scope by category with the gate to the WBS, the add-item rows and the removed group. */
 export default function ScopeReview() {
-  const nav = useStepNav()
+  const goToStep = useStepNav()
   const { projectId = '' } = useParams()
   // Removed items are listed too, so they keep their Undo after a reload (QA S-15).
   const itemsQuery = useScopeList(projectId)
@@ -41,28 +54,32 @@ export default function ScopeReview() {
   const [tried, setTried] = useState(0)
 
   const items = useMemo(() => (itemsQuery.data ?? []) as EvidenceScopeItem[], [itemsQuery.data])
-  const visible = items.filter((i) => i.status !== 'removed')
+  const visible = items.filter((item) => item.status !== 'removed')
   const removed = items.filter((item) => item.status === 'removed')
-  const accepted = visible.filter((i) => i.status === 'accepted').length
+  const accepted = visible.filter((item) => item.status === 'accepted').length
   // Pending items (and, first, those saying more than the notes) block the WBS step.
   const gate = scopeGate(items, () => void acceptAllQuoted())
   const actionError = updateItem.error ?? addItem.error
 
+  /** Saves a change to one item and merges the saved item into the list. */
   function patch(itemId: string, body: ScopeItemPatch) {
     updateItem.mutate({ itemId, patch: body }, { onSuccess: syncList })
   }
 
+  /** Opens the editor on an item with its current text. */
   function startEdit(item: EvidenceScopeItem) {
     setEditing(item.id)
     setEditText(item.text)
     setEditError(null)
   }
 
+  /** Closes the editor without saving. */
   function stopEdit() {
     setEditing(null)
     setEditError(null)
   }
 
+  /** Saves the edited text (unchanged text is not sent); a blank text keeps the editor open with a reason. */
   function saveEdit(item: EvidenceScopeItem) {
     const text = editText.trim()
     if (!text) {
@@ -73,6 +90,7 @@ export default function ScopeReview() {
     stopEdit()
   }
 
+  /** Adds the typed item to a category and closes the add row. */
   function saveAdd(category: ScopeCategory) {
     const text = addText.trim()
     if (!text) return
@@ -87,6 +105,7 @@ export default function ScopeReview() {
     )
   }
 
+  /** The props of one item row: its state and the accept, remove, fix and edit actions. */
   function rowProps(item: EvidenceScopeItem) {
     return {
       item,
@@ -105,21 +124,23 @@ export default function ScopeReview() {
     }
   }
 
+  /** Accepts every pending item quoted from the notes and says how many are left to check. */
   async function acceptAllQuoted() {
-    const quoted = items.filter((i) => i.evidence === 'stated' && i.status === 'pending')
+    const quoted = items.filter((item) => item.evidence === 'stated' && item.status === 'pending')
     const results = await Promise.allSettled(
       quoted.map((item) =>
         updateItem.mutateAsync({ itemId: item.id, patch: { status: 'accepted' } }).then((saved) => syncList(saved)),
       ),
     )
-    const done = results.filter((r) => r.status === 'fulfilled').length
-    const left = items.filter((i) => i.status === 'pending').length - done
+    const done = results.filter((result) => result.status === 'fulfilled').length
+    const left = items.filter((item) => item.status === 'pending').length - done
     showToast(`Accepted ${done} items quoted from your notes. ${left} left for you to check.`)
   }
 
+  /** Goes to the WBS Builder, or shows the gate banner when items are still undecided. */
   function continueToWbs() {
     if (gate.blocked) setTried((attempts) => attempts + 1)
-    else nav('wbs')
+    else goToStep('wbs')
   }
 
   const crumb = <Crumb trail={['Create Project', 'AI Intake', 'Scope Review']} />
@@ -180,7 +201,7 @@ export default function ScopeReview() {
           <div id="sc-empty" className="card center">
             <h3 style={{ justifyContent: 'center' }}>No scope yet</h3>
             <p className="muted small">Run AI Project Intake first.</p>
-            <button className="btn" type="button" onClick={() => nav('intake')}>
+            <button className="btn" type="button" onClick={() => goToStep('intake')}>
               Go to AI Intake
             </button>
           </div>
@@ -203,14 +224,14 @@ export default function ScopeReview() {
         <div id="sc-body">
           {SCOPE_CATEGORIES.map((category) => {
             const shown = visible.filter((item) => item.category === category)
-            const acc = shown.filter((i) => i.status === 'accepted').length
+            const acceptedInSection = shown.filter((item) => item.status === 'accepted').length
             return (
               <div className="card sc-sec" key={category}>
                 <div className="sc-head">
                   <span className="nm">
                     {SCOPE_CATEGORY_LABELS[category]}{' '}
                     <span className="sc-badge" style={{ background: SECTION_COLOR[category] }}>
-                      {acc}/{shown.length} accepted
+                      {acceptedInSection}/{shown.length} accepted
                     </span>
                   </span>
                   <button
@@ -234,10 +255,10 @@ export default function ScopeReview() {
                       <input
                         className="in"
                         value={addText}
-                        onChange={(e) => setAddText(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') saveAdd(category)
-                          if (e.key === 'Escape') setAdding(null)
+                        onChange={(event) => setAddText(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') saveAdd(category)
+                          if (event.key === 'Escape') setAdding(null)
                         }}
                         aria-label={`New ${SCOPE_CATEGORY_LABELS[category]} item`}
                         placeholder="Describe the item in your own words"
@@ -283,7 +304,7 @@ export default function ScopeReview() {
           items={gate.links}
         />
         <div className="row between mt" id="sc-foot">
-          <button className="btn sec" type="button" onClick={() => nav('intake')}>
+          <button className="btn sec" type="button" onClick={() => goToStep('intake')}>
             &larr; Back to AI Intake
           </button>
           <div className="row">

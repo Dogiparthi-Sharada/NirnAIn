@@ -1,14 +1,16 @@
 /**
- * Error pages in the approved design's style (`.card`, `h1`/`.sub`, `.btn`): page not found, a
- * crashed page and a build that is missing configuration. `App.tsx` uses `RouteError` as the
- * router's `errorElement`, `NotFound` for unknown URLs and `AppErrorBoundary` around everything;
- * `main.tsx` shows `ConfigErrorPage` instead of the app when env vars are missing.
+ * Error pages in the approved design's style: page not found, a crashed page and missing configuration.
  *
- * Inside the signed-in shell (`inline`) the message sits in the page area; otherwise it fills the
- * window with the brand above it. The crash page uses plain anchors because it can render outside
- * the router.
+ * Purpose: Users must always get a way back instead of a blank screen. Inside the signed-in shell
+ * (`inline`) the message sits in the page area; otherwise it fills the window with the brand above
+ * it. The crash page uses plain anchors because it can render outside the router.
+ * How it fits: `App.tsx` uses `RouteError` as the router's `errorElement` and `NotFound` for
+ * unknown URLs; `main.tsx` shows `CrashPage` for an error no route caught and `ConfigErrorPage`
+ * when env vars are missing; layer: component.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
  */
-import { Component, useEffect, type ErrorInfo, type ReactNode } from 'react'
+
+import { useEffect, type ReactNode } from 'react'
 import { isRouteErrorResponse, Link, useRouteError } from 'react-router'
 import { APP_NAME } from './Brand'
 
@@ -114,7 +116,7 @@ export function RouteError({ inline = false }: { inline?: boolean }) {
 }
 
 /** An unexpected error: reload, or start again from the dashboard. Your saved work is not affected. */
-function CrashPage({ inline }: { inline?: boolean }) {
+export function CrashPage({ inline }: { inline?: boolean }) {
   return (
     <MessagePage
       inline={inline}
@@ -132,23 +134,6 @@ function CrashPage({ inline }: { inline?: boolean }) {
       }
     />
   )
-}
-
-/** Last-resort boundary around providers that live outside the router. */
-export class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
-  state = { hasError: false }
-
-  static getDerivedStateFromError(): { hasError: boolean } {
-    return { hasError: true }
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error('Unhandled application error', error, info.componentStack)
-  }
-
-  render(): ReactNode {
-    return this.state.hasError ? <CrashPage /> : this.props.children
-  }
 }
 
 /** Shown instead of the app when required build-time env vars are missing. */

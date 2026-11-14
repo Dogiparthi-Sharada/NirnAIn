@@ -1,12 +1,11 @@
 /**
- * NirnAIn mockup · styles/workflow.css
+ * Styles of the steps up to the WBS: dashboard, create chooser, uploads, scope and WBS.
  *
- * PURPOSE
- *   Steps up to the WBS: dashboard, create chooser, uploads, scope, WBS.
- *
- * DEPENDS ON   styles/base.css (colour tokens)
- * AUTHOR       Sharada Dogiparthi
- * CREATED      2026-11-11
+ * Purpose: Gives steps 1–4 and the dashboard the approved design's cards, tiles, lists and the WBS
+ * table.
+ * How it fits: Approved mockup stylesheet (styles/workflow.css by Sharada Dogiparthi, 2026-11-11),
+ * rules ported unchanged; imported by `index.css`; builds on `base.css`; layer: styles.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
 
 /* ---- Dashboard: KPI cards, health rows, notifications. ---- */

@@ -1,16 +1,16 @@
 /**
- * Impact of one change on step 7: what changed (with quotes), the questions it raises,
- * what it touches, what will be regenerated, and the re-plan.
+ * The impact of one change on step 7: what changed, the questions it raises, what it touches and the re-plan.
  *
- * Answers are saved immediately (PATCH /changes/{id}); once every question is answered
- * the backend returns the derived `overrides`, which unlocks "Re-plan". The re-plan is
- * C1's optimization run with the plan in force as baseline; while it runs, and once it
- * finishes, `PlanComparison` takes over below. Conflicts with values you confirmed are
- * asked, never overwritten ("never invent"): the budget/deadline choice sits in an amber
- * flag under its change, like the mockup. When the re-plan slips the date or finds no plan,
- * `KeepDateCard` offers the priced ways to keep it (round 2, D2); a change whose re-plan
- * failed can always be dismissed ("Keep Plan vN" = reject), so it never stays stuck open.
+ * Purpose: Answers save immediately and, once all are in, the backend's overrides unlock "Re-plan"
+ * against the plan in force. Conflicts with values the PM confirmed are asked, never overwritten
+ * ("never invent"). When the re-plan slips the date or finds no plan, the priced ways to keep the
+ * date are offered, and a failed re-plan can always be dismissed ("Keep Plan vN") so a change
+ * never stays stuck open.
+ * How it fits: Rendered by `screens/ChangesVersions.tsx`; uses `ChangeRows.tsx`,
+ * `ImpactCards.tsx`, `KeepDate.tsx` and `PlanComparison.tsx`; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useEffect, useRef } from 'react'
 import { errorMessage } from '@/lib/api'
 import {
@@ -73,6 +73,7 @@ export function ChangeImpact({
   if (!impact) return null
   const baseVersion = change.baseVersion ?? current.version
   const nextVersion = baseVersion + 1
+  /** Saves the PM's answer to one question (not once the change is decided or while an answer saves). */
   const pick: PickAnswer = (question, value) => {
     if (!decided && !answer.isPending) answer.mutate({ changeId: change.id, answers: { [question.id]: value } })
   }
@@ -86,6 +87,7 @@ export function ChangeImpact({
   const notes = change.source === 'notes'
   const count = impact.changes.length
   const lock = decided || answer.isPending
+  /** Re-plans the change against the plan in force, optionally with a keep-the-date remedy. */
   const replanWith = (remedy?: KeepDateRemedyId) => {
     if (!change.overrides) return
     replan.mutate(
@@ -93,7 +95,9 @@ export function ChangeImpact({
       { onSuccess: (replanRun) => onReplanned(replanRun.id) },
     )
   }
+  /** Approves the change: the re-planned run becomes the next plan version. */
   const approve = () => decide.mutate({ changeId: change.id, decision: 'approve', runId: run?.id }, { onSuccess: () => onDecided('approve') })
+  /** Rejects the change: the plan in force stays. */
   const keep = () => decide.mutate({ changeId: change.id, decision: 'reject' }, { onSuccess: () => onDecided('reject') })
   const deciding = replan.isPending || decide.isPending
   // Newcomers as the re-plan staffs them (hours as answered); leavers by name.
