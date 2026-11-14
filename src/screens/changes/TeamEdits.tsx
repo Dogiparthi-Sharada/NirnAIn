@@ -113,10 +113,12 @@ export function NewcomerForm({
           <input className="in" id="chg-mf-rate" inputMode="decimal" placeholder="Team average if empty" value={rate} onChange={(event) => setRate(event.target.value)} />
         </div>
         <div className="field">
-          <span className="sl">Contract</span>
-          <label className="pick">
-            <input type="checkbox" checked={contractor} onChange={(event) => setContractor(event.target.checked)} /> Outside contractor
-          </label>
+          <label id="chg-mf-contract-label">Contract</label>
+          <div className="skill-picks" role="group" aria-labelledby="chg-mf-contract-label">
+            <label className="pick">
+              <input type="checkbox" checked={contractor} onChange={(event) => setContractor(event.target.checked)} /> Outside contractor
+            </label>
+          </div>
         </div>
       </div>
       <div className="field mt">
