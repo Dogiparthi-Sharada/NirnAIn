@@ -1,4 +1,10 @@
-"""Moved test support."""
+"""Fake AI intake repository for the intake endpoint tests.
+
+Purpose: Keep intake runs, pasted texts and scope items in memory, with switches for a lost insert
+race and for an upload whose text was read.
+How it fits: The intake tests install `FakeIntakes` in place of `IntakeRepository`; layer: tests.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -19,6 +25,8 @@ from tests.support.store import ProjectScopedFake, Store
 
 @dataclass
 class IntakeStore:
+    """What the fake intake tables hold and the database states a test can switch on."""
+
     runs: dict[uuid.UUID, IntakeRun] = field(default_factory=dict)
     items: dict[uuid.UUID, ScopeItem] = field(default_factory=dict)
     texts: dict[uuid.UUID, str] = field(default_factory=dict)
@@ -27,17 +35,23 @@ class IntakeStore:
 
 
 class FakeIntakes(ProjectScopedFake):
+    """Stand-in for `IntakeRepository` over the intake data."""
+
     def __init__(self, store: Store, data: IntakeStore, user_id: uuid.UUID) -> None:
+        """Act as the given user over the store and the intake data."""
         super().__init__(store, user_id)
         self.data = data
 
     async def active_run(self, project_id: uuid.UUID, stale_after_s: int) -> ActiveRun | None:
+        """Report no active run."""
         return None
 
     async def has_readable_upload(self, project_id: uuid.UUID) -> bool:
+        """Return the upload state the test set."""
         return self.data.readable_upload
 
     async def create(self, project_id: uuid.UUID, text: str) -> uuid.UUID:
+        """Queue a run and keep its pasted text; raise when the test simulates a lost race."""
         if self.data.race:
             raise ActiveRunExistsError
         run_id = uuid.uuid4()
@@ -56,10 +70,12 @@ class FakeIntakes(ProjectScopedFake):
         return run_id
 
     async def list_runs(self, project_id: uuid.UUID) -> list[IntakeRun]:
+        """Return the project's runs, newest first."""
         runs = [run for run in self.data.runs.values() if run.project_id == project_id]
         return sorted(runs, key=lambda run: run.created_at, reverse=True)
 
     async def get(self, project_id: uuid.UUID, run_id: uuid.UUID) -> IntakeRun | None:
+        """Return a visible run of the project, or None."""
         run = self.data.runs.get(run_id)
         visible = run and run.project_id == project_id and self._role(project_id) is not None
         return run if visible else None
@@ -67,6 +83,7 @@ class FakeIntakes(ProjectScopedFake):
     async def list_scope_items(
         self, project_id: uuid.UUID, *, include_removed: bool = False
     ) -> list[ScopeItem]:
+        """Return the project's scope items, removed ones only when asked."""
         return [
             item
             for item in self.data.items.values()
@@ -77,7 +94,8 @@ class FakeIntakes(ProjectScopedFake):
     async def create_item(
         self, project_id: uuid.UUID, category: ScopeCategory, text: str
     ) -> ScopeItem | None:
-        order = sum(1 for i in self.data.items.values() if i.category == category)
+        """Add a manual, accepted item at the end of its category."""
+        order = sum(1 for existing in self.data.items.values() if existing.category == category)
         item = ScopeItem(
             id=uuid.uuid4(),
             project_id=project_id,
@@ -97,11 +115,3 @@ class FakeIntakes(ProjectScopedFake):
         )
         self.data.items[item.id] = item
         return item
-
-
-class FakeIntaker:
-    def __init__(self) -> None:
-        self.submitted: list[uuid.UUID] = []
-
-    async def submit(self, run_id: uuid.UUID) -> None:
-        self.submitted.append(run_id)

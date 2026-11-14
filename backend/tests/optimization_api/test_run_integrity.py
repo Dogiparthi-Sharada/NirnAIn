@@ -26,13 +26,13 @@ from app.repositories.optimization import OptimizationRepository
 from app.repositories.work_packages import packages_without_duration
 from tests.support.connections import Conn, Rows
 from tests.support.optimization_runs import (
-    FakeRunner,
     FakeRuns,
     RunStore,
     mark_ready,
     runs_url,
 )
 from tests.support.projects import create_project
+from tests.support.runners import FakeRunner
 from tests.support.store import Store
 from tests.support.tokens import Auth
 

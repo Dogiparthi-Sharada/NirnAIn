@@ -1,4 +1,11 @@
-"""Moved test support."""
+"""Fake AI job repository for the AI job endpoint tests.
+
+Purpose: Let the endpoint tests set what the database would say (a WBS exists, a job is active, a
+concurrent insert wins) and see the jobs a request queued.
+How it fits: The `jobs_client` fixture (tests/ai_jobs/conftest.py) installs it in place of
+`AiJobRepository`; layer: tests.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -15,6 +22,8 @@ from tests.support.store import ProjectScopedFake, Store
 # --------------------------------------------------------------------------- API
 @dataclass
 class JobData:
+    """What the fake AI job table holds and the database states a test can switch on."""
+
     jobs: dict[uuid.UUID, AiJob] = field(default_factory=dict)
     has_wbs: bool = False
     active: ActiveJob | None = None
@@ -22,19 +31,25 @@ class JobData:
 
 
 class FakeJobs(ProjectScopedFake):
+    """Stand-in for `AiJobRepository` over the job data."""
+
     def __init__(self, store: Store, data: JobData, user_id: uuid.UUID) -> None:
+        """Act as the given user over the store and the job data."""
         super().__init__(store, user_id)
         self.data = data
 
     async def has_wbs(self, project_id: uuid.UUID) -> bool:
+        """Return the WBS state the test set."""
         return self.data.has_wbs
 
     async def active_job(
         self, project_id: uuid.UUID, kind: AiJobKind, stale_after_s: int
     ) -> ActiveJob | None:
+        """Return the active job the test set, if any."""
         return self.data.active
 
     async def create(self, project_id: uuid.UUID, kind: AiJobKind) -> uuid.UUID:
+        """Queue a job, or raise `ActiveJobExistsError` when the test simulates a lost race."""
         if self.data.race:
             raise ActiveJobExistsError
         job = AiJob(
@@ -52,24 +67,14 @@ class FakeJobs(ProjectScopedFake):
         return job.id
 
     async def get(self, project_id: uuid.UUID, job_id: uuid.UUID) -> AiJob | None:
+        """Return a job by id."""
         return self.data.jobs.get(job_id)
 
     async def latest(self, project_id: uuid.UUID, kind: AiJobKind) -> AiJob | None:
+        """Return the newest visible job of a kind for the project."""
         rows = [
-            j
-            for j in self.data.jobs.values()
-            if j.project_id == project_id and j.kind == kind and self._role(project_id)
+            job
+            for job in self.data.jobs.values()
+            if job.project_id == project_id and job.kind == kind and self._role(project_id)
         ]
         return rows[-1] if rows else None
-
-
-class FakeRunner:
-    def __init__(self) -> None:
-        self.submitted: list[uuid.UUID] = []
-        self.failed: list[tuple[uuid.UUID, str]] = []
-
-    async def submit(self, job_id: uuid.UUID) -> None:
-        self.submitted.append(job_id)
-
-    async def fail(self, job_id: uuid.UUID, error: str) -> None:
-        self.failed.append((job_id, error))

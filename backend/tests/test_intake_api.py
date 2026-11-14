@@ -15,8 +15,9 @@ from app.domain.common import (
     OrgRole,
     ScopeStatus,
 )
-from tests.support.intake import FakeIntaker, FakeIntakes, IntakeStore
+from tests.support.intake import FakeIntakes, IntakeStore
 from tests.support.projects import create_project
+from tests.support.runners import FakeRunner
 from tests.support.store import Store
 from tests.support.tokens import Auth
 
@@ -31,7 +32,7 @@ def intake_client(app: FastAPI, store: Store, intake_data: IntakeStore) -> Itera
     def intakes(principal: CurrentPrincipal) -> FakeIntakes:
         return FakeIntakes(store, intake_data, principal.user_id)
 
-    intaker = FakeIntaker()
+    intaker = FakeRunner()
     app.dependency_overrides[deps.get_intake_repo] = intakes
     app.dependency_overrides[deps.get_intake_runner] = lambda: intaker
     with TestClient(app, raise_server_exceptions=False) as c:

@@ -14,12 +14,12 @@ from app.domain.common import OrgRole
 from app.optimization.model import Employee, PlanningInput, Task
 from app.optimization.runtime import SOLVER_VERSION
 from tests.support.optimization_runs import (
-    FakeRunner,
     RunStore,
     mark_ready,
     runs_url,
 )
 from tests.support.projects import create_project
+from tests.support.runners import FakeRunner
 from tests.support.store import Store
 from tests.support.tokens import Auth
 

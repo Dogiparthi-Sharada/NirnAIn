@@ -12,8 +12,9 @@ from app.jobs.ai_jobs import (
     RESTART_ERROR,
 )
 from app.repositories.ai_jobs import ActiveJob
-from tests.support.ai_jobs import FakeRunner, JobData
+from tests.support.ai_jobs import JobData
 from tests.support.projects import create_project
+from tests.support.runners import FakeRunner
 from tests.support.store import Store
 from tests.support.tokens import Auth
 

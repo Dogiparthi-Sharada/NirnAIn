@@ -1,4 +1,11 @@
-"""Moved test support."""
+"""Document upload helpers: tiny PDF and Word files, a fake document repository and an upload call.
+
+Purpose: Test uploads end to end without real files or a database, with the same RLS outcomes
+(readers see, writers add and delete).
+How it fits: Used by the tests in tests/documents (whose conftest installs `FakeDocuments`);
+layer: tests.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -47,6 +54,7 @@ def pdf_with_text(text: str) -> bytes:
 
 
 def docx_bytes() -> bytes:
+    """Return a Word file with one paragraph and a one-row table."""
     document = docx.Document()
     document.add_paragraph("Kickoff notes")
     table = document.add_table(rows=1, cols=2)
@@ -60,6 +68,8 @@ def docx_bytes() -> bytes:
 # --------------------------------------------------------------------------- API
 @dataclass
 class DocumentData:
+    """What the fake document table holds: documents and their extracted texts."""
+
     documents: dict[uuid.UUID, SourceDocument] = field(default_factory=dict)
     texts: dict[uuid.UUID, str | None] = field(default_factory=dict)
 
@@ -68,6 +78,7 @@ class FakeDocuments(ProjectScopedFake):
     """In-memory documents with the RLS rules the API relies on."""
 
     def __init__(self, store: Store, data: DocumentData, user_id: uuid.UUID) -> None:
+        """Act as the given user over the store and the document data."""
         super().__init__(store, user_id)
         self.data = data
 
@@ -80,6 +91,7 @@ class FakeDocuments(ProjectScopedFake):
         size_bytes: int,
         extraction: Extraction,
     ) -> SourceDocument | None:
+        """Store an upload's extraction result as a document."""
         document = SourceDocument(
             id=uuid.uuid4(),
             project_id=project_id,
@@ -98,20 +110,24 @@ class FakeDocuments(ProjectScopedFake):
         return document
 
     async def get(self, document_id: uuid.UUID) -> SourceDocument | None:
+        """Return a visible document, or None."""
         document = self.data.documents.get(document_id)
         return document if document and self._role(document.project_id) else None
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[SourceDocument]:
+        """Return the project's documents, newest first."""
         rows = [doc for doc in self.data.documents.values() if doc.project_id == project_id]
         return sorted(rows, key=lambda doc: doc.created_at, reverse=True)
 
     async def delete(self, document_id: uuid.UUID) -> bool:
+        """Delete a document; False when it is not there."""
         return self.data.documents.pop(document_id, None) is not None
 
 
 def upload_file(
     client: TestClient, project_id: str, headers: dict[str, str], name: str, data: bytes, mime: str
 ) -> dict[str, object]:
+    """Upload a file to the project as multipart `file` and return the JSON answer."""
     response = client.post(
         f"/api/v1/projects/{project_id}/documents",
         files={"file": (name, data, mime)},

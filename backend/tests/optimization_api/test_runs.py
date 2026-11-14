@@ -14,12 +14,12 @@ from app.domain.common import OrgRole, SolverStatus
 from app.jobs.optimizer import RESTART_ERROR
 from tests.support.optimization_runs import (
     RUN_KEYS,
-    FakeRunner,
     RunStore,
     mark_ready,
     runs_url,
 )
 from tests.support.projects import create_project
+from tests.support.runners import FakeRunner
 from tests.support.store import Store
 from tests.support.tokens import Auth
 

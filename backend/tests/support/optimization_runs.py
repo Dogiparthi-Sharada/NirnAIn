@@ -1,4 +1,11 @@
-"""Moved test support."""
+"""Fake optimization run repository and helpers for the optimization endpoint tests.
+
+Purpose: Let the tests set the loaded inputs, sheet facts, earlier owners, change requests and race
+conditions, and inspect the runs a request created.
+How it fits: The fixtures in tests/optimization_api/conftest.py install `FakeRuns` in place of
+`OptimizationRepository`; layer: tests.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -21,6 +28,8 @@ from tests.support.store import ProjectScopedFake, Store, rls_violation
 
 @dataclass
 class RunStore:
+    """What the fake run tables hold and the database states a test can switch on."""
+
     runs: dict[uuid.UUID, dict[str, Any]] = field(default_factory=dict)
     inputs: dict[uuid.UUID, PlanningInput] = field(default_factory=dict)
     # Sheet facts only the database knows (answers, estimate confirmations), per project.
@@ -36,52 +45,73 @@ class RunStore:
 
 
 class FakeRuns(ProjectScopedFake):
+    """Stand-in for `OptimizationRepository` over the run store."""
+
     def __init__(self, store: Store, runs: RunStore, user_id: uuid.UUID) -> None:
+        """Act as the given user over the store and the run store."""
         super().__init__(store, user_id)
-        self.runs = runs
+        self.run_store = runs
 
     async def project(self, project_id: uuid.UUID) -> ProjectContext | None:
-        p = self.store.projects.get(project_id)
-        if p is None or self._role(project_id) is None:
+        """Return the visible project's context, or None."""
+        project = self.store.projects.get(project_id)
+        if project is None or self._role(project_id) is None:
             return None
-        return ProjectContext(p.id, p.org_id, p.name, p.start_date, p.target_end_date, None)
+        return ProjectContext(
+            project.id,
+            project.org_id,
+            project.name,
+            project.start_date,
+            project.target_end_date,
+            None,
+        )
 
     async def lock_run_creation(self, project_id: uuid.UUID) -> bool:
-        return project_id not in self.runs.starting
+        """Refuse the lock while the test says another request is starting a run."""
+        return project_id not in self.run_store.starting
 
     async def active_run(self, project_id: uuid.UUID, stale_after_s: int) -> ActiveRun | None:
+        """Return the project's queued or running run, flagged stale after `stale_after_s`."""
         cutoff = datetime.now(UTC) - timedelta(seconds=stale_after_s)
-        for run in self.runs.runs.values():
+        for run in self.run_store.runs.values():
             if run["project_id"] == project_id and run["status"] in ("queued", "running"):
                 return ActiveRun(run["id"], run["created_at"] < cutoff)
         return None
 
     async def fail_run(self, run_id: uuid.UUID, error: str) -> None:
-        self.runs.runs[run_id].update(status="failed", error=error)
+        """Mark a run failed with the error."""
+        self.run_store.runs[run_id].update(status="failed", error=error)
 
     async def load_input(self, project: ProjectContext, today: date) -> PlanningInput:
-        return self.runs.inputs.get(
+        """Return the input the test made ready, or an empty one."""
+        return self.run_store.inputs.get(
             project.id, PlanningInput(str(project.id), project.name, today, (), ())
         )
 
-    async def input_facts(self, project: ProjectContext, inp: PlanningInput) -> InputFacts:
-        return facts_from_input(inp, **self.runs.facts.get(project.id, {}))
+    async def input_facts(
+        self, project: ProjectContext, planning_input: PlanningInput
+    ) -> InputFacts:
+        """Return the sheet facts of the input plus what the test set for the project."""
+        return facts_from_input(planning_input, **self.run_store.facts.get(project.id, {}))
 
     async def packages_without_duration(self, project_id: uuid.UUID) -> list[str]:
-        return self.runs.without_duration.get(project_id, [])
+        """Return the work packages the test marked as having no duration."""
+        return self.run_store.without_duration.get(project_id, [])
 
     async def baseline_owners(
         self, project_id: uuid.UUID, run_id: uuid.UUID
     ) -> dict[str, str] | None:
-        run = self.runs.runs.get(run_id)
+        """Return an earlier run's planned owners, or None for an unknown run."""
+        run = self.run_store.runs.get(run_id)
         if run is None or run["project_id"] != project_id:
             return None
-        return self.runs.owners.get(run_id, {})
+        return self.run_store.owners.get(run_id, {})
 
     async def applied_run(self, project_id: uuid.UUID) -> AppliedRun | None:
+        """Return the plan in force (the latest applied version) and its inputs hash."""
         applied = [
             run
-            for run in self.runs.runs.values()
+            for run in self.run_store.runs.values()
             if run["project_id"] == project_id and run.get("applied_at") is not None
         ]
         if not applied:
@@ -92,13 +122,17 @@ class FakeRuns(ProjectScopedFake):
     async def change_request_status(
         self, project_id: uuid.UUID, change_request_id: uuid.UUID
     ) -> str | None:
-        change = self.runs.changes.get(change_request_id)
+        """Return a change request's status when it belongs to the project."""
+        change = self.run_store.changes.get(change_request_id)
         return change["status"] if change and change["project_id"] == project_id else None
 
     async def mark_replanning(
         self, project_id: uuid.UUID, change_request_id: uuid.UUID, run_id: uuid.UUID
     ) -> None:
-        self.runs.changes[change_request_id].update(status="replanning", proposed_run_id=run_id)
+        """Point the change request at the re-plan run."""
+        self.run_store.changes[change_request_id].update(
+            status="replanning", proposed_run_id=run_id
+        )
 
     async def create(
         self,
@@ -106,12 +140,13 @@ class FakeRuns(ProjectScopedFake):
         snapshot: dict[str, Any],
         options: dict[str, Any] | None = None,
     ) -> uuid.UUID:
+        """Store a queued run; RLS error for viewers, `ActiveRunExistsError` on a simulated race."""
         if not await self.can_write(project_id):
             raise rls_violation()
-        if self.runs.race:
+        if self.run_store.race:
             raise ActiveRunExistsError
         rid = uuid.uuid4()
-        self.runs.runs[rid] = {
+        self.run_store.runs[rid] = {
             "id": rid,
             "project_id": project_id,
             "status": "queued",
@@ -129,30 +164,28 @@ class FakeRuns(ProjectScopedFake):
         return rid
 
     def _visible(self, run: dict[str, Any]) -> OptimizationRun | None:
+        """Return the run as the API model when the acting user can see its project."""
         if self._role(run["project_id"]) is None:
             return None
-        return OptimizationRun.model_validate({k: v for k, v in run.items() if k != "snapshot"})
+        return OptimizationRun.model_validate(
+            {column: value for column, value in run.items() if column != "snapshot"}
+        )
 
     async def get(self, project_id: uuid.UUID, run_id: uuid.UUID) -> OptimizationRun | None:
-        run = self.runs.runs.get(run_id)
+        """Return a visible run of the project, or None."""
+        run = self.run_store.runs.get(run_id)
         return self._visible(run) if run and run["project_id"] == project_id else None
 
     async def latest(self, project_id: uuid.UUID) -> OptimizationRun | None:
-        rows = [r for r in self.runs.runs.values() if r["project_id"] == project_id]
+        """Return the project's newest visible run, or None."""
+        rows = [run for run in self.run_store.runs.values() if run["project_id"] == project_id]
         if not rows:
             return None
-        return self._visible(max(rows, key=lambda r: r["created_at"]))
-
-
-class FakeRunner:
-    def __init__(self) -> None:
-        self.submitted: list[uuid.UUID] = []
-
-    async def submit(self, run_id: uuid.UUID) -> None:
-        self.submitted.append(run_id)
+        return self._visible(max(rows, key=lambda run: run["created_at"]))
 
 
 def mark_ready(run_store: RunStore, project_id: str) -> None:
+    """Give the project a ready planning input: one work package and one person."""
     pid = uuid.UUID(project_id)
     run_store.inputs[pid] = PlanningInput(
         project_id=project_id,
@@ -164,6 +197,7 @@ def mark_ready(run_store: RunStore, project_id: str) -> None:
 
 
 def runs_url(project_id: str, suffix: str = "") -> str:
+    """Return the project's optimization runs URL, with an optional suffix."""
     return f"/api/v1/projects/{project_id}/optimization/runs{suffix}"
 
 

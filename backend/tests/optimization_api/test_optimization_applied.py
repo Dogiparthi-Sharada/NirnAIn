@@ -21,7 +21,8 @@ from fastapi.testclient import TestClient
 from app.api import deps
 from app.core.security import CurrentPrincipal
 from app.optimization.model import Employee, PlanningInput, Task
-from tests.support.optimization_runs import FakeRunner, FakeRuns, RunStore
+from tests.support.optimization_runs import FakeRuns, RunStore
+from tests.support.runners import FakeRunner
 from tests.support.store import Store
 from tests.support.tokens import Auth
 

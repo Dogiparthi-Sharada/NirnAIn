@@ -22,6 +22,7 @@ from app.domain.me import OrganizationMembership, Profile
 from app.domain.notifications import Notification
 from app.domain.orgs import OrgMember
 from app.domain.projects import Project
+from app.repositories.access import ProjectRef
 
 
 # --------------------------------------------------------------------------- in-memory fakes
@@ -318,6 +319,20 @@ class ProjectScopedFake:
         """Return the acting user's role in the project's organization (None: no access)."""
         project = self.store.projects.get(project_id)
         return self.store.role(project.org_id, self.user_id) if project else None
+
+    async def project(self, project_id: uuid.UUID) -> ProjectRef | None:
+        """Return the project's planning fields when the acting user can see it, else None."""
+        project = self.store.projects.get(project_id)
+        if project is None or self._role(project_id) is None:
+            return None
+        return ProjectRef(
+            project.id,
+            project.org_id,
+            project.name,
+            project.start_date,
+            project.target_end_date,
+            project.budget_cents,
+        )
 
     async def project_exists(self, project_id: uuid.UUID) -> bool:
         """Tell whether the acting user can see the project."""
