@@ -127,14 +127,27 @@ export default function WBSBuilder() {
     }
   }
 
+  // One add at a time: a double click or a retry while the first is saving must not create a
+  // duplicate node (QA PACK-D-DUP-NODE). The ref stops a second click before the re-render.
+  const addingRef = useRef(false)
+  const adding = createNode.isPending
+  function addOnce(parentId: () => Promise<string | null>, name: string) {
+    if (addingRef.current) return
+    addingRef.current = true
+    void parentId()
+      .then((id) => (id ? createNode.mutateAsync({ parentId: id, name }) : null))
+      .catch(() => null)
+      .finally(() => {
+        addingRef.current = false
+      })
+  }
+
   function addDeliverable() {
-    void ensureRoot().then((rootId) => {
-      if (rootId) createNode.mutate({ parentId: rootId, name: 'New deliverable' })
-    })
+    addOnce(ensureRoot, 'New deliverable')
   }
 
   function addPackageUnder(parentId: string) {
-    createNode.mutate({ parentId, name: 'New work package' })
+    addOnce(() => Promise.resolve(parentId), 'New work package')
     setCollapsed((previous) => {
       const next = new Set(previous)
       next.delete(parentId)
@@ -227,6 +240,7 @@ export default function WBSBuilder() {
             onAddDeliverable={addDeliverable}
             onAddWorkPackage={addWorkPackage}
             canAddWorkPackage={deliverables.length > 0}
+            adding={adding}
             onValidate={() => startValidate.mutate()}
             validating={validating}
             canValidate={nodes.length > 0}
@@ -291,6 +305,7 @@ export default function WBSBuilder() {
                 if (parent.level === 1) addDeliverable()
                 else addPackageUnder(parent.id)
               }}
+              adding={adding}
               onMove={moveNodeTo}
               onSelect={(node) => setSelectedId(node.id)}
               selectedId={selectedId}

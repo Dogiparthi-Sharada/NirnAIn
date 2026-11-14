@@ -38,6 +38,7 @@ export default function WbsTable({
   onConfirm,
   onSave,
   onAddChild,
+  adding,
   onMove,
   onSelect,
   selectedId,
@@ -57,6 +58,8 @@ export default function WbsTable({
   onSave: (node: WbsTreeNode, patch: WbsNodePatch) => void
   /** Adds a deliverable under the project row or a work package under a deliverable. */
   onAddChild: (parent: WbsTreeNode) => void
+  /** A new node is being saved: the "+ Deliverable / + Package" links wait until it is. */
+  adding: boolean
   /** Moves `source` to the position of `target` (same parent only). */
   onMove: (source: WbsTreeNode, target: WbsTreeNode) => void
   onSelect: (node: WbsTreeNode) => void
@@ -219,6 +222,8 @@ export default function WbsTable({
                           className="linkbtn"
                           type="button"
                           aria-label={node.level === 1 ? 'Add a deliverable' : `Add a work package to ${node.name}`}
+                          disabled={adding}
+                          title={adding ? 'Adding\u2026 wait for the new row before adding another.' : undefined}
                           onClick={(event) => {
                             event.stopPropagation()
                             onAddChild(node)
