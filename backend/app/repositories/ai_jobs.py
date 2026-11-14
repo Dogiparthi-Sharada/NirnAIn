@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime
 from typing import Any
 
 import sqlalchemy as sa
@@ -24,14 +25,13 @@ from app.ai.wbs_generate import (
     TeamMember,
     WbsPlan,
 )
-from app.ai.wbs_validate import DependencyInfo, NodeInfo, ValidationInput
+from app.ai.wbs_validate import ValidationInput
 from app.core.errors import pg_error_info
 from app.domain.ai import AiJob
 from app.domain.common import AiJobKind, ItemOrigin, JobStatus
 from app.repositories import access
 from app.repositories.tables import (
     ai_jobs,
-    constraint_sets,
     dependencies,
     employee_skills,
     employees,
@@ -42,8 +42,8 @@ from app.repositories.tables import (
     skills,
     task_skill_requirements,
     wbs_nodes,
-    wbs_nodes_with_code,
 )
+from app.repositories.wbs_checks import read_validation_input
 
 ACTIVE = (JobStatus.QUEUED, JobStatus.RUNNING)
 job_t = ai_jobs
@@ -294,90 +294,15 @@ class AiJobStore:
             team=tuple(team),
         )
 
-    async def validation_input(self, project_id: uuid.UUID) -> ValidationInput | None:
-        p, c = projects, constraint_sets
-        row = (
-            await self._conn.execute(
-                sa.select(
-                    p.c.org_id,
-                    p.c.name,
-                    sa.func.coalesce(c.c.start_date, p.c.start_date).label("start_date"),
-                    sa.func.coalesce(c.c.must_finish_by, p.c.target_end_date).label("deadline"),
-                    sa.func.coalesce(c.c.working_days_per_week, 5).label("per_week"),
-                )
-                .select_from(p.outerjoin(c, c.c.project_id == p.c.id))
-                .where(p.c.id == project_id)
-            )
-        ).first()
-        if row is None:
+    async def validation_input(
+        self, project_id: uuid.UUID, today: date | None = None
+    ) -> ValidationInput | None:
+        """The checks' input (`wbs_checks.py`, the same as `GET …/wbs/checks`) plus the
+        scope items the review reads; `today` defaults to the UTC date, like the optimizer."""
+        inp = await read_validation_input(self._conn, project_id, today or datetime.now(UTC).date())
+        if inp is None:
             return None
-        w, e = wbs_nodes_with_code, employees
-        node_rows = (
-            await self._conn.execute(
-                sa.select(
-                    w.c.id,
-                    w.c.parent_id,
-                    w.c.level,
-                    w.c.code,
-                    w.c.name,
-                    w.c.duration_days,
-                    w.c.owner_employee_id,
-                    e.c.full_name.label("owner_name"),
-                )
-                .select_from(w.outerjoin(e, e.c.id == w.c.owner_employee_id))
-                .where(w.c.project_id == project_id)
-                .order_by(w.c.path)
-            )
-        ).all()
-        nodes = tuple(NodeInfo(**r._mapping) for r in node_rows)
-        d = dependencies
-        dep_rows = (
-            await self._conn.execute(
-                sa.select(d.c.predecessor_id, d.c.successor_id, d.c.type, d.c.lag_days).where(
-                    d.c.project_id == project_id
-                )
-            )
-        ).all()
-        deps = tuple(
-            DependencyInfo(r.predecessor_id, r.successor_id, r.type, r.lag_days) for r in dep_rows
-        )
-        tsr, ps, sk, n = task_skill_requirements, project_skills, skills, wbs_nodes
-        task_skills = (
-            sa.select(sk.c.name)
-            .select_from(
-                tsr.join(sk, sk.c.id == tsr.c.skill_id).join(n, n.c.id == tsr.c.wbs_node_id)
-            )
-            .where(n.c.project_id == project_id)
-        )
-        project_required = (
-            sa.select(sk.c.name)
-            .select_from(ps.join(sk, sk.c.id == ps.c.skill_id))
-            .where(ps.c.project_id == project_id, ps.c.required.is_(True))
-        )
-        required: Sequence[Any] = (
-            (await self._conn.execute(sa.union(task_skills, project_required).order_by("name")))
-            .scalars()
-            .all()
-        )
-        team, has_team = await self.team(project_id, row.org_id)
-        held = frozenset(
-            " ".join(name.split()).casefold()
-            for m in team
-            for name, level in m.skills.items()
-            if level
-        )
-        return ValidationInput(
-            project_name=row.name,
-            nodes=nodes,
-            dependencies=deps,
-            start_date=row.start_date,
-            deadline=row.deadline,
-            working_days_per_week=int(row.per_week),
-            required_skills=tuple(str(s) for s in required),
-            held_skills=held,
-            has_team=has_team,
-            scope=await self._scope(project_id),
-        )
+        return replace(inp, scope=await self._scope(project_id))
 
     # ----------------------------------------------------------------- WBS write
     async def has_wbs(self, project_id: uuid.UUID) -> bool:

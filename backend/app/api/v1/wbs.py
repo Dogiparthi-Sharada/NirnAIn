@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Response, status
 
+from app.ai.wbs_validate import check_structure
 from app.api.deps import NodeId, ProjectId, Wbs
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableError
 from app.domain.wbs import (
+    WbsCheckIssue,
+    WbsChecks,
     WbsConfirmEstimates,
     WbsMove,
     WbsNode,
@@ -45,6 +49,25 @@ async def list_wbs(project_id: ProjectId, wbs: Wbs) -> list[WbsNode]:
     if await wbs.project(project_id) is None:
         raise NotFoundError("Project not found")
     return await wbs.tree(project_id)
+
+
+@router.get(
+    "/projects/{projectId}/wbs/checks",
+    response_model=WbsChecks,
+    summary="Built-in checks on the current WBS, team and constraints (no AI, instant)",
+)
+async def wbs_checks(project_id: ProjectId, wbs: Wbs) -> WbsChecks:
+    """The deterministic part of AI Validate, run now on live data: free, so the builder
+    re-runs it after every edit. Only the AI review (`POST …/wbs/validate`) costs tokens."""
+    now = datetime.now(UTC)
+    inp = await wbs.check_input(project_id, now.date())
+    if inp is None:
+        raise NotFoundError("Project not found")
+    return WbsChecks(
+        issues=[WbsCheckIssue(type=issue.type, text=issue.text) for issue in check_structure(inp)],
+        checked_at=now,
+        wbs_changed_at=await wbs.changed_at(project_id),
+    )
 
 
 @router.post(

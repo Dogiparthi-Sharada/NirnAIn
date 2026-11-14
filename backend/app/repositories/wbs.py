@@ -5,12 +5,14 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.ai.wbs_validate import ValidationInput
 from app.domain.common import ItemOrigin
 from app.domain.wbs import WbsNode, WbsSkill, estimate_state
 from app.optimization.skill_links import LINKED_PROFICIENCY
@@ -23,6 +25,7 @@ from app.repositories.tables import (
     wbs_nodes,
     wbs_nodes_with_code,
 )
+from app.repositories.wbs_checks import read_validation_input, wbs_changed_at
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +70,14 @@ class WbsRepository:
 
     async def is_active_employee(self, org_id: uuid.UUID, employee_id: uuid.UUID) -> bool:
         return await access.is_active_employee(self._conn, org_id, employee_id)
+
+    async def check_input(self, project_id: uuid.UUID, today: date) -> ValidationInput | None:
+        """What the built-in checks read, as the caller sees it (None: project not visible)."""
+        return await read_validation_input(self._conn, project_id, today)
+
+    async def changed_at(self, project_id: uuid.UUID) -> datetime | None:
+        """When the project's WBS nodes last changed."""
+        return await wbs_changed_at(self._conn, project_id)
 
     async def tree(self, project_id: uuid.UUID) -> list[WbsNode]:
         w = wbs_nodes_with_code

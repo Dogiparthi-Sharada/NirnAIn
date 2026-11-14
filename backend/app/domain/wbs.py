@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, StringConstraints, model_validator
 
@@ -111,6 +111,25 @@ class WbsConfirmEstimates(InputModel):
 
 class WbsMove(InputModel):
     position: Annotated[int, Field(ge=0)]
+
+
+class WbsCheckIssue(CamelModel):
+    """One finding of the built-in checks, shaped like the validate job's issues."""
+
+    type: Literal["missing", "duplicate", "warning"]
+    text: str
+
+
+class WbsChecks(CamelModel):
+    """The free built-in checks (no AI) on the current WBS, team and constraints.
+
+    `wbs_changed_at` is when the WBS nodes last changed (None without nodes): the builder
+    compares it with the last AI review to say when that review is out of date.
+    """
+
+    issues: list[WbsCheckIssue]
+    checked_at: datetime
+    wbs_changed_at: datetime | None
 
 
 def reorder(sibling_ids: list[uuid.UUID], node_id: uuid.UUID, position: int) -> list[uuid.UUID]:
