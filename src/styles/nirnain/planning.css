@@ -1,12 +1,10 @@
 /**
- * NirnAIn mockup · styles/planning.css
+ * Styles of the planning steps: constraints, optimization results, changes and versions.
  *
- * PURPOSE
- *   Planning steps: constraints, optimization results, changes and versions.
- *
- * DEPENDS ON   styles/base.css (colour tokens)
- * AUTHOR       Sharada Dogiparthi
- * CREATED      2026-11-11
+ * Purpose: Gives steps 5–7 the approved design's cards, tables, timelines and comparison views.
+ * How it fits: Approved mockup stylesheet (styles/planning.css by Sharada Dogiparthi, 2026-11-11),
+ * rules ported unchanged; imported by `index.css`; builds on `base.css`; layer: styles.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
 
 /* ---- Constraints: questions, hard/soft switches, warnings. ---- */

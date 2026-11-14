@@ -1,18 +1,12 @@
 /**
- * NirnAIn mockup · styles/base.css
+ * Design tokens and shared components of the approved NirnAIn design.
  *
- * PURPOSE
- *   Design tokens (wine and cream palette), typography, layout helpers and the shared components
- *   every screen uses: buttons, inputs, cards, tags, provenance chips, quotes, tables, alerts and
- *   the toast.
- *
- * HOW IT WORKS
- *   Colours live only in the :root variables so a theme change is one edit. Build-label tags and
- *   'Behind the scenes' panels hide when body has the class hide-labels (the mockup bar toggle).
- *
- * DEPENDS ON   nothing; load first
- * AUTHOR       Sharada Dogiparthi
- * CREATED      2026-11-11
+ * Purpose: The wine and cream palette, typography, layout helpers and the components every screen
+ * uses (buttons, inputs, cards, tags, provenance chips, quotes, tables, alerts, the toast).
+ * Colours live only in the :root variables so a theme change is one edit.
+ * How it fits: Approved mockup stylesheet (styles/base.css by Sharada Dogiparthi, 2026-11-11),
+ * rules ported unchanged; imported first by `index.css`; layer: styles.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
 
 :root{--bg:#F6EFE2;--fg:#2E1A1D;--pr:#722F37;--sec:#E8DCC6;--secfg:#4A2B2F;--muted:#EFE5D2;--mfg:#7A6063;--accent:#DDE7D0;--border:#CDBFAB;--line:#E8DCC6;--soft:#FAF5EB;--green:#4F7A4A;--red:#A83A4A;--amber:#a8691f}

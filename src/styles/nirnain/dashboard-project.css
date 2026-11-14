@@ -1,14 +1,15 @@
 /**
- * NirnAIn mockup · styles/dashboard-project.css
+ * Per-project dashboard styles: the project picker bar and the delivery-health grid.
  *
- * PURPOSE
- *   Per-project dashboard: the project picker bar (select, status line, next step) and the
- *   key/value grid used for delivery health.
- *
- * DEPENDS ON   styles/base.css, styles/workflow.css (.kpis, .dgrid, .notif)
- * AUTHOR       Sharada Dogiparthi
- * CREATED      2026-11-11
+ * Purpose: Lays out the picker (select, status line, next step) and the key/value grid of the
+ * dashboard's health card.
+ * How it fits: Approved mockup stylesheet (styles/dashboard-project.css by Sharada Dogiparthi,
+ * 2026-11-11), rules ported unchanged; imported by `index.css`; builds on `base.css` and
+ * `workflow.css`; layer: styles.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
+
 
 /* ---- Picker bar ---- */
 .d-picker{display:grid;grid-template-columns:minmax(240px,340px) 1fr auto;gap:18px;align-items:center;margin-bottom:18px;border-left:5px solid var(--pr)}

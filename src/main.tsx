@@ -1,3 +1,14 @@
+/**
+ * The browser entry point: checks the configuration, then renders the app or the configuration error page.
+ *
+ * Purpose: The app must never start with missing configuration (the Supabase client would be built
+ * without its keys), and an error no route catches must still end on the crash page instead of a
+ * blank screen.
+ * How it fits: Loaded by `index.html`; imports `index.css`, reads `lib/env.ts` and lazily loads
+ * `App.tsx`; layer: config.
+ * Created: 2026-09-24 · Version: 1.0 (NirnAIn demo release)
+ */
+
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { envResult } from './lib/env'
