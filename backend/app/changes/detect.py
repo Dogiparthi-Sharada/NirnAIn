@@ -1,14 +1,12 @@
-"""Deterministic "Find what changed" (used when no AI key is configured, or as a fallback).
+"""Deterministic "Find what changed" (no AI key configured, or as the fallback).
 
-Reads new meeting notes against the project's inputs. It only reports what a sentence
-states (money in a sentence about the budget → budget, a date next to a deadline word →
-deadline, each with the policy stated next to it, "must hold" = hard; a named work package
-with "N weeks" → duration, or "done" → nothing left; a person with "N hours a week" or
-"leaves" → capacity; "bring in a specialist" → team; "has to be added" → scope) and never
-invents values: a sentence that rejects or declines something proposes nothing, and a value
-after "instead of" is the old one. Anything it can't pin down becomes a question (see
-`app.changes.questions`). Budgets and deadlines are read by `app.changes.detect_limits`,
-people by `app.changes.detect_people`.
+Purpose: Report only what a sentence states and never invent values: budget and deadline (with their
+stated policy), durations or "done", hours or leaving, specialists brought in and new scope. A
+sentence that rejects something proposes nothing, a value after "instead of" is the old one, and
+anything it can't pin down becomes a question.
+How it fits: Called by `ChangeDetector` (app/changes/llm.py); budgets and deadlines are read by
+detect_limits.py, people by detect_people.py; layer: changes.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -55,6 +53,7 @@ class _Ids:
     """Sequential change ids (c1, c2…) that questions and answers refer to."""
 
     def __init__(self) -> None:
+        """Start numbering at c1."""
         self.count = 0
 
     def next(self) -> str:
@@ -283,6 +282,7 @@ def _duration(
     hits = exact or partial
 
     def new_value(task: TaskRef) -> int | None:
+        """Return the package's new duration (earlier/later by a span, or a new total)."""
         number = spans[0]
         if parsing.has(sentence.body, detect_limits.EARLIER):
             return None if task.duration_days is None else max(task.duration_days - number, 1)
@@ -334,4 +334,5 @@ def _change(sentence: parsing.Sentence, ids: _Ids, task: TaskRef, days: int) -> 
 
 
 def _task_label(task: TaskRef) -> str:
+    """Return `code name` of a work package."""
     return f"{task.code} {task.name}"

@@ -1,12 +1,11 @@
 """From a change to a re-plan: structured edits, what a change touches, and the overrides.
 
-`from_edits` turns the Edit inputs / Progress update tabs into changes as they are.
-`derive_overrides` maps the changes plus the answers to the `overrides` body of C1's
-optimization run (budgetTotalCents, mustFinishBy, durationDays, hoursPerWeek, addMembers,
-removeMembers, and budgetMode / deadlineMode when the notes state one with the chosen value);
-it returns None until every question is answered, which is what keeps
-"Re-plan" locked.
-`build_impact` assembles the `impact` JSON stored on the change request.
+Purpose: Edits and progress updates become changes as they are; `derive_overrides` maps the changes
+plus the answers to the `overrides` body of the re-plan run and returns None until every question is
+answered, which is what keeps "Re-plan" locked.
+How it fits: Used by app/api/v1/changes.py and `to_change` in app/repositories/changes.py;
+`build_impact` assembles the `impact` JSON stored on the change request; layer: changes.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -46,6 +45,7 @@ def from_edits(edits: ChangeEdits, context: ChangeContext) -> list[DetectedChang
     out: list[DetectedChange] = []
 
     def add(**fields: object) -> None:
+        """Append a change with the next sequential id."""
         out.append(DetectedChange.model_validate({"id": f"c{len(out) + 1}", **fields}))
 
     if edits.budget_total_cents is not None and edits.budget_total_cents != context.budget_cents:
@@ -227,6 +227,7 @@ def build_affects(changes: list[DetectedChange], context: ChangeContext) -> Chan
 
 
 def _reach(start: uuid.UUID, successors: dict[uuid.UUID, list[uuid.UUID]]) -> set[uuid.UUID]:
+    """Return the start node and every node that follows it through the links."""
     seen = {start}
     stack = [start]
     while stack:

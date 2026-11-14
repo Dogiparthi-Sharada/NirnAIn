@@ -1,4 +1,11 @@
-"""Plan vN+1 against Plan vN: per work package bars before/after and why they moved."""
+"""Plan vN+1 against Plan vN: each work package's bars before and after, and why they moved.
+
+Purpose: Let the PM approve a re-plan knowing exactly what it moves: dates, owners and the reason
+(the change that caused it, or a predecessor that moved).
+How it fits: `build_comparison` is called by `GET /changes/{id}/compare` (app/api/v1/changes.py)
+with runs read by app/repositories/change_plans.py; pure; layer: changes.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -19,6 +26,7 @@ from app.domain.changes import (
 
 
 def _snapshot_start(meta: RunMeta) -> tuple[date, int]:
+    """Return the Monday of a run's planning start and its working days per week (1..7)."""
     raw = meta.snapshot.get("start_date")
     start = date.fromisoformat(raw) if isinstance(raw, str) else date.today()
     per_week = int((meta.snapshot.get("constraints") or {}).get("working_days_per_week") or 5)
@@ -63,6 +71,7 @@ def _bars(
 
 
 def _side(meta: RunMeta) -> PlanSide:
+    """Return one side of the comparison: KPIs and the budget / deadline it was solved under."""
     constraints = meta.snapshot.get("constraints") or {}
     finish = constraints.get("must_finish_by")
     budget = constraints.get("budget_total_cents")
@@ -78,6 +87,7 @@ def _side(meta: RunMeta) -> PlanSide:
 
 
 def _labels(meta: RunMeta) -> dict[str, tuple[str, str]]:
+    """Return each task's (code, name) from a run's input snapshot."""
     return {
         str(task.get("id")): (str(task.get("code") or ""), str(task.get("name") or ""))
         for task in meta.snapshot.get("tasks") or []
@@ -85,24 +95,13 @@ def _labels(meta: RunMeta) -> dict[str, tuple[str, str]]:
 
 
 def _preds(meta: RunMeta) -> dict[str, list[str]]:
+    """Return each task's predecessors from a run's input snapshot."""
     out: dict[str, list[str]] = {}
     for dependency in meta.snapshot.get("dependencies") or []:
         out.setdefault(str(dependency.get("successor_id")), []).append(
             str(dependency.get("predecessor_id"))
         )
     return out
-
-
-def _as_number(value: object) -> float | None:
-    return float(value) if isinstance(value, int | float) else None
-
-
-def _weeks(value: object) -> str:
-    return parsing.format_days(_as_number(value))
-
-
-def _hours(value: object) -> str:
-    return parsing.format_hours(_as_number(value))
 
 
 def _change_reasons(
@@ -129,13 +128,13 @@ def _change_reasons(
                 tasks[str(target)] = (
                     "Done, nothing left to plan"
                     if after == 0
-                    else f"Effort {_weeks(before)} → {_weeks(after)}"
+                    else f"Effort {parsing.days_text(before)} → {parsing.days_text(after)}"
                 )
             elif change.kind == "capacity":
                 people[str(target)] = (
                     f"{change.target_label} leaves the project"
                     if after == 0
-                    else f"{change.target_label} now gives {_hours(after)} a week"
+                    else f"{change.target_label} now gives {parsing.hours_text(after)} a week"
                 )
             elif is_removal(change):
                 people[str(target)] = f"{change.target_label} leaves the team"
