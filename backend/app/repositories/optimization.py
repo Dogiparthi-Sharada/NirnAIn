@@ -1,12 +1,15 @@
-"""Optimization runs: user-side queries (RLS) and the worker's service-side writes."""
+"""Optimization runs: user-side queries (RLS) and the worker's service-side writes.
+
+Reading the planning data itself lives in `planning_input.py`; this module
+creates and reads runs, links re-plans to change requests and stores what
+the background worker produced.
+"""
 
 from __future__ import annotations
 
 import uuid
-from collections import defaultdict
-from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
 import sqlalchemy as sa
@@ -17,31 +20,25 @@ from app.core.errors import pg_error_info
 from app.domain.common import SolverStatus
 from app.domain.optimization import OptimizationRun
 from app.optimization.explain import Report
-from app.optimization.model import (
-    Allocation,
-    Constraints,
-    Dependency,
-    Employee,
-    Milestone,
-    PlanningInput,
-    SkillRequirement,
-    Task,
-)
+from app.optimization.inputs import InputFacts
+from app.optimization.model import PlanningInput
+from app.repositories.input_facts import InputFactsReader
+from app.repositories.planning_input import PlanningInputReader, ProjectContext
 from app.repositories.tables import (
-    allocations,
-    constraint_sets,
-    dependencies,
-    employee_skills,
-    employees,
-    milestones,
+    change_requests,
     optimization_runs,
     planned_assignments,
     projects,
     recommendations,
-    skills,
-    task_skill_requirements,
-    wbs_nodes_with_code,
 )
+
+__all__ = [
+    "ActiveRun",
+    "ActiveRunExistsError",
+    "OptimizationJobStore",
+    "OptimizationRepository",
+    "ProjectContext",
+]
 
 ACTIVE = (SolverStatus.QUEUED, SolverStatus.RUNNING)
 r = optimization_runs
@@ -49,16 +46,6 @@ r = optimization_runs
 
 class ActiveRunExistsError(Exception):
     """The one-active-run-per-project unique index rejected the insert."""
-
-
-@dataclass(frozen=True, slots=True)
-class ProjectContext:
-    id: uuid.UUID
-    org_id: uuid.UUID
-    name: str
-    start_date: date | None
-    target_end_date: date | None
-    budget_cents: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,10 +98,6 @@ def _to_run(row: sa.Row[Any]) -> OptimizationRun:
 def _older_than(seconds: int) -> sa.ColumnElement[bool]:
     cutoff = sa.func.now() - sa.func.make_interval(0, 0, 0, 0, 0, 0, seconds)
     return sa.func.coalesce(r.c.started_at, r.c.created_at) < cutoff
-
-
-def _monday(d: date) -> date:
-    return d - timedelta(days=d.weekday())
 
 
 class OptimizationRepository:
@@ -192,240 +175,58 @@ class OptimizationRepository:
 
     # ------------------------------------------------------------------ input
     async def load_input(self, project: ProjectContext, today: date) -> PlanningInput:
-        """Read the planning data the caller can see and freeze it into a model input.
+        """The project's planning data, frozen into the optimizer's input (see planning_input)."""
+        return await PlanningInputReader(self._conn).load(project, today)
 
-        Work packages are level-3 nodes and level-2 nodes without children,
-        with a positive duration. Dependencies and milestones on summary
-        nodes are expanded to the work packages underneath them.
-        """
-        pid = project.id
-        w = wbs_nodes_with_code
-        nodes = (
+    async def input_facts(self, project: ProjectContext, inp: PlanningInput) -> InputFacts:
+        """What the confirmation sheet shows beyond `inp` (answers, confirmations, sources)."""
+        return await InputFactsReader(self._conn).facts(project, inp)
+
+    async def baseline_owners(
+        self, project_id: uuid.UUID, run_id: uuid.UUID
+    ) -> dict[str, str] | None:
+        """WBS node id -> employee id of an earlier run's plan (None: no such run)."""
+        found = (
             await self._conn.execute(
-                sa.select(
-                    w.c.id,
-                    w.c.parent_id,
-                    w.c.level,
-                    w.c.name,
-                    w.c.duration_days,
-                    w.c.effort_hours,
-                    w.c.owner_employee_id,
-                    w.c.code,
+                sa.select(optimization_runs.c.id).where(
+                    optimization_runs.c.project_id == project_id, optimization_runs.c.id == run_id
                 )
-                .where(w.c.project_id == pid)
-                .order_by(w.c.path)
-            )
-        ).all()
-        children: dict[uuid.UUID, list[uuid.UUID]] = defaultdict(list)
-        for n in nodes:
-            if n.parent_id is not None:
-                children[n.parent_id].append(n.id)
-        work = [
-            n
-            for n in nodes
-            if (n.level == 3 or (n.level == 2 and not children.get(n.id)))
-            and (n.duration_days or 0) > 0
-        ]
-        task_ids = {n.id for n in work}
-
-        def leaves(node_id: uuid.UUID) -> list[uuid.UUID]:
-            if node_id in task_ids:
-                return [node_id]
-            return [leaf for child in children.get(node_id, []) for leaf in leaves(child)]
-
-        reqs = await self._requirements(task_ids)
-        team, profs = await self._team(project.org_id)
-        emp_ids = [row.id for row in team]
-
-        d = dependencies
-        dep_rows = (
-            await self._conn.execute(
-                sa.select(d.c.predecessor_id, d.c.successor_id, d.c.type, d.c.lag_days)
-                .where(d.c.project_id == pid)
-                .order_by(d.c.predecessor_id, d.c.successor_id)
-            )
-        ).all()
-        deps: dict[tuple[str, str], Dependency] = {}
-        for row in dep_rows:
-            for a in leaves(row.predecessor_id):
-                for b in leaves(row.successor_id):
-                    if a != b:
-                        deps.setdefault(
-                            (str(a), str(b)),
-                            Dependency(str(a), str(b), str(row.type), int(row.lag_days)),  # type: ignore[arg-type]
-                        )
-
-        cs = (
-            await self._conn.execute(
-                sa.select(constraint_sets).where(constraint_sets.c.project_id == pid)
             )
         ).first()
-        constraints, start = self._constraints(cs, project, today)
-
-        ms = milestones
-        milestone_list = []
-        for row in (
+        if found is None:
+            return None
+        planned = planned_assignments
+        rows = (
             await self._conn.execute(
-                sa.select(ms.c.id, ms.c.name, ms.c.due_date, ms.c.wbs_node_id, ms.c.mode)
-                .where(ms.c.project_id == pid)
-                .order_by(ms.c.due_date, ms.c.id)
-            )
-        ).all():
-            covered = leaves(row.wbs_node_id) if row.wbs_node_id is not None else []
-            if covered:
-                milestone_list.append(
-                    Milestone(
-                        id=str(row.id),
-                        name=row.name,
-                        due_date=row.due_date,
-                        mode=str(row.mode),  # type: ignore[arg-type]
-                        task_ids=tuple(str(x) for x in covered),
-                    )
+                sa.select(planned.c.wbs_node_id, planned.c.employee_id).where(
+                    planned.c.run_id == run_id, planned.c.employee_id.is_not(None)
                 )
-
-        alloc_list = await self._allocations(emp_ids, pid, start)
-
-        return PlanningInput(
-            project_id=str(pid),
-            project_name=project.name,
-            start_date=start,
-            tasks=tuple(
-                Task(
-                    id=str(n.id),
-                    code=n.code,
-                    name=n.name,
-                    duration_days=int(n.duration_days),
-                    effort_hours=None if n.effort_hours is None else float(n.effort_hours),
-                    owner_id=None if n.owner_employee_id is None else str(n.owner_employee_id),
-                    skills=tuple(reqs.get(n.id, ())),
-                )
-                for n in work
-            ),
-            employees=tuple(
-                Employee(
-                    id=str(row.id),
-                    name=row.full_name,
-                    weekly_capacity_hours=float(row.weekly_capacity_hours),
-                    hourly_rate_cents=row.hourly_rate_cents,
-                    is_contractor=bool(row.is_contractor),
-                    skills=profs.get(row.id, {}),
-                )
-                for row in team
-            ),
-            dependencies=tuple(deps.values()),
-            constraints=constraints,
-            milestones=tuple(milestone_list),
-            allocations=tuple(alloc_list),
-        )
-
-    async def _requirements(
-        self, task_ids: set[uuid.UUID]
-    ) -> dict[uuid.UUID, list[SkillRequirement]]:
-        reqs: dict[uuid.UUID, list[SkillRequirement]] = defaultdict(list)
-        if task_ids:
-            t, s = task_skill_requirements, skills
-            rows = (
-                await self._conn.execute(
-                    sa.select(t.c.wbs_node_id, t.c.skill_id, s.c.name, t.c.min_proficiency)
-                    .select_from(t.join(s, s.c.id == t.c.skill_id))
-                    .where(t.c.wbs_node_id.in_(task_ids))
-                    .order_by(t.c.wbs_node_id, s.c.name)
-                )
-            ).all()
-            for row in rows:
-                reqs[row.wbs_node_id].append(
-                    SkillRequirement(str(row.skill_id), str(row.name), int(row.min_proficiency))
-                )
-        return reqs
-
-    async def _team(
-        self, org_id: uuid.UUID
-    ) -> tuple[Sequence[sa.Row[Any]], dict[uuid.UUID, dict[str, int]]]:
-        e = employees
-        team = (
-            await self._conn.execute(
-                sa.select(
-                    e.c.id,
-                    e.c.full_name,
-                    e.c.weekly_capacity_hours,
-                    e.c.hourly_rate_cents,
-                    e.c.is_contractor,
-                )
-                .where(e.c.org_id == org_id, e.c.active.is_(True))
-                .order_by(e.c.full_name, e.c.id)
             )
         ).all()
-        profs: dict[uuid.UUID, dict[str, int]] = defaultdict(dict)
-        emp_ids = [row.id for row in team]
-        if emp_ids:
-            es = employee_skills
-            for row in (
-                await self._conn.execute(
-                    sa.select(es.c.employee_id, es.c.skill_id, es.c.proficiency).where(
-                        es.c.employee_id.in_(emp_ids)
-                    )
-                )
-            ).all():
-                profs[row.employee_id][str(row.skill_id)] = int(row.proficiency)
-        return team, profs
+        return {str(row.wbs_node_id): str(row.employee_id) for row in rows}
 
-    async def _allocations(
-        self, emp_ids: list[uuid.UUID], pid: uuid.UUID, start: date
-    ) -> list[Allocation]:
-        alloc_list: list[Allocation] = []
-        if emp_ids:
-            al = allocations
-            for row in (
-                await self._conn.execute(
-                    sa.select(al.c.employee_id, al.c.week_start, al.c.hours)
-                    .where(
-                        al.c.employee_id.in_(emp_ids),
-                        al.c.project_id != pid,
-                        al.c.week_start >= _monday(start),
-                    )
-                    .order_by(al.c.employee_id, al.c.week_start)
-                )
-            ).all():
-                alloc_list.append(
-                    Allocation(str(row.employee_id), row.week_start, float(row.hours))
-                )
-        return alloc_list
-
-    @staticmethod
-    def _constraints(
-        cs: sa.Row[Any] | None, project: ProjectContext, today: date
-    ) -> tuple[Constraints, date]:
-        """Constraint set with fallbacks to the project's own dates and budget."""
-        start = (cs.start_date if cs else None) or project.start_date or today
-        if cs is None:
-            return (
-                Constraints(
-                    budget_total_cents=project.budget_cents,
-                    must_finish_by=project.target_end_date,
-                ),
-                start,
-            )
+    async def change_request_status(
+        self, project_id: uuid.UUID, change_request_id: uuid.UUID
+    ) -> str | None:
+        """Status of one of the project's change requests (None: not found)."""
+        changes = change_requests
         return (
-            Constraints(
-                budget_total_cents=(
-                    cs.budget_total_cents
-                    if cs.budget_total_cents is not None
-                    else project.budget_cents
-                ),
-                labor_cap_cents=cs.labor_cap_cents,
-                budget_mode=str(cs.budget_mode),  # type: ignore[arg-type]
-                budget_penalty=float(cs.budget_penalty),
-                must_finish_by=cs.must_finish_by or project.target_end_date,
-                deadline_mode=str(cs.deadline_mode),  # type: ignore[arg-type]
-                deadline_penalty_per_day=float(cs.deadline_penalty_per_day),
-                working_days_per_week=int(cs.working_days_per_week),
-                capacity_mode=str(cs.capacity_mode),  # type: ignore[arg-type]
-                capacity_penalty=float(cs.capacity_penalty),
-                skill_mode=str(cs.skill_mode),  # type: ignore[arg-type]
-                allow_contractors=bool(cs.allow_contractors),
-                contractor_rate_cents=cs.contractor_rate_cents,
-            ),
-            start,
+            await self._conn.execute(
+                sa.select(changes.c.status).where(
+                    changes.c.project_id == project_id, changes.c.id == change_request_id
+                )
+            )
+        ).scalar()
+
+    async def mark_replanning(
+        self, project_id: uuid.UUID, change_request_id: uuid.UUID, run_id: uuid.UUID
+    ) -> None:
+        """Point the change request at the run re-planning it (step 7)."""
+        changes = change_requests
+        await self._conn.execute(
+            sa.update(changes)
+            .where(changes.c.project_id == project_id, changes.c.id == change_request_id)
+            .values(proposed_run_id=run_id, status="replanning", error=None)
         )
 
 
