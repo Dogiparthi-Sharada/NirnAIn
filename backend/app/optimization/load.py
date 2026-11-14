@@ -10,19 +10,24 @@ level sets their pace (`speed.py`): the effort, and the duration they need
 at full availability, scale with it. Someone who can give that daily demand
 works at that duration; a part-timer who can't takes ceil(effort / their
 daily hours) working days instead. That is what makes cutting someone's
-hours lengthen the plan and adding hours shorten it.
+hours lengthen the plan and adding hours shorten it. Hours booked on other
+projects leave fewer hours on the days they cover; a task may stretch the
+same way to the hours left beside them (`booked_modes`, QA pack RES-006).
 """
 
 from __future__ import annotations
 
 import math
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from app.optimization.calendar import week_workdays
 from app.optimization.model import PlanningInput, Task
 
 TENTHS = 10
+# The longer ways to do a task beside bookings, per task and person (`booked_modes`).
+MAX_BOOKED_MODES = 3
 
 
 def effort_tenths(task: Task, pace_percent: int = 100) -> float:
@@ -91,6 +96,34 @@ class Block:
     lo: int
     hi: int
     tenths: int
+
+
+def booked_modes(
+    task: Task, capacity_tenths: int | None, booked: Sequence[Block], pace_percent: int = 100
+) -> list[Mode]:
+    """The longer ways to do `task` beside the person's bookings on other projects.
+
+    Modelling rule (QA pack RES-006): a booking leaves the person their daily
+    capacity less the booked load on the days it covers. When that is less
+    than the task's regular daily load, the task may stretch to it as a
+    part-timer's does (`task_mode`), so it runs beside the booking at the
+    hours left instead of only waiting for the booking to end. One mode per
+    resulting duration, shortest first; at most `MAX_BOOKED_MODES`: the
+    shortest ones and always the longest, which fits beside every booking.
+    Contractor profiles (capacity None) carry no bookings.
+    """
+    if capacity_tenths is None:
+        return []
+    regular = task_mode(task, capacity_tenths, pace_percent)
+    stretches: dict[int, Mode] = {}
+    for left in {capacity_tenths - block.tenths for block in booked}:
+        if 0 < left < regular.daily_tenths:
+            mode = task_mode(task, left, pace_percent)
+            stretches[mode.duration_days] = mode
+    found = [stretches[days] for days in sorted(stretches)]
+    if len(found) > MAX_BOOKED_MODES:
+        found = [*found[: MAX_BOOKED_MODES - 1], found[-1]]
+    return found
 
 
 def allocation_blocks(inp: PlanningInput) -> dict[str, list[Block]]:

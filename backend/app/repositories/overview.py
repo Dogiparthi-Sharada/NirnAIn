@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections import defaultdict
 from typing import Any
 
 import sqlalchemy as sa
@@ -20,12 +21,12 @@ from app.domain.common import (
 from app.domain.notifications import Notification
 from app.domain.overview import (
     AppliedRunFacts,
-    MilestoneFact,
     OverviewFacts,
     PolicyFacts,
     ProgressFacts,
     ScopeRisk,
 )
+from app.domain.overview_milestones import MilestoneFact
 from app.domain.projects import Project
 from app.repositories.tables import (
     ai_jobs,
@@ -128,15 +129,43 @@ class OverviewRepository:
         )
 
     async def _milestones(self, project_id: uuid.UUID) -> list[MilestoneFact]:
-        m = milestones
+        """The project's milestones, each with its WBS node and everything under it."""
         stmt = (
-            sa.select(m.c.name, m.c.due_date)
-            .where(m.c.project_id == project_id)
-            .order_by(m.c.due_date, m.c.name)
+            sa.select(milestones.c.name, milestones.c.due_date, milestones.c.wbs_node_id)
+            .where(milestones.c.project_id == project_id)
+            .order_by(milestones.c.due_date, milestones.c.name)
         )
         rows = (await self._conn.execute(stmt)).all()
+        if not any(row.wbs_node_id is not None for row in rows):
+            return [MilestoneFact(name=row.name, due_date=row.due_date) for row in rows]
+        node_rows = (
+            await self._conn.execute(
+                sa.select(wbs_nodes.c.id, wbs_nodes.c.parent_id).where(
+                    wbs_nodes.c.project_id == project_id
+                )
+            )
+        ).all()
+        children: dict[uuid.UUID, list[uuid.UUID]] = defaultdict(list)
+        for node in node_rows:
+            if node.parent_id is not None:
+                children[node.parent_id].append(node.id)
+
+        def subtree(node_id: uuid.UUID) -> frozenset[str]:
+            found: set[str] = set()
+            pending = [node_id]
+            while pending:
+                current = pending.pop()
+                found.add(str(current))
+                pending.extend(children.get(current, []))
+            return frozenset(found)
+
         return [
-            MilestoneFact(name=r._mapping["name"], due_date=r._mapping["due_date"]) for r in rows
+            MilestoneFact(
+                name=row.name,
+                due_date=row.due_date,
+                node_ids=subtree(row.wbs_node_id) if row.wbs_node_id is not None else frozenset(),
+            )
+            for row in rows
         ]
 
     async def _applied_run(self, project_id: uuid.UUID) -> AppliedRunFacts | None:

@@ -3,9 +3,10 @@
 `prepare` turns a frozen planning input into what the model needs as plain
 integers: who may take each task, how long it takes with each of them and
 the load it puts on them per day (`load.task_mode`: their skill level sets
-their pace, `speed.py`, and part-timers stretch tasks), the labor cost of
-each choice, daily capacities, other projects'
-bookings, the horizon and the deadline / milestone indices. Only unfinished
+their pace, `speed.py`, and part-timers stretch tasks; `load.booked_modes`:
+it may also stretch to the hours other projects' bookings leave), the labor
+cost of each choice, daily capacities, other projects' bookings, the
+horizon and the deadline / milestone indices. Only unfinished
 work is modelled, from `release` (today) on; finished work is fixed at the
 dates of the plan in force (`baseline.done_span`). The main model
 and the explanation model (`builder.py`) and the conflict texts
@@ -23,6 +24,7 @@ from app.optimization.load import (
     Block,
     Mode,
     allocation_blocks,
+    booked_modes,
     daily_capacity_tenths,
     flex_capacity_tenths,
     task_mode,
@@ -61,6 +63,8 @@ class Problem:
     modes: dict[tuple[str, str], Mode]  # (task id, resource id) -> duration and daily load
     # The same at up to 25% over the person's hours, for "Can flex" (employees only).
     flex_modes: dict[tuple[str, str], Mode]
+    # Longer ones at the hours their bookings on other projects leave (RES-006).
+    booked: dict[tuple[str, str], list[Mode]]
     cost: dict[tuple[str, str], int]  # (task id, resource id) -> cents
     deadline: int | None  # max exclusive end index
     target: int | None  # exclusive end index of the date to keep (`model.target_of`)
@@ -117,6 +121,14 @@ def prepare(inp: PlanningInput) -> Problem:
         for resource in candidates[task.id]
         if resource.id in capacity
     }
+    booked = {
+        (task.id, resource.id): booked_modes(
+            task, capacity[resource.id], blocks[resource.id], pace[task.id, resource.id]
+        )
+        for task in work
+        for resource in candidates[task.id]
+        if resource.id in blocks
+    }
     # With each task at its longest candidate duration a serial schedule always fits.
     longest = sum(
         max(
@@ -147,6 +159,7 @@ def prepare(inp: PlanningInput) -> Problem:
         pace=pace,
         modes=modes,
         flex_modes=flex_modes,
+        booked=booked,
         cost={
             (task.id, resource.id): round(work_hours(task, resource) * resource.rate_cents)
             for task in work

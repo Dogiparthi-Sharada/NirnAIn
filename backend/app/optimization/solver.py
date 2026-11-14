@@ -38,7 +38,9 @@ constraints below (each person's modes and capacity in `workload.py`),
   Overtime is then chosen only when it saves more than stretching, waiting
   or reassigning, and kept only when it keeps a date or saves money: a
   plan whose overtime buys neither is solved again without it (R7,
-  `polish.py`). Bookings elsewhere make a task wait rather than stretch.
+  `polish.py`). Bookings elsewhere leave fewer hours on the days they
+  cover: a task waits for them to end or stretches to the hours left
+  beside them ("booked" modes, `load.booked_modes`, QA pack RES-006).
   Contractor profiles have no capacity limit: they stand for as many
   people as needed.
 * Skills: in hard mode only qualified resources are candidates; in soft mode

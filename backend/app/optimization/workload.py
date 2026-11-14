@@ -9,7 +9,10 @@ capacity constraint set per person. Modelling rules:
   at the person's daily hours (part-timers stretch the task). With "Can
   flex" capacity a "flex" mode lets a part-timer work up to 25% over their
   hours so the task stretches less (never below their full-time duration).
-  In the explanation model a "relaxed" mode at their full-time duration is
+  "booked" modes stretch it further, to the hours their bookings on other
+  projects leave (`load.booked_modes`), so it can run beside a booking
+  rather than only after it (QA pack RES-006). In the explanation model a
+  "relaxed" mode at their full-time duration is
   open only when the person's capacity group is dropped, so a part-timer
   who makes a date impossible is named in the conflict. Every mode is at
   the person's pace for their skill level (`speed.py`).
@@ -41,7 +44,7 @@ from app.optimization.model import Conflict, Resource, Task
 if TYPE_CHECKING:
     from app.optimization.builder import ModelBuilder
 
-ModeKind = Literal["regular", "flex", "relaxed"]
+ModeKind = Literal["regular", "flex", "booked", "relaxed"]
 
 
 @dataclass(slots=True)
@@ -74,6 +77,7 @@ class Workload:
         flex = self.problem.flex_modes.get((task.id, resource.id))
         if self.flexible and flex is not None and flex.duration_days < regular.duration_days:
             modes.append((flex, "flex"))
+        modes += [(mode, "booked") for mode in self.problem.booked.get((task.id, resource.id), [])]
         shortest = min(mode.duration_days for mode, _ in modes)
         relaxed = task_mode(task, None, self.problem.pace[task.id, resource.id])
         if self.builder.explain and relaxed.duration_days < shortest:

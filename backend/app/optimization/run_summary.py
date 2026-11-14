@@ -3,10 +3,11 @@
 `explain.build_report` adds these to `optimization_runs.result` as
 `schedule` (one row per work package, for the Gantt grouped by deliverable)
 and `summary` (completion, cost, deadline, the target date and the slip
-after it, specialists and the soft constraints the plan bends). The
-Optimization Results screen builds its headline and advice from them, so
-everything here is a fact read off the plan: nothing is estimated or
-invented.
+after it, the peak utilization: the busiest day of anyone on the team,
+specialists and the soft constraints the plan bends). The Optimization
+Results screen and the dashboard build their headline and advice from
+them, so everything here is a fact read off the plan: nothing is estimated
+or invented.
 """
 
 from __future__ import annotations
@@ -103,9 +104,28 @@ def soft_violations(ctx: ReportContext, cost: int, finish: date) -> list[str]:
     return violations
 
 
-def run_summary(
-    ctx: ReportContext, cost: int, finish: date, utilization: list[dict[str, Any]]
-) -> dict[str, Any]:
+def peak_utilization(ctx: ReportContext) -> dict[str, Any] | None:
+    """The busiest working day of anyone with work left in the plan: their load that day,
+    other projects' bookings included, as a percent of their daily hours, and who it is.
+
+    A real peak (QA pack RES-021), not an average over the plan: someone who works
+    8 h on one day of a 40 h week peaks at 100%. Ties go to the first person listed.
+    """
+    working = {
+        scheduled.resource_id
+        for scheduled in ctx.plan.tasks.values()
+        if not ctx.tasks[scheduled.task_id].done
+    }
+    peaks = [
+        (resource.name, ctx.peak_percent(ctx.plan, resource))
+        for resource in ctx.resources.values()
+        if resource.kind == "employee" and resource.id in working
+    ]
+    busiest = max(peaks, key=lambda peak: peak[1], default=None)
+    return None if busiest is None else {"name": busiest[0], "percent": busiest[1]}
+
+
+def run_summary(ctx: ReportContext, cost: int, finish: date) -> dict[str, Any]:
     """Plain numbers the results screen builds its headline and advice from."""
     constraints = ctx.inp.constraints
     specialists = []
@@ -122,11 +142,6 @@ def run_summary(
                     "costCents": round(hours * resource.rate_cents),
                 }
             )
-    employee_names = {
-        resource.name for resource in ctx.resources.values() if resource.kind == "employee"
-    }
-    staff = [row for row in utilization if row["name"] in employee_names]
-    peak = max(staff, key=lambda row: row["after"], default=None)
     budget = (
         constraints.budget_total_cents
         if constraints.budget_total_cents is not None
@@ -148,9 +163,7 @@ def run_summary(
         ),
         "costCents": cost,
         "budgetCents": budget,
-        "peakUtilization": (
-            {"name": peak["name"], "percent": peak["after"]} if peak is not None else None
-        ),
+        "peakUtilization": peak_utilization(ctx),
         "specialists": specialists,
         "softViolations": soft_violations(ctx, cost, finish),
     }

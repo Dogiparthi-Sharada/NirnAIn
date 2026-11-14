@@ -122,7 +122,7 @@ def _duration_reason(ctx: ReportContext, task_id: str) -> str | None:
     level = pace_level(resource, task)
     who = resource.name + (f" (level {level})" if level is not None else "")
     if days > paced_days(task, pace_percent(resource, task)):
-        who += f" at {resource.weekly_capacity_hours:g}h/week"
+        who += f" at {ctx.hours_label(task, resource, days)}"
     return f"{who}: {fmt.plural(days, 'working day')} instead of {task.duration_days}"
 
 
@@ -354,7 +354,7 @@ def build_report(inp: PlanningInput, outcome: SolveOutcome) -> Report:
         "scheduleChanges": schedule,
         "utilization": utilization,
         "schedule": timeline(ctx, ordered),
-        "summary": run_summary(ctx, cost, finish, utilization),
+        "summary": run_summary(ctx, cost, finish),
     }
     return Report(
         **common,
