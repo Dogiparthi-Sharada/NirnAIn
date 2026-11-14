@@ -92,7 +92,7 @@ class ReportContext:
             for day in range(block.lo, min(block.hi, span)):
                 load[day] += block.tenths
         for scheduled in plan.tasks.values():
-            if scheduled.resource_id == resource_id:
+            if scheduled.resource_id == resource_id and not self.tasks[scheduled.task_id].done:
                 demand = daily_tenths(
                     self.tasks[scheduled.task_id], planned_days(plan, scheduled.task_id)
                 )

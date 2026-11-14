@@ -13,7 +13,7 @@ change on step 7.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Request, Response, status
 
@@ -24,7 +24,7 @@ from app.jobs.optimizer import RESTART_ERROR
 from app.optimization.input_sheet import Blocker, Sheet, blocking_detail, build_sheet
 from app.optimization.inputs import inputs_hash
 from app.optimization.model import PlanningInput
-from app.optimization.overrides import apply_overrides, with_baseline
+from app.optimization.overrides import apply_overrides, with_applied_dates, with_baseline
 from app.optimization.remedies import apply_remedy
 from app.repositories.optimization import ActiveRunExistsError, ProjectContext
 
@@ -42,6 +42,16 @@ async def _project(runs: OptimizationRuns, project_id: uuid.UUID) -> ProjectCont
     if project is None:
         raise NotFoundError("Project not found")
     return project
+
+
+async def _applied_dates(
+    runs: OptimizationRuns, project_id: uuid.UUID, run_id: uuid.UUID
+) -> dict[str, tuple[date, date]]:
+    """WBS node id -> first and last day of each work package in an earlier run's plan."""
+    run = await runs.get(project_id, run_id)
+    if run is None or run.result is None:
+        return {}
+    return {item.wbs_node_id: (item.start, item.end) for item in run.result.schedule}
 
 
 async def _sheet(runs: OptimizationRuns, project: ProjectContext) -> tuple[PlanningInput, Sheet]:
@@ -123,6 +133,7 @@ async def create_run(
         if owners is None:
             raise NotFoundError("Baseline run not found")
         inp = with_baseline(inp, owners)
+        inp = with_applied_dates(inp, await _applied_dates(runs, project_id, body.baseline_run_id))
 
     # The body exactly as sent (camelCase, ids and dates as strings): the run's setup.
     options = body.model_dump(mode="json", by_alias=True, exclude_none=True)

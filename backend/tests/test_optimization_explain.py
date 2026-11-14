@@ -88,6 +88,7 @@ def test_skill_reassignment_report() -> None:
         "baselineStart": "2026-10-12",
         "baselineEnd": "2026-10-23",
         "assignee": "Lisa Park",
+        "done": False,
     }
     assert result["summary"]["completionDate"] == "2026-10-23"
     assert result["summary"]["peakUtilization"] == {"name": "Lisa Park", "percent": 67}

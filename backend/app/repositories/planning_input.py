@@ -11,6 +11,8 @@ applied while reading (approved NirnAIn workflow, step 5):
   (hard, Don't know, not answered) -> hard.
 * Outside specialists only when the PM answered 'yes', at the contractor
   rate or the $175/h estimate.
+* Planning starts today: unfinished work never starts before `today` (the
+  caller's date, injectable for tests), even when the start date has passed.
 * Hourly rates are read as stored; people without one are planned at the
   $85/h default (`model.DEFAULT_HOURLY_RATE_CENTS`) and the confirmation
   sheet says so.
@@ -267,6 +269,7 @@ class PlanningInputReader:
             deliverables={
                 node.code: node.name for node in nodes if node.level == DELIVERABLE_LEVEL
             },
+            today=today,
         )
 
     async def _requirements(

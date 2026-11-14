@@ -10,6 +10,7 @@ plan; nothing here invents facts:
 * taken off a person over 100% in baseline  -> "Over-allocation"
 * given to someone with the required skill  -> "Skill gap"
 * unchanged                                 -> omitted from reassignments, "—" delta
+* finished (0 days left)                    -> "Done", at the dates of the plan in force
 
 `report_context.py` holds the lookups (dates, hours, load, binding links).
 """
@@ -212,9 +213,10 @@ def _task_rows(
     resource = ctx.resources[planned.resource_id] if planned.resource_id else None
     start_week, end_week = ctx.weeks(planned.start, planned.end)
     baseline_start_week, baseline_end_week = ctx.weeks(before.start, before.end)
-    # Effort spread over the days the plan gives it (longer at a part-timer's hours).
+    # Effort spread over the days the plan gives it (longer at a part-timer's hours);
+    # finished work has none left.
     days = planned_days(ctx.plan, task.id)
-    hours_per_week = min(round(task.hours / days * ctx.per_week, 1), 168.0)
+    hours_per_week = min(round(task.hours / days * ctx.per_week, 1), 168.0) if days else 0.0
     assignment = AssignmentRow(
         wbs_node_id=task.id,
         employee_id=resource.employee_id if resource else None,
@@ -256,7 +258,7 @@ def _task_rows(
         "original": fmt.weeks_label(baseline_start_week, baseline_end_week),
         "optimized": fmt.weeks_label(start_week, end_week),
         "delta": fmt.shift(shift, ctx.per_week),
-        "reason": _schedule_reason(ctx, task.id, shift),
+        "reason": "Done" if task.done else _schedule_reason(ctx, task.id, shift),
     }
     if shift or days != before.end - before.start:
         recs.append(

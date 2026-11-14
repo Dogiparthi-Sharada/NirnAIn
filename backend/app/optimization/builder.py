@@ -107,8 +107,11 @@ class ModelBuilder:
     def _task(self, task: Task, variables: Variables) -> None:
         """Start, candidates and end of one task; its end follows whoever is chosen."""
         problem, model = self.problem, self.model
-        # The WBS duration is the shortest any candidate takes.
-        start = model.new_int_var(0, problem.horizon - task.duration_days, f"start[{task.id}]")
+        # Unfinished work never starts before today; the WBS duration is the shortest
+        # any candidate takes.
+        start = model.new_int_var(
+            problem.release, problem.horizon - task.duration_days, f"start[{task.id}]"
+        )
         options: dict[str, cp_model.IntVar] = {}
         ends: dict[str, tuple[cp_model.LinearExprT, int | None]] = {}
         for resource in problem.candidates[task.id]:

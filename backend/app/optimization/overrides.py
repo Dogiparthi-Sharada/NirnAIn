@@ -2,7 +2,8 @@
 
 `POST …/optimization/runs` may carry `overrides` (camelCase, exactly as
 stored in `optimization_runs.options`): `budgetTotalCents`, `mustFinishBy`,
-`durationDays` (WBS node id -> working days), `hoursPerWeek` (employee id
+`durationDays` (WBS node id -> working days left; 0 = done, not scheduled
+again), `hoursPerWeek` (employee id
 -> hours), `addMembers` (people joining: `employeeId`, `fullName`,
 `hoursPerWeek`, `skills` by name, `hourlyRateCents`, `isContractor`) and
 `removeMembers` (employee ids leaving). The API applies them to the loaded
@@ -35,6 +36,9 @@ def _by_id(values: Mapping[Any, Any] | None) -> dict[str, Any]:
 
 
 def _with_duration(task: Task, days: int) -> Task:
+    """The task with `days` working days left; 0 means it is done (D4)."""
+    if days == 0:
+        return replace(task, done=True)
     # An explicit effort scales with the duration (same people, same pace);
     # without one, effort already follows the duration at 8 h per day.
     effort = task.effort_hours
@@ -107,10 +111,10 @@ def apply_overrides(
         constraints = replace(constraints, must_finish_by=_as_date(overrides["mustFinishBy"]))
     durations = _by_id(overrides.get("durationDays"))
     employees, removed = _team(planning_input, overrides)
-    # A zero or missing duration keeps the WBS value: work packages always take time.
+    # A missing duration keeps the WBS value; 0 days left marks the work done.
     tasks = tuple(
         _with_duration(task, int(durations[task.id]))
-        if int(durations.get(task.id) or 0) > 0
+        if durations.get(task.id) is not None
         else task
         for task in planning_input.tasks
     )
@@ -139,6 +143,18 @@ def with_baseline(inp: PlanningInput, owners: Mapping[str, str]) -> PlanningInpu
     team = {employee.id for employee in inp.employees}
     tasks = tuple(
         replace(task, owner_id=owners[task.id]) if owners.get(task.id) in team else task
+        for task in inp.tasks
+    )
+    return replace(inp, tasks=tasks)
+
+
+def with_applied_dates(inp: PlanningInput, dates: Mapping[str, tuple[date, date]]) -> PlanningInput:
+    """Remember each work package's dates in the plan in force (WBS node id -> first and
+    last day), so work that is done stays where it happened."""
+    tasks = tuple(
+        replace(task, applied_start=dates[task.id][0], applied_end=dates[task.id][1])
+        if task.id in dates
+        else task
         for task in inp.tasks
     )
     return replace(inp, tasks=tasks)

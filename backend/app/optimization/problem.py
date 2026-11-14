@@ -4,7 +4,9 @@
 integers: who may take each task, how long it takes with each of them and
 the load it puts on them per day (`load.task_mode`: part-timers stretch
 tasks), the labor cost of each choice, daily capacities, other projects'
-bookings, the horizon and the deadline / milestone indices. The main model
+bookings, the horizon and the deadline / milestone indices. Only unfinished
+work is modelled, from `release` (today) on; finished work is fixed at the
+dates of the plan in force (`baseline.done_span`). The main model
 and the explanation model (`builder.py`) and the conflict texts
 (`conflicts.py`) all read the same `Problem`.
 """
@@ -14,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
-from app.optimization.baseline import baseline_plan, task_dependencies
+from app.optimization.baseline import baseline_plan, planning_start, task_dependencies
 from app.optimization.calendar import workday_date, workdays_through
 from app.optimization.load import (
     Block,
@@ -28,6 +30,7 @@ from app.optimization.model import (
     Plan,
     PlanningInput,
     Resource,
+    ScheduledTask,
     Task,
     build_resources,
     qualified,
@@ -41,8 +44,10 @@ class Problem:
     inp: PlanningInput
     resources: tuple[Resource, ...]
     baseline: Plan
-    tasks: dict[str, Task]
+    tasks: dict[str, Task]  # unfinished work: what the model schedules
+    done: dict[str, ScheduledTask]  # finished work, fixed where it happened
     dependencies: list[Dependency]
+    release: int  # first working day unfinished work may use (today)
     horizon: int
     capacity: dict[str, int]  # employee id -> tenths of an hour per working day
     blocks: dict[str, list[Block]]
@@ -72,6 +77,9 @@ def prepare(inp: PlanningInput) -> Problem:
     resources = build_resources(inp)
     blocks = allocation_blocks(inp)
     links = task_dependencies(inp)
+    baseline = baseline_plan(inp)
+    release = planning_start(inp)
+    work = [task for task in inp.tasks if not task.done]
     capacity = {
         resource.id: daily_capacity_tenths(resource.weekly_capacity_hours, per_week)
         for resource in resources
@@ -85,12 +93,12 @@ def prepare(inp: PlanningInput) -> Problem:
             for resource in resources
             if resource.kind == "employee" or qualified(resource, task)
         ]
-        for task in inp.tasks
+        for task in work
     }
     # Contractor profiles have no capacity entry, so they keep the WBS duration.
     modes = {
         (task.id, resource.id): task_mode(task, capacity.get(resource.id))
-        for task in inp.tasks
+        for task in work
         for resource in candidates[task.id]
     }
     # With each task at its longest candidate duration a serial schedule always fits.
@@ -99,17 +107,20 @@ def prepare(inp: PlanningInput) -> Problem:
             (modes[task.id, resource.id].duration_days for resource in candidates[task.id]),
             default=task.duration_days,
         )
-        for task in inp.tasks
+        for task in work
     )
-    tasks = {task.id: task for task in inp.tasks}
+    tasks = {task.id: task for task in work}
     return Problem(
         inp=inp,
         resources=resources,
-        baseline=baseline_plan(inp),
+        baseline=baseline,
         tasks=tasks,
+        done={task.id: baseline.tasks[task.id] for task in inp.tasks if task.done},
         dependencies=links,
+        release=release,
         horizon=(
-            longest
+            release
+            + longest
             + sum(abs(link.lag_days) for link in links)
             + max((block.hi for booked in blocks.values() for block in booked), default=0)
             + per_week
@@ -120,7 +131,7 @@ def prepare(inp: PlanningInput) -> Problem:
         modes=modes,
         cost={
             (task.id, resource.id): round(task.hours * resource.rate_cents)
-            for task in inp.tasks
+            for task in work
             for resource in candidates[task.id]
         },
         deadline=(

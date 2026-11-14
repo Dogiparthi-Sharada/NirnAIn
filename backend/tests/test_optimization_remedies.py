@@ -113,7 +113,7 @@ def test_overrides_change_only_this_run() -> None:
     assert changed.constraints.must_finish_by == date(2026, 12, 18)
     design, build = changed.tasks
     assert (design.duration_days, design.effort_hours) == (10, 40.0)  # effort scales
-    assert build.duration_days == 10  # zero keeps the WBS value
+    assert (build.duration_days, build.done, build.hours) == (10, True, 0.0)  # 0 left = done
     assert [employee.weekly_capacity_hours for employee in changed.employees] == [40.0, 16.0]
     assert inp.constraints.budget_total_cents is None  # the original is untouched
     assert apply_overrides(inp, None) is inp

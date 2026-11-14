@@ -64,6 +64,8 @@ class ScheduleItem(CamelModel):
     baseline_start: date | None = None
     baseline_end: date | None = None
     assignee: str | None = None
+    # Finished work (0 working days left): not scheduled again, at its applied dates.
+    done: bool = False
 
 
 class Specialist(CamelModel):
@@ -141,7 +143,8 @@ class OptimizationRun(CamelModel):
 
 
 # --------------------------------------------------------------------------- requests
-Days = Annotated[int, Field(ge=1, le=3650)]
+# Working days left; 0 = done (the work package isn't scheduled again).
+Days = Annotated[int, Field(ge=0, le=3650)]
 Hours = Annotated[float, Field(ge=0, le=80)]
 
 

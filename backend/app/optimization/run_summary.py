@@ -47,6 +47,8 @@ def timeline(ctx: ReportContext, ordered: list[Task]) -> list[dict[str, Any]]:
                 "baselineStart": ctx.date_of(baseline.start).isoformat(),
                 "baselineEnd": ctx.date_of(max(baseline.end - 1, baseline.start)).isoformat(),
                 "assignee": ctx.name(planned.resource_id) if planned.resource_id else None,
+                # Finished work, shown at the dates of the plan in force.
+                "done": task.done,
             }
         )
     return rows

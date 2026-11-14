@@ -497,6 +497,42 @@ def test_run_body_is_applied_and_stored_as_options(
     assert runner.submitted[-1] == uuid.UUID(run["id"])
 
 
+def test_done_work_package_replans_from_the_plan_in_force(
+    opt_client: TestClient, store: Store, run_store: RunStore, auth: Auth
+) -> None:
+    # QA: Done -> Re-plan answered 422 because durationDays had to be at least 1.
+    user, _, pid = _project(opt_client, store, auth)
+    _ready(run_store, pid)
+    task_id = uuid.uuid4()
+    run_store.inputs[uuid.UUID(pid)] = PlanningInput(
+        pid,
+        "CRM",
+        date(2026, 10, 5),
+        (Task(str(task_id), "1.1.1", "Design", 5),),
+        (Employee(str(uuid.uuid4()), "Mark Chen"),),
+    )
+    applied = opt_client.post(_url(pid), headers=auth(user)).json()["id"]
+    schedule = {
+        "wbsNodeId": str(task_id),
+        "code": "1.1.1",
+        "name": "Design",
+        "deliverableCode": "1.1",
+        "deliverableName": "Design",
+        "start": "2026-10-05",
+        "end": "2026-10-09",
+    }
+    run_store.runs[uuid.UUID(applied)].update(status="optimal", result={"schedule": [schedule]})
+    body = {"overrides": {"durationDays": {str(task_id): 0}}, "baselineRunId": applied}
+    response = opt_client.post(_url(pid), json=body, headers=auth(user))
+    assert response.status_code == 202, response.text
+    (task,) = run_store.runs[uuid.UUID(response.json()["id"])]["snapshot"]["tasks"]
+    assert (task["done"], task["applied_start"], task["applied_end"]) == (
+        True,
+        "2026-10-05",
+        "2026-10-09",
+    )
+
+
 def test_run_records_the_inputs_sheet_hash(
     opt_client: TestClient, store: Store, run_store: RunStore, auth: Auth
 ) -> None:
@@ -534,7 +570,7 @@ def test_run_body_references_are_checked(
     assert missing_baseline.json()["detail"] == "Baseline run not found"
     assert post({"remedy": "hire_everyone"}).status_code == 422
     assert post({"overrides": {"budget": 1}}).status_code == 422
-    assert post({"overrides": {"durationDays": {str(uuid.uuid4()): 0}}}).status_code == 422
+    assert post({"overrides": {"durationDays": {str(uuid.uuid4()): -1}}}).status_code == 422
     assert (runner.submitted, run_store.runs) == ([], {})
 
 

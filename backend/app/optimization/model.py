@@ -54,6 +54,11 @@ class Task:
     effort_hours: float | None = None
     owner_id: str | None = None
     skills: tuple[SkillRequirement, ...] = ()
+    # Finished work (0 working days left): not scheduled again. It keeps the dates of
+    # the plan in force (inclusive) when a re-plan knows them.
+    done: bool = False
+    applied_start: date | None = None
+    applied_end: date | None = None
 
     @property
     def label(self) -> str:
@@ -61,7 +66,10 @@ class Task:
 
     @property
     def hours(self) -> float:
-        """Effort used for cost and load: explicit effort, else 8 h per working day."""
+        """Effort still to do, for cost and load: explicit effort, else 8 h per working
+        day; none once the work is done."""
+        if self.done:
+            return 0.0
         if self.effort_hours is not None and self.effort_hours > 0:
             return self.effort_hours
         return self.duration_days * DEFAULT_HOURS_PER_DAY
@@ -133,86 +141,94 @@ class PlanningInput:
     allocations: tuple[Allocation, ...] = ()
     # Deliverable (level-2 WBS node) names by code, for grouping the timeline.
     deliverables: Mapping[str, str] = field(default_factory=dict)
+    # The day the plan is made: unfinished work never starts before it (None: no anchor,
+    # the plan may start on the start date even if that has passed).
+    today: date | None = None
 
     # ------------------------------------------------------------------ snapshot
     def to_snapshot(self) -> dict[str, Any]:
-        c = self.constraints
+        """The JSON frozen into `optimization_runs.input_snapshot` (see `from_snapshot`)."""
+        constraints = self.constraints
         return {
             "version": SNAPSHOT_VERSION,
             "project_id": self.project_id,
             "project_name": self.project_name,
             "start_date": self.start_date.isoformat(),
+            "today": _iso(self.today),
             "tasks": [
                 {
-                    "id": t.id,
-                    "code": t.code,
-                    "name": t.name,
-                    "duration_days": t.duration_days,
-                    "effort_hours": t.effort_hours,
-                    "owner_id": t.owner_id,
+                    "id": task.id,
+                    "code": task.code,
+                    "name": task.name,
+                    "duration_days": task.duration_days,
+                    "effort_hours": task.effort_hours,
+                    "owner_id": task.owner_id,
                     "skills": [
                         {
-                            "skill_id": s.skill_id,
-                            "skill_name": s.skill_name,
-                            "min_proficiency": s.min_proficiency,
+                            "skill_id": requirement.skill_id,
+                            "skill_name": requirement.skill_name,
+                            "min_proficiency": requirement.min_proficiency,
                         }
-                        for s in t.skills
+                        for requirement in task.skills
                     ],
+                    "done": task.done,
+                    "applied_start": _iso(task.applied_start),
+                    "applied_end": _iso(task.applied_end),
                 }
-                for t in self.tasks
+                for task in self.tasks
             ],
             "employees": [
                 {
-                    "id": e.id,
-                    "name": e.name,
-                    "weekly_capacity_hours": e.weekly_capacity_hours,
-                    "hourly_rate_cents": e.hourly_rate_cents,
-                    "is_contractor": e.is_contractor,
-                    "skills": dict(e.skills),
+                    "id": employee.id,
+                    "name": employee.name,
+                    "weekly_capacity_hours": employee.weekly_capacity_hours,
+                    "hourly_rate_cents": employee.hourly_rate_cents,
+                    "is_contractor": employee.is_contractor,
+                    "skills": dict(employee.skills),
                 }
-                for e in self.employees
+                for employee in self.employees
             ],
             "dependencies": [
                 {
-                    "predecessor_id": d.predecessor_id,
-                    "successor_id": d.successor_id,
-                    "type": d.type,
-                    "lag_days": d.lag_days,
+                    "predecessor_id": link.predecessor_id,
+                    "successor_id": link.successor_id,
+                    "type": link.type,
+                    "lag_days": link.lag_days,
                 }
-                for d in self.dependencies
+                for link in self.dependencies
             ],
             "constraints": {
-                "budget_total_cents": c.budget_total_cents,
-                "labor_cap_cents": c.labor_cap_cents,
-                "budget_mode": c.budget_mode,
-                "budget_penalty": c.budget_penalty,
-                "must_finish_by": c.must_finish_by.isoformat() if c.must_finish_by else None,
-                "deadline_mode": c.deadline_mode,
-                "deadline_penalty_per_day": c.deadline_penalty_per_day,
-                "working_days_per_week": c.working_days_per_week,
-                "capacity_mode": c.capacity_mode,
-                "capacity_penalty": c.capacity_penalty,
-                "skill_mode": c.skill_mode,
-                "allow_contractors": c.allow_contractors,
-                "contractor_rate_cents": c.contractor_rate_cents,
+                "budget_total_cents": constraints.budget_total_cents,
+                "labor_cap_cents": constraints.labor_cap_cents,
+                "budget_mode": constraints.budget_mode,
+                "budget_penalty": constraints.budget_penalty,
+                "must_finish_by": _iso(constraints.must_finish_by),
+                "deadline_mode": constraints.deadline_mode,
+                "deadline_penalty_per_day": constraints.deadline_penalty_per_day,
+                "working_days_per_week": constraints.working_days_per_week,
+                "capacity_mode": constraints.capacity_mode,
+                "capacity_penalty": constraints.capacity_penalty,
+                "skill_mode": constraints.skill_mode,
+                "allow_contractors": constraints.allow_contractors,
+                "contractor_rate_cents": constraints.contractor_rate_cents,
             },
             "milestones": [
                 {
-                    "id": m.id,
-                    "name": m.name,
-                    "due_date": m.due_date.isoformat(),
-                    "mode": m.mode,
-                    "task_ids": list(m.task_ids),
+                    "id": milestone.id,
+                    "name": milestone.name,
+                    "due_date": milestone.due_date.isoformat(),
+                    "mode": milestone.mode,
+                    "task_ids": list(milestone.task_ids),
                 }
-                for m in self.milestones
+                for milestone in self.milestones
             ],
             "allocations": [
                 {
-                    "employee_id": a.employee_id,
-                    "week_start": a.week_start.isoformat(),
-                    "hours": a.hours,
+                    "employee_id": booking.employee_id,
+                    "week_start": booking.week_start.isoformat(),
+                    "hours": booking.hours,
                 }
-                for a in self.allocations
+                for booking in self.allocations
             ],
             "deliverables": dict(self.deliverables),
         }
@@ -241,6 +257,10 @@ def _opt_date(value: Any) -> date | None:
     return None if value is None else date.fromisoformat(value)
 
 
+def _iso(value: date | None) -> str | None:
+    return None if value is None else value.isoformat()
+
+
 def _penalty(value: Any, default: float) -> float:
     # The columns are unconstrained `real`s: a negative or NaN weight would turn
     # a penalty into a reward, so fall back to the default.
@@ -248,88 +268,94 @@ def _penalty(value: Any, default: float) -> float:
     return number if math.isfinite(number) and number >= 0 else default
 
 
+def _parse_task(entry: Mapping[str, Any]) -> Task:
+    return Task(
+        id=str(entry["id"]),
+        code=str(entry["code"]),
+        name=str(entry["name"]),
+        duration_days=int(entry["duration_days"]),
+        effort_hours=None if entry.get("effort_hours") is None else float(entry["effort_hours"]),
+        owner_id=None if entry.get("owner_id") is None else str(entry["owner_id"]),
+        skills=tuple(
+            SkillRequirement(
+                skill_id=str(requirement["skill_id"]),
+                skill_name=str(requirement["skill_name"]),
+                min_proficiency=int(requirement["min_proficiency"]),
+            )
+            for requirement in entry.get("skills", ())
+        ),
+        done=bool(entry.get("done", False)),
+        applied_start=_opt_date(entry.get("applied_start")),
+        applied_end=_opt_date(entry.get("applied_end")),
+    )
+
+
 def _parse_snapshot(data: Mapping[str, Any]) -> PlanningInput:
     if data.get("version") != SNAPSHOT_VERSION:
         raise SnapshotError(f"Unsupported input snapshot version {data.get('version')!r}")
-    c = data.get("constraints") or {}
-    wdpw = int(c.get("working_days_per_week", 5))
-    if not 1 <= wdpw <= 7:
+    stored = data.get("constraints") or {}
+    per_week = int(stored.get("working_days_per_week", 5))
+    if not 1 <= per_week <= 7:
         raise SnapshotError("working_days_per_week must be between 1 and 7")
     constraints = Constraints(
-        budget_total_cents=_opt_int(c.get("budget_total_cents")),
-        labor_cap_cents=_opt_int(c.get("labor_cap_cents")),
-        budget_mode=_mode(c.get("budget_mode", "hard")),
-        budget_penalty=_penalty(c.get("budget_penalty"), 1000.0),
-        must_finish_by=_opt_date(c.get("must_finish_by")),
-        deadline_mode=_mode(c.get("deadline_mode", "hard")),
-        deadline_penalty_per_day=_penalty(c.get("deadline_penalty_per_day"), 500.0),
-        working_days_per_week=wdpw,
-        capacity_mode=_mode(c.get("capacity_mode", "soft")),
-        capacity_penalty=_penalty(c.get("capacity_penalty"), 100.0),
-        skill_mode=_mode(c.get("skill_mode", "hard")),
-        allow_contractors=bool(c.get("allow_contractors", True)),
-        contractor_rate_cents=_opt_int(c.get("contractor_rate_cents")),
+        budget_total_cents=_opt_int(stored.get("budget_total_cents")),
+        labor_cap_cents=_opt_int(stored.get("labor_cap_cents")),
+        budget_mode=_mode(stored.get("budget_mode", "hard")),
+        budget_penalty=_penalty(stored.get("budget_penalty"), 1000.0),
+        must_finish_by=_opt_date(stored.get("must_finish_by")),
+        deadline_mode=_mode(stored.get("deadline_mode", "hard")),
+        deadline_penalty_per_day=_penalty(stored.get("deadline_penalty_per_day"), 500.0),
+        working_days_per_week=per_week,
+        capacity_mode=_mode(stored.get("capacity_mode", "soft")),
+        capacity_penalty=_penalty(stored.get("capacity_penalty"), 100.0),
+        skill_mode=_mode(stored.get("skill_mode", "hard")),
+        allow_contractors=bool(stored.get("allow_contractors", True)),
+        contractor_rate_cents=_opt_int(stored.get("contractor_rate_cents")),
     )
-    tasks = tuple(
-        Task(
-            id=str(t["id"]),
-            code=str(t["code"]),
-            name=str(t["name"]),
-            duration_days=int(t["duration_days"]),
-            effort_hours=None if t.get("effort_hours") is None else float(t["effort_hours"]),
-            owner_id=None if t.get("owner_id") is None else str(t["owner_id"]),
-            skills=tuple(
-                SkillRequirement(
-                    skill_id=str(s["skill_id"]),
-                    skill_name=str(s["skill_name"]),
-                    min_proficiency=int(s["min_proficiency"]),
-                )
-                for s in t.get("skills", ())
-            ),
-        )
-        for t in data["tasks"]
-    )
-    if any(t.duration_days <= 0 for t in tasks):
+    tasks = tuple(_parse_task(entry) for entry in data["tasks"])
+    if any(task.duration_days <= 0 for task in tasks):
         raise SnapshotError("Every task needs a positive duration")
     employees = tuple(
         Employee(
-            id=str(e["id"]),
-            name=str(e["name"]),
-            weekly_capacity_hours=float(e["weekly_capacity_hours"]),
-            hourly_rate_cents=_opt_int(e.get("hourly_rate_cents")),
-            is_contractor=bool(e.get("is_contractor", False)),
-            skills={str(k): int(v) for k, v in (e.get("skills") or {}).items()},
+            id=str(entry["id"]),
+            name=str(entry["name"]),
+            weekly_capacity_hours=float(entry["weekly_capacity_hours"]),
+            hourly_rate_cents=_opt_int(entry.get("hourly_rate_cents")),
+            is_contractor=bool(entry.get("is_contractor", False)),
+            skills={
+                str(skill_id): int(level) for skill_id, level in (entry.get("skills") or {}).items()
+            },
         )
-        for e in data["employees"]
+        for entry in data["employees"]
     )
     dependencies = tuple(
         Dependency(
-            predecessor_id=str(d["predecessor_id"]),
-            successor_id=str(d["successor_id"]),
-            type=cast(DependencyType, d.get("type", "FS")),
-            lag_days=int(d.get("lag_days", 0)),
+            predecessor_id=str(entry["predecessor_id"]),
+            successor_id=str(entry["successor_id"]),
+            type=cast(DependencyType, entry.get("type", "FS")),
+            lag_days=int(entry.get("lag_days", 0)),
         )
-        for d in data.get("dependencies", ())
+        for entry in data.get("dependencies", ())
     )
-    if any(d.type not in ("FS", "SS", "FF", "SF") for d in dependencies):
+    if any(link.type not in ("FS", "SS", "FF", "SF") for link in dependencies):
         raise SnapshotError("Invalid dependency type")
     milestones = tuple(
         Milestone(
-            id=str(m["id"]),
-            name=str(m["name"]),
-            due_date=date.fromisoformat(m["due_date"]),
-            mode=_mode(m.get("mode", "hard")),
-            task_ids=tuple(str(x) for x in m.get("task_ids", ())),
+            id=str(entry["id"]),
+            name=str(entry["name"]),
+            due_date=date.fromisoformat(entry["due_date"]),
+            mode=_mode(entry.get("mode", "hard")),
+            task_ids=tuple(str(task_id) for task_id in entry.get("task_ids", ())),
         )
-        for m in data.get("milestones", ())
+        for entry in data.get("milestones", ())
     )
     allocations = tuple(
         Allocation(
-            employee_id=str(a["employee_id"]),
-            week_start=date.fromisoformat(a["week_start"]),
-            hours=float(a["hours"]),
+            employee_id=str(entry["employee_id"]),
+            week_start=date.fromisoformat(entry["week_start"]),
+            hours=float(entry["hours"]),
         )
-        for a in data.get("allocations", ())
+        for entry in data.get("allocations", ())
     )
     return PlanningInput(
         project_id=str(data["project_id"]),
@@ -344,6 +370,7 @@ def _parse_snapshot(data: Mapping[str, Any]) -> PlanningInput:
         deliverables={
             str(code): str(name) for code, name in (data.get("deliverables") or {}).items()
         },
+        today=_opt_date(data.get("today")),
     )
 
 

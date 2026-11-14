@@ -133,12 +133,14 @@ def quote_states_amount(quote: str, cents: int) -> bool:
 
 
 def inputs_hash(inp: PlanningInput) -> str:
-    """SHA-256 of what the solver will use (other projects' bookings excluded).
+    """SHA-256 of what the solver will use (other projects' bookings and today excluded).
 
     Hours, rates and skills of every person are part of it, so editing any of
     them invalidates a confirmed sheet.
     """
     snapshot = inp.to_snapshot()
     snapshot.pop("allocations", None)
+    # The day it is computed isn't an input: the hash must not change overnight.
+    snapshot.pop("today", None)
     canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode()).hexdigest()

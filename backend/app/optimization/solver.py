@@ -4,9 +4,12 @@ Formulation (day granularity; plan.md §6.1 has the MILP intent it follows).
 `problem.py` pre-computes the numbers, `builder.py` adds the variables and
 constraints below, `conflicts.py` words the infeasibility explanations.
 
-* Time: working-day indices 0..H, H = Σ (longest candidate duration of each
-  task) + Σ |lags| + the span of existing allocations + one week, which
-  always admits a serial schedule.
+* Time: working-day indices from the project start, 0..H, H = R + Σ
+  (longest candidate duration of each task) + Σ |lags| + the span of
+  existing allocations + one week, which always admits a serial schedule.
+  R is today's index (`baseline.planning_start`): unfinished work starts at
+  s_t >= R. Finished work (0 days left) is not modelled; it keeps the dates
+  of the plan in force and its links are already met.
 * Assignment: one boolean x[t,r] per candidate resource, exactly one true.
 * Duration follows the person (multi-mode, `load.task_mode`): candidate
   (t,r) has its own duration d[t,r] and daily load q[t,r]. Someone who can
@@ -238,7 +241,7 @@ def solve(
     mapped = map_status(_run(builder.model, solver, control))
 
     if mapped in ("optimal", "feasible"):
-        plan: dict[str, ScheduledTask] = {}
+        plan: dict[str, ScheduledTask] = dict(problem.done)
         for task_id, choices in variables.assign.items():
             chosen = next(
                 resource_id
