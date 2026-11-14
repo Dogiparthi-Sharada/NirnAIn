@@ -1,8 +1,11 @@
 /**
  * The Team & capacity card on step 5 (approved mockup views/constraints-team.js): who works on
- * this project, their role and hourly rate (blank = the optimizer's default rate), the hours per
- * week each can give it, and how much of that other projects already book (utilization), with the
- * capacity Must hold / Can flex switch.
+ * this project, their role, whether they are an employee or a contractor and where their cost
+ * comes from, the hours per week each can give it, and how much of that other projects already
+ * book (utilization), with the capacity Must hold / Can flex switch.
+ *
+ * Cost rule: employees are costed at their company rate (else the standard $85/h); contractors at
+ * their own rate (else the project's confirmed contractor rate). Both count toward the budget.
  *
  * Capacity rule: Must hold = nobody is scheduled beyond the hours entered here; Can flex = people
  * may be scheduled up to 25% above them (overtime), at a penalty. Hours are edited inline (whole
@@ -15,7 +18,7 @@ import { errorMessage } from '@/lib/api'
 import { policyOf, type PolicyInputs, type PolicyRisk } from '@/lib/constraintPolicy'
 import { ADD_MEMBER_ID, hoursText, policyChanges, useSaveFailure, type ConstraintChanges } from '@/lib/constraints'
 import {
-  hourlyRateText,
+  costRateText,
   isWholeHours,
   ROLES,
   useAddTeamMember,
@@ -23,6 +26,7 @@ import {
   useTeam,
   useUpdateTeamMember,
   utilization,
+  workerTypeOf,
   type ProjectTeamMember,
   type TeamMemberInput,
 } from '@/lib/inputs'
@@ -33,19 +37,33 @@ import { PolicyNotes, PolicyToggle } from './PolicyControls'
 
 const HOURS_RULE = 'Hours per week must be a whole number from 1 to 80.'
 
-/** Only the fields the PM changed, so an edit never overwrites anything else. */
+/**
+ * The body for adding a person. Employees are the server's default type and their rate comes from
+ * the company record, so neither field is sent for them (older servers don't know `workerType`);
+ * a contractor without a rate gets the project's contractor rate.
+ */
+function newMemberBody({ workerType, hourlyRateCents, ...person }: TeamMemberInput): TeamMemberInput {
+  if (workerType !== 'contractor') return person
+  return hourlyRateCents == null ? { ...person, workerType } : { ...person, workerType, hourlyRateCents }
+}
+
+/** Only the fields the PM changed, so an edit never overwrites anything else. A rate is sent only for a contractor. */
 function memberChanges(member: ProjectTeamMember, input: TeamMemberInput): Partial<TeamMemberInput> {
   const changes: Partial<TeamMemberInput> = {}
   if (input.fullName !== member.fullName) changes.fullName = input.fullName
   if (input.roleTitle !== (member.roleTitle ?? '')) changes.roleTitle = input.roleTitle
   if (input.hoursPerWeek !== member.hoursPerWeek) changes.hoursPerWeek = input.hoursPerWeek
-  if ((input.hourlyRateCents ?? null) !== (member.hourlyRateCents ?? null)) changes.hourlyRateCents = input.hourlyRateCents ?? null
+  const workerType = input.workerType ?? 'employee'
+  if (workerType !== workerTypeOf(member)) changes.workerType = workerType
+  const rateChanged = (input.hourlyRateCents ?? null) !== (member.hourlyRateCents ?? null)
+  if (workerType === 'contractor' && (changes.workerType || rateChanged)) changes.hourlyRateCents = input.hourlyRateCents ?? null
   return changes
 }
 
-/** One person: name and role, inline hours, utilization, Edit / Remove. */
-function MemberRow({ member, onHours, onEdit, onRemove }: {
+/** One person: name, role and cost, inline hours, utilization, Edit / Remove. */
+function MemberRow({ member, projectContractorRateCents, onHours, onEdit, onRemove }: {
   member: ProjectTeamMember
+  projectContractorRateCents: number | null
   onHours: (text: string) => void
   onEdit: () => void
   onRemove: () => void
@@ -56,7 +74,7 @@ function MemberRow({ member, onHours, onEdit, onRemove }: {
       <td>
         <b>{member.fullName}</b>
         <div className="small muted">
-          {member.roleTitle || 'No role yet'} &middot; {hourlyRateText(member.hourlyRateCents)}
+          {member.roleTitle || 'No role yet'} &middot; {costRateText(member, projectContractorRateCents)}
         </div>
       </td>
       <td>
@@ -96,8 +114,10 @@ function MemberRow({ member, onHours, onEdit, onRemove }: {
 }
 
 /** The team card: the people, their hours and utilization, the add / edit form and the capacity switch. */
-export function TeamEditor({ projectId, policy, risks, onSavePolicy }: {
+export function TeamEditor({ projectId, projectContractorRateCents, policy, risks, onSavePolicy }: {
   projectId: string
+  /** The project's confirmed contractor rate (the default for contractors without one); null = none. */
+  projectContractorRateCents: number | null
   /** Null while the constraint set is loading or failed: the card works without its switch. */
   policy: PolicyInputs | null
   risks: PolicyRisk[]
@@ -125,7 +145,7 @@ export function TeamEditor({ projectId, policy, risks, onSavePolicy }: {
 
   function saveForm(input: TeamMemberInput) {
     if (!editing) {
-      addMember.mutate(input, {
+      addMember.mutate(newMemberBody(input), {
         onSuccess: () => {
           setFormFor(null)
           toast(`${input.fullName} added. The optimizer will assign their work.`)
@@ -202,6 +222,7 @@ export function TeamEditor({ projectId, policy, risks, onSavePolicy }: {
       <MemberRow
         key={member.employeeId}
         member={member}
+        projectContractorRateCents={projectContractorRateCents}
         onHours={(text) => saveHours(member, text)}
         onEdit={() => openForm(member.employeeId)}
         onRemove={() => remove(member)}
@@ -238,6 +259,7 @@ export function TeamEditor({ projectId, policy, risks, onSavePolicy }: {
           key={formFor}
           member={editing}
           team={team}
+          projectContractorRateCents={projectContractorRateCents}
           saving={formSaving}
           serverError={formError}
           onSave={saveForm}

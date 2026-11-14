@@ -36,12 +36,24 @@ export interface ConstraintInputs extends ConstraintSet {
   allowContractors?: boolean
 }
 
+/**
+ * Who a person is to the company, which decides where their cost comes from: an employee is
+ * costed at the rate on their company record (else the standard internal rate), a contractor at
+ * the hourly rate agreed for them. Both count toward the budget.
+ */
+export type WorkerType = 'employee' | 'contractor'
+
 export interface ProjectTeamMember {
   employeeId: string
   fullName: string
   roleTitle: string | null
   hoursPerWeek: number
-  /** The person's hourly rate; null (or absent on older servers) = planned at the default rate. */
+  /** Absent on older servers, which know only employees. */
+  workerType?: WorkerType
+  /**
+   * Employees: the rate on their company record (null = none, so the standard rate applies).
+   * Contractors: their agreed rate (null = the project's contractor rate).
+   */
   hourlyRateCents?: number | null
   /** Average weekly hours already committed to other projects in this plan's window. */
   bookedHours: number
@@ -51,7 +63,9 @@ export interface TeamMemberInput {
   fullName: string
   roleTitle: string
   hoursPerWeek: number
-  /** Null = no rate of their own: the optimizer plans them at `DEFAULT_HOURLY_RATE_CENTS`. */
+  /** Omitted = employee (the server's default). */
+  workerType?: WorkerType
+  /** Contractors only: an employee's rate comes from the company record and the server refuses one here. */
   hourlyRateCents?: number | null
 }
 
@@ -123,19 +137,37 @@ export function isWholeHours(value: number): boolean {
   return Number.isInteger(value) && value >= 1 && value <= 80
 }
 
-/** Rate the optimizer plans people without one at ($85/h, a blended IT rate; backend model.py). */
+/** The standard internal rate for employees without a company rate ($85/h; backend `DEFAULT_HOURLY_RATE_CENTS`). */
 export const DEFAULT_HOURLY_RATE_CENTS = 8_500
 /** The API accepts rates up to $1,000,000/h. */
 const MAX_HOURLY_RATE_CENTS = 100_000_000
 
-export function isHourlyRate(cents: number): boolean {
-  return Number.isInteger(cents) && cents >= 0 && cents <= MAX_HOURLY_RATE_CENTS
+/** A person's worker type; older servers don't send one and know only employees. */
+export function workerTypeOf(member: ProjectTeamMember): WorkerType {
+  return member.workerType ?? 'employee'
 }
 
-/** "$95/h", or "default $85/h" for someone without a rate of their own. */
-export function hourlyRateText(cents: number | null | undefined): string {
-  const dollars = (value: number) => `$${(value / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}/h`
-  return cents == null ? `default ${dollars(DEFAULT_HOURLY_RATE_CENTS)}` : dollars(cents)
+/** A contractor's rate: more than $0 and at most what the API accepts. */
+export function isHourlyRate(cents: number): boolean {
+  return Number.isInteger(cents) && cents > 0 && cents <= MAX_HOURLY_RATE_CENTS
+}
+
+/** "$95/h", "$175.50/h". */
+export function perHourText(cents: number): string {
+  return `$${(cents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}/h`
+}
+
+/**
+ * Where a person's cost comes from, as the team table shows it: "Employee · company rate",
+ * "Employee · standard $85/h" (no rate on their company record), "Contractor · $185/h", or
+ * "Contractor · project rate $160/h" when they use the project's contractor rate.
+ */
+export function costRateText(member: ProjectTeamMember, projectContractorRateCents: number | null): string {
+  if (workerTypeOf(member) === 'employee') {
+    return member.hourlyRateCents != null ? 'Employee \u00B7 company rate' : `Employee \u00B7 standard ${perHourText(DEFAULT_HOURLY_RATE_CENTS)}`
+  }
+  if (member.hourlyRateCents != null) return `Contractor \u00B7 ${perHourText(member.hourlyRateCents)}`
+  return projectContractorRateCents != null ? `Contractor \u00B7 project rate ${perHourText(projectContractorRateCents)}` : 'Contractor \u00B7 rate needed'
 }
 
 /* ───────────────────────────── Hooks ───────────────────────────── */

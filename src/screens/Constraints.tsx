@@ -51,6 +51,8 @@ export default function Constraints() {
   const constraints = constraintsQuery.data
   const policy = constraints ? policyInputsOf(constraints, sheetQuery.data) : null
   const risks = policy ? policyRisks(policy) : []
+  // A contractor rate confirmed on this project earlier is the default for contractors without one.
+  const projectContractorRateCents = constraints?.specialistRateConfirmed ? (constraints.contractorRateCents ?? null) : null
 
   const nodes = (wbsQuery.data ?? []) as WbsTreeNode[]
   const workPackages = nodes.filter((node) => node.level === 3).length
@@ -135,7 +137,7 @@ export default function Constraints() {
               </p>
             </div>
           )}
-          <TeamEditor projectId={projectId} policy={policy} risks={risks} onSavePolicy={save} />
+          <TeamEditor projectId={projectId} projectContractorRateCents={projectContractorRateCents} policy={policy} risks={risks} onSavePolicy={save} />
           <DependenciesCard projectId={projectId} />
         </div>
 
