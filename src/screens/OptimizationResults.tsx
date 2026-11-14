@@ -72,9 +72,11 @@ export default function OptimizationResults() {
   const risks = policy ? policyRisks(policy) : []
   const runHash = comparableInputsHash(run)
   const checkingStaleness = Boolean(runHash && inputs.isPending)
+  // Stale inputs: they changed after the latest run was solved, so the sheet asks again first.
   const inputsChanged = Boolean(runHash && inputs.data?.hash && runHash !== inputs.data.hash)
   const showSheet = !run || sheetRequested || (inputsChanged && !stalePlanAccepted)
   const planShown = !solving && !showSheet && (status === 'optimal' || status === 'feasible')
+  // Plan in force: once applied, the plan says so when today's inputs no longer match it.
   const appliedHash = inputs.data?.appliedHash
   const changedSinceApplied = Boolean(run?.version != null && appliedHash && inputs.data?.hash && inputs.data.hash !== appliedHash)
   const outdatedPlan = solvedOnOtherInputs(run, inputs.data?.hash)
