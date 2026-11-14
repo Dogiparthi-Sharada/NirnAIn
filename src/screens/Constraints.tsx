@@ -1,256 +1,192 @@
-import { useState } from 'react'
-import { useStepNav } from '@/lib/steps'
+/**
+ * Step 5, Constraints (port of the approved mockup's views/constraints.js and
+ * constraints-team.js), on live data: the limits the plan must respect, the two questions that
+ * change the plan, the team, the skills, the task dependencies, and the gate to step 6.
+ *
+ * Each limit (budget, deadline, capacity, skills) is Must hold (a hard constraint: the solver
+ * never breaks it) or Can flex (a soft constraint: it may bend, with a penalty, if that is the
+ * only way); `lib/constraintPolicy.ts` recommends a setting and warns about misleading
+ * combinations. The cards live in `screens/constraints/*`; the rules (saving, the gate, the plan
+ * lock) in `lib/constraints.ts`.
+ *
+ * Gate: Run Optimization is never disabled; a blocked click opens `#con-banner` with a link to
+ * each missing input. Lock: once a plan version is applied the inputs are read-only (the server
+ * answers 409 "Plan vN is in force; record a change on step 7"), so the screen says so, explains
+ * every attempted edit, and points to step 7.
+ */
+import { useEffect, useState } from 'react'
+import { Link, useParams } from 'react-router'
+import { Crumb } from '@/components/InputsKit'
+import { errorMessage } from '@/lib/api'
+import { policyRisks } from '@/lib/constraintPolicy'
+import { gateBlockers, isPlanLockError, lockedMessage, planLockOf, useConstraintEditor, type ConstraintChanges } from '@/lib/constraints'
+import { skillGaps, useConstraintInputs, usePlanVersions, useProjectSkills, useTeam } from '@/lib/inputs'
+import { policyInputsOf, useOptimizationInputs } from '@/lib/optimize'
+import { useWbs } from '@/lib/queries'
+import { stepPath, useStepNav } from '@/lib/steps'
+import { toast } from '@/lib/toast'
+import { totalWeeks, wbsBlockers, type WbsTreeNode } from '@/lib/wbs'
+import { ConstraintsGate } from './constraints/ConstraintsGate'
+import { DependenciesCard } from './constraints/DependenciesCard'
+import { BudgetCard, DeadlineCard } from './constraints/LimitCards'
+import { QuestionsPanel, type EffortState } from './constraints/QuestionsPanel'
+import { SkillsEditor } from './constraints/SkillsEditor'
+import { TeamEditor } from './constraints/TeamEditor'
 
-type ConstraintType = 'hard' | 'soft'
+const TRAIL = ['Create Project', 'AI Intake', 'Scope Review', 'WBS Builder', 'Constraints']
 
-interface Dep { from: string; to: string; type: string }
-interface Employee { name: string; role: string; available: number; allocated: number; skills: string[] }
-
-const EMPLOYEES: Employee[] = [
-  { name: 'Sara Kim', role: 'Lead Architect', available: 40, allocated: 36, skills: ['Data Modeling', 'AWS', 'PostgreSQL'] },
-  { name: 'Mark Chen', role: 'Data Engineer', available: 40, allocated: 40, skills: ['Python', 'Spark', 'Kafka'] },
-  { name: 'Tom Rivera', role: 'BI Developer', available: 32, allocated: 24, skills: ['Tableau', 'Power BI', 'SQL'] },
-  { name: 'Lisa Park', role: 'DevOps', available: 20, allocated: 12, skills: ['Kubernetes', 'Terraform', 'CI/CD'] },
-  { name: 'James Wu', role: 'Security Eng.', available: 16, allocated: 0, skills: ['SOC 2', 'RBAC', 'Pen Testing'] },
-]
-
-const DEPS: Dep[] = [
-  { from: '1.1.1 Salesforce Connector', to: '1.2.2 ETL Pipeline', type: 'Finish-to-Start' },
-  { from: '1.1.2 SAP Integration', to: '1.2.2 ETL Pipeline', type: 'Finish-to-Start' },
-  { from: '1.2.1 Schema Design', to: '1.2.2 ETL Pipeline', type: 'Finish-to-Start' },
-  { from: '1.2.2 ETL Pipeline', to: '1.3.1 BI Tool Setup', type: 'Finish-to-Start' },
-  { from: '1.4.1 RBAC', to: '1.3.3 Self-Service Analytics', type: 'Start-to-Start' },
-]
-
+/** The step 5 screen. */
 export default function Constraints() {
-  const nav = useStepNav()
-  const [budgetType, setBudgetType] = useState<ConstraintType>('hard')
-  const [deadlineType, setDeadlineType] = useState<ConstraintType>('hard')
-  const [capacityType, setCapacityType] = useState<ConstraintType>('soft')
-  const [skillType, setSkillType] = useState<ConstraintType>('hard')
+  const goToStep = useStepNav()
+  const { projectId = '' } = useParams()
+  const constraintsQuery = useConstraintInputs(projectId)
+  const teamQuery = useTeam(projectId)
+  const skillsQuery = useProjectSkills(projectId)
+  const wbsQuery = useWbs(projectId)
+  const sheetQuery = useOptimizationInputs(projectId)
+  const versionsQuery = usePlanVersions(projectId)
+  const editor = useConstraintEditor(projectId)
+  const [runClicks, setRunClicks] = useState(0)
+
+  useEffect(() => {
+    document.title = 'Constraints · NirnAIn'
+  }, [])
+
+  const lockedVersion = planLockOf(versionsQuery.data)
+  const locked = lockedVersion !== null
+  const constraints = constraintsQuery.data
+  const gaps = skillGaps(skillsQuery.data ?? [])
+  // Wait for the skill list so a skill-gap warning doesn't pop in late.
+  const policy = constraints && !skillsQuery.isPending ? policyInputsOf(constraints, skillsQuery.data, sheetQuery.data) : null
+  const risks = policy ? policyRisks(policy) : []
+
+  const nodes = (wbsQuery.data ?? []) as WbsTreeNode[]
+  const workPackages = nodes.filter((node) => node.level === 3).length
+  const openEstimates = wbsBlockers(nodes).length
+  let effort: EffortState
+  if (wbsQuery.isPending) effort = { kind: 'loading' }
+  else if (wbsQuery.isError) effort = { kind: 'error', message: errorMessage(wbsQuery.error), retry: () => void wbsQuery.refetch() }
+  else effort = { kind: 'ready', packages: workPackages, openEstimates, weeks: totalWeeks(nodes) }
+
+  const serverMissing = sheetQuery.data?.missing ?? []
+  const blockers = gateBlockers({
+    constraints,
+    team: teamQuery.data,
+    workPackages: wbsQuery.isSuccess ? workPackages : undefined,
+    openEstimates: wbsQuery.isSuccess ? openEstimates : undefined,
+    skillGaps: gaps,
+    serverMissing,
+    serverBlocking: sheetQuery.data?.blocking ?? [],
+  })
+
+  /** Inputs are read-only once a plan version is applied: explain that instead of saving. */
+  function editable(): boolean {
+    if (lockedVersion === null) return true
+    toast(lockedMessage(lockedVersion))
+    return false
+  }
+
+  function save(changes: ConstraintChanges) {
+    if (editable()) editor.mutate(changes)
+  }
+
+  /** Never disabled: ready inputs go to step 6, anything missing opens (and focuses) the banner. */
+  function runOptimization() {
+    setRunClicks((count) => count + 1)
+    if (blockers.length === 0) goToStep('optimization')
+  }
+
+  const changesPath = stepPath('changes', projectId)
 
   return (
-    <div style={{ padding: '32px 36px', maxWidth: 1100 }}>
-      <Breadcrumb steps={['Dashboard', 'Create Project', 'AI Intake', 'Scope Review', 'WBS Builder', 'Constraints']} />
-
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ fontSize: 22, fontWeight: 700 }}>Constraints</div>
-        <div style={{ fontSize: 13, color: '#7A6063', marginTop: 2 }}>
-          Define hard and soft constraints. These parameters drive OR-Tools optimization.
+    <section className="view on" id="v-constraints">
+      <div className="pg">
+        <Crumb trail={TRAIL} />
+        <h1>Constraints</h1>
+        <div className="sub" style={{ marginBottom: 12 }}>
+          Set the limits the plan must respect. For each one choose <b>Must hold</b> (a hard constraint: the solver never breaks it) or{' '}
+          <b>Can flex</b> (a soft constraint: it may bend, with a penalty, if that is the only way). We recommend a setting for each and warn
+          you about risky combinations.
         </div>
+
+        {locked && (
+          <div className="banner row between" id="con-locked" role="status">
+            <span>
+              <b>Plan v{lockedVersion} is in force.</b> These inputs are read-only now; to change them, record a change on step 7, Changes
+              &amp; Versions.
+            </span>
+            <Link className="btn sm" to={changesPath}>
+              Report a change &rarr;
+            </Link>
+          </div>
+        )}
+        {editor.isError && (
+          <div className="alert bad row between" role="alert">
+            <span>
+              <b>Your change wasn&rsquo;t saved.</b> {errorMessage(editor.error)}
+            </span>
+            {isPlanLockError(editor.error) ? (
+              <Link className="btn sec sm" to={changesPath}>
+                Open Changes &amp; Versions
+              </Link>
+            ) : (
+              <button className="btn sec sm" type="button" onClick={() => editor.reset()}>
+                Dismiss
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="g2">
+          {constraints && policy ? (
+            <>
+              <QuestionsPanel
+                projectId={projectId}
+                constraints={constraints}
+                skillGaps={gaps}
+                workPackageGap={gaps.length === 0 && serverMissing.includes('specialist')}
+                effort={effort}
+                locked={locked}
+                onSave={save}
+              />
+              <BudgetCard
+                constraints={constraints}
+                policy={policy}
+                risks={risks}
+                locked={locked}
+                onSave={save}
+                budgetSource={sheetQuery.data?.rows.find((row) => row.key === 'budget')?.source}
+              />
+              <DeadlineCard constraints={constraints} policy={policy} risks={risks} locked={locked} onSave={save} />
+            </>
+          ) : constraintsQuery.isError ? (
+            <div className="card span2" id="qpanel" role="alert">
+              <b>Couldn&rsquo;t load the constraint settings.</b> {errorMessage(constraintsQuery.error)}{' '}
+              <button className="btn sec sm" type="button" onClick={() => void constraintsQuery.refetch()}>
+                Try again
+              </button>
+            </div>
+          ) : (
+            <div className="card span2" id="qpanel" aria-busy="true">
+              <p className="small muted" role="status" style={{ margin: 0 }}>
+                Loading the questions and limits&hellip;
+              </p>
+            </div>
+          )}
+          <TeamEditor projectId={projectId} policy={policy} risks={risks} locked={locked} editable={editable} onSavePolicy={save} />
+          <SkillsEditor projectId={projectId} policy={policy} risks={risks} locked={locked} editable={editable} onSavePolicy={save} />
+          <DependenciesCard projectId={projectId} editable={editable} />
+        </div>
+
+        <ConstraintsGate
+          blockers={blockers}
+          flagged={risks.filter((risk) => risk.level === 'change').length}
+          tries={runClicks}
+          onRun={runOptimization}
+          onBack={() => goToStep('wbs')}
+          onOpenWbs={() => goToStep('wbs')}
+        />
       </div>
-
-      <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-        {/* Budget */}
-        <div style={cardStyle}>
-          <SectionHeader label="Budget" badge={budgetType} onToggle={() => setBudgetType(t => t === 'hard' ? 'soft' : 'hard')} />
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Field label="Total Budget">
-              <div style={{ position: 'relative' }}>
-                <span style={{ position: 'absolute', left: 10, top: 8, color: '#7A6063', fontSize: 13 }}>$</span>
-                <input defaultValue="375,000" style={{ ...inputStyle, paddingLeft: 20 }} />
-              </div>
-            </Field>
-            <Field label="Contingency Reserve">
-              <div style={{ position: 'relative' }}>
-                <input defaultValue="0" style={{ ...inputStyle, paddingRight: 28 }} />
-                <span style={{ position: 'absolute', right: 10, top: 8, color: '#7A6063', fontSize: 13 }}>%</span>
-              </div>
-            </Field>
-            <Field label="Labor Cost Cap">
-              <div style={{ position: 'relative' }}>
-                <span style={{ position: 'absolute', left: 10, top: 8, color: '#7A6063', fontSize: 13 }}>$</span>
-                <input defaultValue="280,000" style={{ ...inputStyle, paddingLeft: 20 }} />
-              </div>
-            </Field>
-            <Field label="Infrastructure Cap">
-              <div style={{ position: 'relative' }}>
-                <span style={{ position: 'absolute', left: 10, top: 8, color: '#7A6063', fontSize: 13 }}>$</span>
-                <input defaultValue="95,000" style={{ ...inputStyle, paddingLeft: 20 }} />
-              </div>
-            </Field>
-          </div>
-          <div style={{ marginTop: 10, padding: '8px 10px', background: '#F5E3C8', borderRadius: 4, fontSize: 12, color: '#a8691f' }}>
-            ⚠ No contingency buffer approved — optimization will flag budget risk.
-          </div>
-        </div>
-
-        {/* Deadline */}
-        <div style={cardStyle}>
-          <SectionHeader label="Deadline" badge={deadlineType} onToggle={() => setDeadlineType(t => t === 'hard' ? 'soft' : 'hard')} />
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Field label="Project Start Date">
-              <input type="date" defaultValue="2025-01-15" style={inputStyle} />
-            </Field>
-            <Field label="Must-Finish-By Date">
-              <input type="date" defaultValue="2025-09-30" style={inputStyle} />
-            </Field>
-            <Field label="Phase 1 Milestone (Ingestion)">
-              <input type="date" defaultValue="2025-04-15" style={inputStyle} />
-            </Field>
-            <Field label="Phase 2 Milestone (Dashboard)">
-              <input type="date" defaultValue="2025-07-31" style={inputStyle} />
-            </Field>
-          </div>
-          <Field label="Working Days per Week">
-            <select style={inputStyle}>
-              <option>5 days (Mon–Fri)</option>
-              <option>4 days</option>
-              <option>6 days</option>
-            </select>
-          </Field>
-        </div>
-
-        {/* Employee Capacity */}
-        <div style={cardStyle}>
-          <SectionHeader label="Employee Capacity" badge={capacityType} onToggle={() => setCapacityType(t => t === 'hard' ? 'soft' : 'hard')} />
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid #E8DCC6' }}>
-                {['Name', 'Role', 'Avail. (hrs/wk)', 'Allocated', 'Utilization'].map(h => (
-                  <th key={h} style={{ textAlign: 'left', padding: '5px 8px', fontSize: 10, color: '#7A6063', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {EMPLOYEES.map(e => {
-                const util = Math.round((e.allocated / e.available) * 100)
-                return (
-                  <tr key={e.name} style={{ borderBottom: '1px solid #F3EADB' }}>
-                    <td style={{ padding: '8px 8px', fontWeight: 500 }}>{e.name}</td>
-                    <td style={{ padding: '8px 8px', color: '#7A6063' }}>{e.role}</td>
-                    <td style={{ padding: '8px 8px', fontFamily: 'DM Mono, monospace' }}>{e.available}h</td>
-                    <td style={{ padding: '8px 8px', fontFamily: 'DM Mono, monospace' }}>{e.allocated}h</td>
-                    <td style={{ padding: '8px 8px' }}>
-                      <div className="flex items-center gap-6">
-                        <div style={{ width: 56, height: 5, background: '#E8DCC6', borderRadius: 3 }}>
-                          <div style={{ width: `${util}%`, height: '100%', background: util >= 100 ? '#A83A4A' : util > 80 ? '#a8691f' : '#722F37', borderRadius: 3 }} />
-                        </div>
-                        <span style={{ fontSize: 11, color: util >= 100 ? '#A83A4A' : '#6B5254', fontWeight: util >= 100 ? 600 : 400 }}>{util}%</span>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Skills */}
-        <div style={cardStyle}>
-          <SectionHeader label="Required Skills" badge={skillType} onToggle={() => setSkillType(t => t === 'hard' ? 'soft' : 'hard')} />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
-            {[
-              { skill: 'Data Modeling', required: true, available: true },
-              { skill: 'SAP Integration', required: true, available: false },
-              { skill: 'Spark / Kafka', required: true, available: true },
-              { skill: 'SOC 2 / GDPR Compliance', required: true, available: true },
-              { skill: 'Power BI / Tableau', required: true, available: true },
-              { skill: 'Kubernetes / DevOps', required: false, available: true },
-            ].map(s => (
-              <div key={s.skill} className="flex items-center justify-between" style={{ fontSize: 12 }}>
-                <span>{s.skill}</span>
-                <div className="flex items-center gap-8">
-                  <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: s.required ? '#F3D9D5' : '#F3EADB', color: s.required ? '#A83A4A' : '#7A6063' }}>
-                    {s.required ? 'Required' : 'Optional'}
-                  </span>
-                  <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: s.available ? '#DDE7D0' : '#F3D9D5', color: s.available ? '#4F7A4A' : '#A83A4A' }}>
-                    {s.available ? '✓ Covered' : '✗ Gap'}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div style={{ padding: '8px 10px', background: '#F3D9D5', borderRadius: 4, fontSize: 12, color: '#A83A4A' }}>
-            ⚠ SAP Integration skill gap detected. Consider contracting or training.
-          </div>
-        </div>
-
-        {/* Dependencies */}
-        <div style={{ ...cardStyle, gridColumn: 'span 2' }}>
-          <SectionHeader label="Task Dependencies" badge="hard" onToggle={() => {}} />
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid #E8DCC6' }}>
-                {['Predecessor', 'Successor', 'Dependency Type', 'Actions'].map(h => (
-                  <th key={h} style={{ textAlign: 'left', padding: '6px 10px', fontSize: 10, color: '#7A6063', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {DEPS.map((d, i) => (
-                <tr key={i} style={{ borderBottom: '1px solid #F3EADB' }}>
-                  <td style={{ padding: '8px 10px', fontFamily: 'DM Mono, monospace', fontSize: 12 }}>{d.from}</td>
-                  <td style={{ padding: '8px 10px', fontFamily: 'DM Mono, monospace', fontSize: 12 }}>{d.to}</td>
-                  <td style={{ padding: '8px 10px' }}>
-                    <span style={{ fontSize: 11, padding: '2px 8px', background: '#E3DCCB', borderRadius: 10, color: '#6B5254' }}>{d.type}</span>
-                  </td>
-                  <td style={{ padding: '8px 10px' }}>
-                    <button style={{ fontSize: 11, color: '#6B5254', border: '1px solid #e0e0e0', borderRadius: 3, padding: '2px 8px', background: '#FAF5EB', cursor: 'pointer', marginRight: 6 }}>Edit</button>
-                    <button style={{ fontSize: 11, color: '#A83A4A', border: '1px solid #f0d4d4', borderRadius: 3, padding: '2px 8px', background: '#F3D9D5', cursor: 'pointer' }}>Remove</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <button style={{ marginTop: 12, ...secondaryBtn, fontSize: 12 }}>+ Add Dependency</button>
-        </div>
-      </div>
-
-      <div className="flex justify-between" style={{ marginTop: 24 }}>
-        <button onClick={() => nav('wbs')} style={secondaryBtn}>← Back to WBS Builder</button>
-        <button onClick={() => nav('optimization')} style={primaryBtn}>Run Optimization →</button>
-      </div>
-    </div>
+    </section>
   )
 }
-
-function SectionHeader({ label, badge, onToggle }: { label: string; badge: string; onToggle: () => void }) {
-  return (
-    <div className="flex items-center justify-between" style={{ marginBottom: 14, paddingBottom: 10, borderBottom: '1px solid #EFE5D2' }}>
-      <span style={{ fontSize: 13, fontWeight: 600 }}>{label}</span>
-      <button
-        onClick={onToggle}
-        style={{
-          fontSize: 11,
-          padding: '3px 10px',
-          background: badge === 'hard' ? '#F3D9D5' : '#E3DCCB',
-          color: badge === 'hard' ? '#A83A4A' : '#4455aa',
-          border: 'none',
-          borderRadius: 10,
-          cursor: 'pointer',
-          fontWeight: 600,
-        }}
-      >
-        {badge === 'hard' ? 'Hard Constraint' : 'Soft Constraint'}
-      </button>
-    </div>
-  )
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, marginBottom: 5, color: '#6B5254', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</label>
-      {children}
-    </div>
-  )
-}
-
-function Breadcrumb({ steps }: { steps: string[] }) {
-  return (
-    <div className="flex items-center gap-2" style={{ fontSize: 12, color: '#7A6063', marginBottom: 20 }}>
-      {steps.map((s, i) => (
-        <span key={s} className="flex items-center gap-2">
-          {i > 0 && <span>›</span>}
-          <span style={{ color: i === steps.length - 1 ? '#2E1A1D' : '#7A6063' }}>{s}</span>
-        </span>
-      ))}
-    </div>
-  )
-}
-
-const cardStyle: React.CSSProperties = { background: '#fff', border: '1px solid #E8DCC6', borderRadius: 6, padding: '18px 20px' }
-const inputStyle: React.CSSProperties = { width: '100%', padding: '8px 10px', border: '1px solid #CDBFAB', borderRadius: 4, fontSize: 13, background: '#fff', color: '#2E1A1D', outline: 'none', fontFamily: 'inherit' }
-const primaryBtn: React.CSSProperties = { padding: '9px 20px', background: '#722F37', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' }
-const secondaryBtn: React.CSSProperties = { padding: '9px 16px', background: '#fff', color: '#4A2B2F', border: '1px solid #CDBFAB', borderRadius: 4, fontSize: 13, cursor: 'pointer' }
