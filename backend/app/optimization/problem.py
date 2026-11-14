@@ -1,16 +1,12 @@
 """Pre-computed numbers behind the CP-SAT model and its explanations.
 
-`prepare` turns a frozen planning input into what the model needs as plain
-integers: who may take each task, how long it takes with each of them and
-the load it puts on them per day (`load.task_mode`: their skill level sets
-their pace, `speed.py`, and part-timers stretch tasks; `load.booked_modes`:
-it may also stretch to the hours other projects' bookings leave), the labor
-cost of each choice, daily capacities, other projects' bookings, the
-horizon and the deadline / milestone indices. Only unfinished
-work is modelled, from `release` (today) on; finished work is fixed at the
-dates of the plan in force (`baseline.done_span`). The main model
-and the explanation model (`builder.py`) and the conflict texts
-(`conflicts.py`) all read the same `Problem`.
+Purpose: Turn a frozen planning input into plain integers: who may take each task, how long it takes
+with each of them and their daily load (pace and part-time stretch), the labor cost of each choice,
+capacities, other projects' bookings, the horizon and deadline/milestone indices. Only unfinished
+work is modelled, from `release` (today) on.
+How it fits: `prepare` is called by `solver.solve`; the main model, the explanation model
+(builder.py) and the conflict texts (conflicts.py) all read the same `Problem`; layer: optimization.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -29,16 +25,8 @@ from app.optimization.load import (
     flex_capacity_tenths,
     task_mode,
 )
-from app.optimization.model import (
-    Dependency,
-    Plan,
-    PlanningInput,
-    Resource,
-    ScheduledTask,
-    Task,
-    qualified,
-    target_of,
-)
+from app.optimization.model import Dependency, PlanningInput, Task, target_of
+from app.optimization.outcome import Plan, Resource, ScheduledTask, qualified
 from app.optimization.resources import build_resources, candidates_for
 from app.optimization.speed import pace_percent, work_hours
 
@@ -47,7 +35,7 @@ from app.optimization.speed import pace_percent, work_hours
 class Problem:
     """Pre-computed numbers shared by the main and the explanation model."""
 
-    inp: PlanningInput
+    planning_input: PlanningInput
     resources: tuple[Resource, ...]
     baseline: Plan
     tasks: dict[str, Task]  # unfinished work: what the model schedules
@@ -73,27 +61,29 @@ class Problem:
     def finish_date(self, end: int) -> date:
         """Calendar date of the last working day before the exclusive end index `end`."""
         return workday_date(
-            self.inp.start_date, max(end - 1, 0), self.inp.constraints.working_days_per_week
+            self.planning_input.start_date,
+            max(end - 1, 0),
+            self.planning_input.constraints.working_days_per_week,
         )
 
     def allowed(self, task: Task) -> list[Resource]:
         """Candidates the main model may assign (only qualified ones when skills must hold)."""
-        if self.inp.constraints.skill_mode == "soft":
+        if self.planning_input.constraints.skill_mode == "soft":
             return self.candidates[task.id]
         return [resource for resource in self.candidates[task.id] if qualified(resource, task)]
 
 
-def prepare(inp: PlanningInput) -> Problem:
-    """Everything the model needs from `inp`, as integers in working days and cents."""
-    constraints = inp.constraints
+def prepare(planning_input: PlanningInput) -> Problem:
+    """Everything the model needs from `planning_input`, as integers in working days and cents."""
+    constraints = planning_input.constraints
     per_week = constraints.working_days_per_week
-    resources = build_resources(inp)
-    blocks = allocation_blocks(inp)
-    links = task_dependencies(inp)
-    baseline = baseline_plan(inp)
-    release = planning_start(inp)
-    work = [task for task in inp.tasks if not task.done]
-    target = target_of(inp)
+    resources = build_resources(planning_input)
+    blocks = allocation_blocks(planning_input)
+    links = task_dependencies(planning_input)
+    baseline = baseline_plan(planning_input)
+    release = planning_start(planning_input)
+    work = [task for task in planning_input.tasks if not task.done]
+    target = target_of(planning_input)
     capacity = {
         resource.id: daily_capacity_tenths(resource.weekly_capacity_hours, per_week)
         for resource in resources
@@ -139,11 +129,11 @@ def prepare(inp: PlanningInput) -> Problem:
     )
     tasks = {task.id: task for task in work}
     return Problem(
-        inp=inp,
+        planning_input=planning_input,
         resources=resources,
         baseline=baseline,
         tasks=tasks,
-        done={task.id: baseline.tasks[task.id] for task in inp.tasks if task.done},
+        done={task.id: baseline.tasks[task.id] for task in planning_input.tasks if task.done},
         dependencies=links,
         release=release,
         horizon=(
@@ -166,14 +156,16 @@ def prepare(inp: PlanningInput) -> Problem:
             for resource in candidates[task.id]
         },
         deadline=(
-            workdays_through(inp.start_date, constraints.must_finish_by, per_week)
+            workdays_through(planning_input.start_date, constraints.must_finish_by, per_week)
             if constraints.must_finish_by is not None
             else None
         ),
-        target=None if target is None else workdays_through(inp.start_date, target, per_week),
+        target=None
+        if target is None
+        else workdays_through(planning_input.start_date, target, per_week),
         milestone_ends={
-            milestone.id: workdays_through(inp.start_date, milestone.due_date, per_week)
-            for milestone in inp.milestones
+            milestone.id: workdays_through(planning_input.start_date, milestone.due_date, per_week)
+            for milestone in planning_input.milestones
             if any(task_id in tasks for task_id in milestone.task_ids)
         },
     )

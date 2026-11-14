@@ -1,9 +1,11 @@
-"""Working-day calendar.
+"""Working-day calendar arithmetic.
 
-Durations and lags are working days. With `working_days_per_week = n` the
-working days are the first n weekdays (5 = Mon-Fri, 6 = Mon-Sat, 7 = every
-day). Holidays are not modelled. Day index 0 is the first working day on or
-after the project start date.
+Purpose: Durations and lags are working days. With `working_days_per_week = n` the working days are
+the first n weekdays (5 = Mon-Fri); holidays are not modelled. Day index 0 is the first working day
+on or after the project start date.
+How it fits: Used by the problem set-up, the report and the remedies to turn day indices into dates
+and weeks; layer: optimization.
+Created: 2026-10-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -11,15 +13,17 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 
-def _monday(d: date) -> date:
-    return d - timedelta(days=d.weekday())
+def _monday(day: date) -> date:
+    """Return the Monday of the week the day falls in."""
+    return day - timedelta(days=day.weekday())
 
 
 def first_workday(start: date, per_week: int) -> date:
-    d = start
-    while d.weekday() >= per_week:
-        d += timedelta(days=1)
-    return d
+    """Return the first working day on or after `start`."""
+    day = start
+    while day.weekday() >= per_week:
+        day += timedelta(days=1)
+    return day
 
 
 def workday_date(start: date, index: int, per_week: int) -> date:
@@ -48,9 +52,9 @@ def workdays_late(start: date, due: date, finish: date, per_week: int) -> int:
     return max(0, late)
 
 
-def week_index(start: date, d: date) -> int:
+def week_index(start: date, day: date) -> int:
     """0-based calendar week of `d`, counting from the week containing the start."""
-    return (_monday(d) - _monday(start)).days // 7
+    return (_monday(day) - _monday(start)).days // 7
 
 
 def week_workdays(start: date, week_start: date, per_week: int) -> tuple[int, int]:

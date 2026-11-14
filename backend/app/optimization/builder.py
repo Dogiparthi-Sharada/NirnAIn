@@ -1,12 +1,11 @@
 """The CP-SAT variables and constraints of the formulation documented in `solver.py`.
 
-`ModelBuilder(problem, explain=False)` builds the main model (objective,
-hard constraints). `explain=True` builds the explanation model: no
-objective, and every hard constraint group behind an assumption literal
-(`groups`) so `blockers.explain_infeasibility` can find the groups that
-conflict. Both read the same `Problem` (`problem.py`); each person's work
-modes and capacity are in `workload.py`; the conflict texts come from
-`conflicts.py`.
+Purpose: Build the main model (objective, hard constraints) or, with `explain=True`, the explanation
+model: no objective and every hard constraint group behind an assumption literal (`groups`) so
+`blockers.explain_infeasibility` can find the groups that conflict.
+How it fits: Both read the same `Problem` (problem.py); each person's work modes and capacity are in
+workload.py; the conflict texts come from conflicts.py; layer: optimization.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -19,7 +18,8 @@ from ortools.sat.python import cp_model
 
 from app.optimization import conflicts
 from app.optimization.costing import spend_limit_cents
-from app.optimization.model import Conflict, Plan, ScheduledTask, Task
+from app.optimization.model import Task
+from app.optimization.outcome import Conflict, Plan, ScheduledTask
 from app.optimization.problem import Problem
 from app.optimization.workload import Workload
 
@@ -58,8 +58,9 @@ class ModelBuilder:
     """Builds the main model or the explanation model of one `Problem`."""
 
     def __init__(self, problem: Problem, *, explain: bool) -> None:
+        """Start an empty model for the problem; `explain` selects the explanation model."""
         self.problem = problem
-        self.constraints = problem.inp.constraints
+        self.constraints = problem.planning_input.constraints
         self.explain = explain
         self.model = cp_model.CpModel()
         self.groups: list[tuple[cp_model.IntVar, Conflict]] = []
@@ -132,6 +133,8 @@ class ModelBuilder:
             options[resource.id] = chosen
             ends += self.workload.candidate(task, resource, start, chosen)
             if gap and self.constraints.skill_mode == "hard":
+                # Explanation model: the unqualified candidate stays but is forbidden behind
+                # the skill's literal, so a missing skill can be named as a blocker.
                 for requirement in task.skills:
                     if resource.proficiency(requirement.skill_id) < requirement.min_proficiency:
                         self.guard(
@@ -141,6 +144,7 @@ class ModelBuilder:
                         )
             elif gap:
                 self.penalize(chosen * (gap * SKILL_GAP_CENTS_PER_LEVEL))
+        # Exactly one candidate does the task; its literal switches on that person's intervals.
         model.add_exactly_one(options.values())
         self._baseline_terms(task, start, options)
         variables.start[task.id] = start
@@ -162,6 +166,12 @@ class ModelBuilder:
     def _baseline_terms(
         self, task: Task, start: cp_model.IntVar, options: dict[str, cp_model.IntVar]
     ) -> None:
+        """Hint the baseline start and owner, and charge for drifting from them (main model only).
+
+        Moving a task off its current owner or later than its baseline start costs money, which
+        keeps
+        recommendations few and explainable.
+        """
         if self.explain:
             return
         base = self.problem.baseline.tasks[task.id]
@@ -170,10 +180,12 @@ class ModelBuilder:
         owner = options.get(base.resource_id) if base.resource_id else None
         if owner is not None:
             self.model.add_hint(owner, 1)
+            # Costs CHANGE_OWNER_CENTS unless the current owner keeps the task.
             self.penalize(CHANGE_OWNER_CENTS - owner * CHANGE_OWNER_CENTS)
 
     # -------------------------------------------------------------- constraints
     def _dependencies(self, variables: Variables) -> None:
+        """Add each FS/SS/FF/SF link with its lag on the real starts and ends."""
         problem = self.problem
         for link in problem.dependencies:
             predecessor = problem.tasks[link.predecessor_id]
@@ -198,6 +210,7 @@ class ModelBuilder:
             )
 
     def _deadlines(self, variables: Variables, makespan: cp_model.IntVar) -> None:
+        """Add the go-live deadline, phase milestones and the target date, hard or as penalties."""
         problem, model = self.problem, self.model
         per_day = round(self.constraints.deadline_penalty_per_day * 100)
         keep = round(self.constraints.target_penalty_per_day * 100)
@@ -214,10 +227,11 @@ class ModelBuilder:
                     partial(conflicts.deadline, problem),
                 )
             elif not self.explain:
+                # Soft deadline: `late` (>= 0) covers the days past it; each one is paid.
                 late = model.new_int_var(0, problem.horizon, "late")
                 model.add(late >= makespan - problem.deadline)
                 self.penalize(late * per_day)
-        for milestone in problem.inp.milestones:
+        for milestone in problem.planning_input.milestones:
             due = problem.milestone_ends.get(milestone.id)
             if due is None:
                 continue
@@ -238,6 +252,10 @@ class ModelBuilder:
                 self.penalize(late * per_day)
 
     def _budget(self, assign: dict[str, dict[str, cp_model.IntVar]]) -> None:
+        """Charge the labor cost and cap it by the budget (less the reserve) and the labor cap.
+
+        Hard mode adds the caps as constraints; soft mode pays `budget_penalty` per $1,000 over.
+        """
         problem, model = self.problem, self.model
         pairs = [
             (chosen, problem.cost[task_id, resource_id])
@@ -268,6 +286,7 @@ class ModelBuilder:
                     partial(conflicts.budget, problem, label, amount, amount - cap),
                 )
             elif not self.explain:
+                # Soft budget: `over` counts the $1,000 units above the cap, each one paid.
                 over = model.new_int_var(0, worst // BUDGET_UNIT_CENTS + 1, f"over[{key}]")
                 model.add(over * BUDGET_UNIT_CENTS >= cost - cap)
                 self.penalize(over * round(self.constraints.budget_penalty * 100))

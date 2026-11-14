@@ -30,7 +30,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.config import Settings
 from app.optimization.explain import Report, build_report
-from app.optimization.model import PlanningInput, SnapshotError, SolveOutcome
+from app.optimization.model import PlanningInput, SnapshotError
+from app.optimization.outcome import SolveOutcome
 from app.optimization.remedies import price_remedies
 from app.optimization.runtime import solver_settings
 from app.optimization.solver import SolveControl, SolveOptions, solve
@@ -61,9 +62,9 @@ def solve_options(settings: Settings) -> SolveOptions:
     )
 
 
-def run_settings(settings: Settings, inp: PlanningInput) -> dict[str, Any]:
-    """`options.solverSettings` of a run of `inp` (round 3, R7)."""
-    return solver_settings(solve_options(settings), inp.constraints)
+def run_settings(settings: Settings, planning_input: PlanningInput) -> dict[str, Any]:
+    """`options.solverSettings` of a run of `planning_input` (round 3, R7)."""
+    return solver_settings(solve_options(settings), planning_input.constraints)
 
 
 def _slips(report: Report) -> bool:
@@ -110,15 +111,19 @@ class OptimizationRunner:
             if snapshot is None:
                 logger.info("optimization run not queued; skipping", extra=extra)
                 return
-            inp = PlanningInput.from_snapshot(snapshot)
+            planning_input = PlanningInput.from_snapshot(snapshot)
             logger.info(
                 "optimization started",
-                extra={**extra, "tasks": len(inp.tasks), "employees": len(inp.employees)},
+                extra={
+                    **extra,
+                    "tasks": len(planning_input.tasks),
+                    "employees": len(planning_input.employees),
+                },
             )
-            outcome = await asyncio.to_thread(solve, inp, self._options, control)
-            report = build_report(inp, outcome)
+            outcome = await asyncio.to_thread(solve, planning_input, self._options, control)
+            report = build_report(planning_input, outcome)
             if outcome.status == "infeasible" or _slips(report):
-                report = await self._with_remedies(inp, outcome, report, control, extra)
+                report = await self._with_remedies(planning_input, outcome, report, control, extra)
             async with self._store() as store:
                 await store.finish(run_id, report)
             logger.info(
@@ -139,7 +144,7 @@ class OptimizationRunner:
 
     async def _with_remedies(
         self,
-        inp: PlanningInput,
+        planning_input: PlanningInput,
         outcome: SolveOutcome,
         report: Report,
         control: SolveControl,
@@ -151,7 +156,9 @@ class OptimizationRunner:
         """
         current = outcome if outcome.plan is not None else None
         try:
-            remedies = await asyncio.to_thread(price_remedies, inp, self._options, control, current)
+            remedies = await asyncio.to_thread(
+                price_remedies, planning_input, self._options, control, current
+            )
         except Exception:
             logger.exception("pricing remedies failed", extra=extra)
             return report

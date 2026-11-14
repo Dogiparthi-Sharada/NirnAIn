@@ -1,17 +1,12 @@
 """What-if changes applied to a frozen planning input for one run.
 
-`POST …/optimization/runs` may carry `overrides` (camelCase, exactly as
-stored in `optimization_runs.options`): `budgetTotalCents`, `mustFinishBy`,
-`deadlineMode` and `budgetMode` ('hard' | 'soft': "must hold" or "can
-flex", e.g. "must hold" next to a date in step-7 notes), `durationDays`
-(WBS node id -> working days left; 0 = done, not scheduled again),
-`hoursPerWeek` (employee id -> hours), `addMembers` (people joining: `employeeId`, `fullName`,
-`hoursPerWeek`, `skills` by name, `hourlyRateCents`, `workerType`; the older
-`isContractor` flag is still read when `workerType` is absent) and
-`removeMembers` (employee ids leaving). The API applies them to the loaded
-input before freezing the snapshot, so the run is reproducible and the
-project's saved inputs stay untouched (Changes & Versions writes them back
-only when a change is approved). Ids that aren't in the input are ignored.
+Purpose: A run may try other numbers (budget, must-finish-by and their policies, durations with 0 =
+done, weekly hours, people joining or leaving) without touching the project's saved inputs; Changes
+& Versions writes them back only when a change is approved. Unknown ids are ignored.
+How it fits: The API applies `overrides` (camelCase, as stored in `optimization_runs.options`) to
+the loaded input before freezing the snapshot, and sets the baseline owners and the plan in force
+for re-plans; layer: optimization.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -29,6 +24,7 @@ NEW_MEMBER_PROFICIENCY = 3
 
 
 def _as_date(value: Any) -> date:
+    """Return the value as a date (it may already be one or an ISO string)."""
     return value if isinstance(value, date) else date.fromisoformat(str(value))
 
 
@@ -152,23 +148,23 @@ def apply_overrides(
     )
 
 
-def with_baseline(inp: PlanningInput, owners: Mapping[str, str]) -> PlanningInput:
+def with_baseline(planning_input: PlanningInput, owners: Mapping[str, str]) -> PlanningInput:
     """Use an earlier run's assignments (WBS node id -> employee id) as current owners.
 
     The solver charges for every work package moved off its current owner,
     so a re-plan against the plan in force changes as few assignments as
     possible. Owners who are no longer on the team are ignored.
     """
-    team = {employee.id for employee in inp.employees}
+    team = {employee.id for employee in planning_input.employees}
     tasks = tuple(
         replace(task, owner_id=owners[task.id]) if owners.get(task.id) in team else task
-        for task in inp.tasks
+        for task in planning_input.tasks
     )
-    return replace(inp, tasks=tasks)
+    return replace(planning_input, tasks=tasks)
 
 
 def with_plan_in_force(
-    inp: PlanningInput, dates: Mapping[str, tuple[date, date]], completion: date | None
+    planning_input: PlanningInput, dates: Mapping[str, tuple[date, date]], completion: date | None
 ) -> PlanningInput:
     """Remember the plan in force: each work package's dates (WBS node id -> first and
     last day), so finished work stays where it happened, and its completion date,
@@ -177,6 +173,8 @@ def with_plan_in_force(
         replace(task, applied_start=dates[task.id][0], applied_end=dates[task.id][1])
         if task.id in dates
         else task
-        for task in inp.tasks
+        for task in planning_input.tasks
     )
-    return replace(inp, tasks=tasks, target_date=completion or inp.target_date)
+    return replace(
+        planning_input, tasks=tasks, target_date=completion or planning_input.target_date
+    )

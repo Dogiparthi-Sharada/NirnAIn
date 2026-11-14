@@ -1,12 +1,11 @@
 """Rows of "Check the inputs the solver will use" (Optimization Results, step 6).
 
-Pure: `build_sheet(facts)` returns one row per input in the order the
-screen shows them, each with its source, plus the blockers that keep the
-run from starting. Sources: stated (the notes say it), confirmed (a person
-confirmed it), needs_you (missing: blocks the run, or a warning such as a
-Required skill no work package uses), default, assumed (the PM answered
-"Don't know") and yours (entered by a person). Inferred values are never
-used.
+Purpose: Show every input with its source before a run, and block the run until a person fixes what
+is missing. Sources: stated, confirmed, needs_you (blocks or warns), default, assumed ("Don't know")
+and yours (entered by a person); inferred values are never used.
+How it fits: `build_sheet(facts)` is called by app/api/v1/optimization.py with the facts from
+inputs.py; pure; layer: optimization.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -37,6 +36,8 @@ DONT_KNOW = "you said Don\u2019t know"
 
 @dataclass(frozen=True, slots=True)
 class Row:
+    """One line of the sheet: the input, its value and where it came from."""
+
     key: str
     label: str
     value: str
@@ -54,19 +55,24 @@ class Blocker:
 
 @dataclass(frozen=True, slots=True)
 class Sheet:
+    """The sheet's rows and the blockers that keep a run from starting."""
+
     rows: list[Row]
     blockers: list[Blocker]
 
     @property
     def ready(self) -> bool:
+        """Tell whether the run may start (nothing blocks it)."""
         return not self.blockers
 
     @property
     def blocking(self) -> list[str]:
+        """Return the blockers' messages, as the screen lists them."""
         return [blocker.message for blocker in self.blockers]
 
     @property
     def missing(self) -> list[str]:
+        """Return the blockers' keys, as the 422 problem lists them."""
         return [blocker.key for blocker in self.blockers]
 
 
@@ -74,22 +80,26 @@ Line = tuple[Row, Blocker | None]
 
 
 def _names(names: Sequence[str], limit: int = 6) -> str:
+    """Return up to `limit` names joined, with "and N others" for the rest."""
     if len(names) <= limit:
         return ", ".join(names)
     return f"{', '.join(names[:limit])} and {fmt.plural(len(names) - limit, 'other')}"
 
 
 def _effort(days: int, per_week: int) -> str:
+    """Return a duration in days, or in weeks from a week on."""
     if days < per_week:
         return fmt.plural(days, "day")
     return fmt.plural(round(days / per_week), "week")
 
 
 def _policy(mode: str) -> str:
+    """Return the policy label ("Must hold" / "Can flex") of a mode."""
     return POLICY.get(mode, mode)
 
 
 def _work_packages(facts: InputFacts) -> Line:
+    """Return the work packages row; blocks without packages or with unconfirmed AI estimates."""
     label, where = "Work packages", "Step 4"
     if facts.work_packages == 0:
         row = Row("workPackages", label, "No work packages with durations yet", "needs_you", where)
@@ -106,6 +116,7 @@ def _work_packages(facts: InputFacts) -> Line:
 
 
 def _dependencies(facts: InputFacts) -> Line:
+    """Return the dependencies row: how many links of each type."""
     total = sum(facts.dependency_types.values())
     if not total:
         return Row("dependencies", "Dependencies", "None", "default", "Step 5"), None
@@ -117,6 +128,7 @@ def _dependencies(facts: InputFacts) -> Line:
 
 
 def _budget(facts: InputFacts) -> Line:
+    """Return the budget row with its policy and source (a notes quote, step 5 or step 1)."""
     if facts.budget_cents is None:
         return Row("budget", "Budget", "No budget set", "default", NOT_IN_NOTES), None
     value = f"{fmt.money(facts.budget_cents)} · {_policy(facts.budget_mode)}"
@@ -127,6 +139,7 @@ def _budget(facts: InputFacts) -> Line:
 
 
 def _deadline(facts: InputFacts) -> Line:
+    """Return the go-live row and its policy; blocks until the deadline question is answered."""
     if facts.must_finish_by is None:
         return Row("deadline", "Deadline", "No deadline set", "default", NOT_IN_NOTES), None
     if facts.deadline_answer is None:
@@ -141,6 +154,7 @@ def _deadline(facts: InputFacts) -> Line:
 
 
 def _specialists(facts: InputFacts) -> Line:
+    """Return the outside-specialists row; blocks while unanswered and a skill is missing."""
     label = "Outside specialists"
     if facts.specialist_answer == "yes":
         rate = facts.contractor_rate_cents or DEFAULT_SPECIALIST_RATE_CENTS
@@ -161,6 +175,7 @@ def _specialists(facts: InputFacts) -> Line:
 
 
 def _team(facts: InputFacts) -> Line:
+    """Return the team row with the capacity policy; blocks while nobody is on the team."""
     capacity = f"capacity {_policy(facts.capacity_mode)}"
     if not facts.team:
         return Row("team", "Team", "Nobody yet", "needs_you", "Step 5"), Blocker(
@@ -196,6 +211,7 @@ def _employee_cost(facts: InputFacts) -> Line:
 
 
 def _skills(facts: InputFacts) -> Line:
+    """Return the Required skills row: how many there are and whether the team covers them."""
     if not facts.skills and not facts.skill_gaps:
         return Row("skills", "Required skills", "None listed", "default", "Step 5"), None
     required = sum(1 for skill in facts.skills if skill.required) or len(facts.skill_gaps)
@@ -231,6 +247,7 @@ def _contingency(facts: InputFacts) -> Line:
 
 
 def _working_days(facts: InputFacts) -> Line:
+    """Return the working-days-per-week row."""
     value = f"{facts.working_days_per_week} per week"
     if facts.working_days_per_week != 5:
         return Row("workingDays", "Working days", value, "yours", "Step 5"), None
@@ -238,6 +255,7 @@ def _working_days(facts: InputFacts) -> Line:
 
 
 def _milestones(facts: InputFacts) -> Line:
+    """Return the phase milestones row with their due dates and policy."""
     if not facts.milestones:
         return Row("milestones", "Phase milestones", "None", "default", NOT_IN_NOTES), None
     days = [fmt.short_day(milestone.due_date) for milestone in facts.milestones]

@@ -1,4 +1,11 @@
-"""Display strings, matching what the Optimization Results screen shows."""
+"""Display strings, matching what the Optimization Results screen shows.
+
+Purpose: Format money, dates, durations and week ranges the same way everywhere the plan is
+described, so KPI cards, reasons and remedies agree.
+How it fits: Used by explain.py, run_summary.py, conflicts.py and remedy_options.py; layer:
+optimization.
+Created: 2026-10-14 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -13,13 +20,14 @@ def money(cents: int | float) -> str:
     return f"{'-' if cents < 0 and dollars else ''}${dollars:,}"
 
 
-def day(d: date) -> str:
+def day(when: date) -> str:
     """`Oct 14, 2025` (portable: no platform-specific strftime flags)."""
-    return f"{d:%b} {d.day}, {d.year}"
+    return f"{when:%b} {when.day}, {when.year}"
 
 
-def plural(n: int, word: str) -> str:
-    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+def plural(count: int, word: str) -> str:
+    """Return `count word` with an English plural `s` when the count is not one."""
+    return f"{count} {word}" if count == 1 else f"{count} {word}s"
 
 
 def weeks_label(first_week: int, last_week: int) -> str:
@@ -34,11 +42,11 @@ def shift(days: int, per_week: int) -> str:
     if days == 0:
         return "—"
     sign = "+" if days > 0 else "-"
-    n = abs(days)
-    if n < per_week:
-        return f"{sign}{n}d"
-    weeks = n / per_week
-    text = f"{weeks:.0f}" if n % per_week == 0 else f"{weeks:.1f}"
+    magnitude = abs(days)
+    if magnitude < per_week:
+        return f"{sign}{magnitude}d"
+    weeks = magnitude / per_week
+    text = f"{weeks:.0f}" if magnitude % per_week == 0 else f"{weeks:.1f}"
     return f"{sign}{text}w"
 
 

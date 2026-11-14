@@ -1,25 +1,16 @@
 """Drop overtime that buys nothing (round 3, R7).
 
-Under "Can flex" the main model pays for every hour of overtime, but it
-also rewards an earlier finish ($200 per working day of makespan): a
-part-timer working up to 25% over their hours can finish a day sooner for
-less than that, so plans booked overtime that no date needed (pack CONTROL
-rows: an 8 h package due on day 2 finished on day 1 with overtime).
-Overtime is worth booking only when it keeps a date the project manager
-set or lowers the cost. So when the solved plan books overtime, the model
-is solved again with "Must hold" capacity (no overtime) and what the
-overtime plan achieved as constraints:
-
-* no later on any date: lateness against the go-live deadline and the
-  target date (`model.target_of`) may not grow, nor against any phase
-  milestone. Finishing earlier than every date set is not worth overtime;
-* no dearer: labor cost at most the overtime plan's, its premium included;
-* no worse skill fit: at most as many missing proficiency levels.
-
-If such a plan exists, the overtime bought nothing and that plan, the best
-one by the usual objective, replaces it. The re-solve may take as long as
-the plan did, within what is left of the run's time limit, and at least
-`MIN_SECONDS`; if it finds nothing in time the overtime plan stands.
+Purpose: Under "Can flex" the main model pays for overtime but also rewards an earlier finish,
+so plans booked overtime no date needed. Overtime is worth booking only when it keeps a date the
+PM set or lowers the cost, so when the solved plan books overtime the model is solved again with
+"Must hold" capacity and what the overtime plan achieved as constraints:
+    * no later on any date: lateness against go-live, the target date and every milestone;
+    * no dearer: labor cost at most the overtime plan's, its premium included;
+    * no worse skill fit: at most as many missing proficiency levels.
+If such a plan exists it replaces the overtime plan. The re-solve may take as long as the plan
+did, within the run's time limit and at least `MIN_SECONDS`; otherwise the overtime plan stands.
+How it fits: Called by `solver.solve` after a successful Can-flex solve; layer: optimization.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -30,7 +21,7 @@ from ortools.sat.python import cp_model
 
 from app.optimization.builder import ModelBuilder, Variables
 from app.optimization.costing import overtime_hours, plan_cost
-from app.optimization.model import Plan
+from app.optimization.outcome import Plan
 from app.optimization.problem import Problem, prepare
 from app.optimization.runtime import SolveControl, SolveOptions, new_solver, run_model
 
@@ -50,7 +41,7 @@ class Polished:
 def books_overtime(problem: Problem, plan: Plan) -> bool:
     """Whether anyone works above their daily capacity in `plan`."""
     return any(
-        overtime_hours(problem.inp, plan, resource, problem.blocks) > 0
+        overtime_hours(problem.planning_input, plan, resource, problem.blocks) > 0
         for resource in problem.resources
     )
 
@@ -67,7 +58,7 @@ def _keep_achievements(
         latest = max(min(dates), finish)
         for task_end in variables.end.values():
             model.add(task_end <= latest)
-    for milestone in problem.inp.milestones:
+    for milestone in problem.planning_input.milestones:
         due = problem.milestone_ends.get(milestone.id)
         covered = [task_id for task_id in milestone.task_ids if task_id in variables.end]
         if due is None or not covered:
@@ -85,7 +76,7 @@ def _keep_achievements(
     cost = [problem.cost[task_id, resource_id] for _, task_id, resource_id in choices]
     model.add(
         cp_model.LinearExpr.weighted_sum(literals, cost)
-        <= plan_cost(problem.inp, resources, plan, problem.blocks)
+        <= plan_cost(problem.planning_input, resources, plan, problem.blocks)
     )
     gaps = [
         resources[resource_id].skill_gap(problem.tasks[task_id])
@@ -107,8 +98,8 @@ def without_overtime(
     time_limit_s: float,
 ) -> Polished | None:
     """The best plan without overtime that keeps what `plan` achieved, if there is one."""
-    constraints = replace(problem.inp.constraints, capacity_mode="hard")
-    strict = prepare(replace(problem.inp, constraints=constraints))
+    constraints = replace(problem.planning_input.constraints, capacity_mode="hard")
+    strict = prepare(replace(problem.planning_input, constraints=constraints))
     builder = ModelBuilder(strict, explain=False)
     variables = builder.build()
     _keep_achievements(builder.model, strict, variables, plan)

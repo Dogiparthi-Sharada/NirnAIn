@@ -1,22 +1,13 @@
 """Which work packages need each of the project's skills (round-2 decision D6).
 
-The project's skill list (step 5) reaches the optimizer through the work
-packages it is linked to:
-
-* the packages whose WBS skills (tagged on step 4) already include it, else
-* the packages whose name or description mention it: every word of the
-  skill name, case-insensitive, in any order ("Okta SSO" matches "SSO with
-  Okta"). Such a link asks for proficiency 3 (`LINKED_PROFICIENCY`), the
-  level a skill tagged on step 4 or given to a person on step 5 gets.
-
-Only Required skills limit who may do the work (RES-011, CON-010): an
-Optional skill is never a requirement, neither by keyword nor by a WBS tag,
-so its absence never blocks a package, slows anyone down or calls in a
-specialist. A WBS skill that isn't on the project's list stays required. The
-global skill rule (`Constraints.skill_mode`) then decides whether a missing
-Required skill rules a person out or only costs a penalty. A Required skill
-linked to no package is reported on the confirmation sheet
-(`inputs.InputFacts.unlinked_skills`).
+Purpose: The project's skill list (step 5) reaches the optimizer through the work packages it is
+linked to: those whose WBS skills (step 4) already include it, else those whose name or
+description mention every word of the skill name ("Okta SSO" matches "SSO with Okta"), at
+proficiency 3 (`LINKED_PROFICIENCY`). Only Required skills limit who may do the work (RES-011,
+CON-010): an Optional skill never blocks a package, slows anyone down or calls in a specialist.
+How it fits: `link_skills` is called by app/repositories/planning_input.py; unlinked Required
+skills are reported on the confirmation sheet; layer: optimization.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -50,6 +41,7 @@ class PackageText:
 
 
 def _words(text: str) -> frozenset[str]:
+    """Return the casefolded words of a text."""
     return frozenset(_WORD.findall(text.casefold()))
 
 

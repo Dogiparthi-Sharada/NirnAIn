@@ -1,18 +1,12 @@
 """Daily load arithmetic shared by the solver and the explanations.
 
-Load is measured in tenths of an hour per working day so CP-SAT can work
-with integers: a task spreads its effort evenly over its duration, and a
-person's daily capacity is their weekly capacity divided by the working days
-per week.
-
-How long a task takes depends on who does it (`task_mode`). Their skill
-level sets their pace (`speed.py`): the effort, and the duration they need
-at full availability, scale with it. Someone who can give that daily demand
-works at that duration; a part-timer who can't takes ceil(effort / their
-daily hours) working days instead. That is what makes cutting someone's
-hours lengthen the plan and adding hours shorten it. Hours booked on other
-projects leave fewer hours on the days they cover; a task may stretch the
-same way to the hours left beside them (`booked_modes`, QA pack RES-006).
+Purpose: Load is measured in tenths of an hour per working day so CP-SAT works with integers. How
+long a task takes depends on who does it (`task_mode`): skill sets the pace, and a part-timer who
+can't give the daily demand takes ceil(effort / their daily hours) days, so cutting someone's hours
+lengthens the plan; bookings elsewhere may stretch a task the same way (`booked_modes`).
+How it fits: Used by problem.py, workload.py, report_context.py and conflicts.py; layer:
+optimization.
+Created: 2026-10-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -47,6 +41,7 @@ def task_daily_tenths(task: Task) -> int:
 
 
 def daily_capacity_tenths(weekly_hours: float, per_week: int) -> int:
+    """Return a person's daily capacity in tenth-hours: weekly hours over working days per week."""
     return round(weekly_hours * TENTHS / per_week)
 
 
@@ -126,7 +121,7 @@ def booked_modes(
     return found
 
 
-def allocation_blocks(inp: PlanningInput) -> dict[str, list[Block]]:
+def allocation_blocks(planning_input: PlanningInput) -> dict[str, list[Block]]:
     """Other-project allocations as per-day load blocks, per employee.
 
     Weeks before the project start are dropped. A week's hours are spread
@@ -134,24 +129,25 @@ def allocation_blocks(inp: PlanningInput) -> dict[str, list[Block]]:
     capacity: over-commitment elsewhere is not this project's to fix, and
     would otherwise make a hard capacity constraint unsatisfiable on its own.
     """
-    per_week = inp.constraints.working_days_per_week
+    per_week = planning_input.constraints.working_days_per_week
     capacity = {
-        e.id: daily_capacity_tenths(e.weekly_capacity_hours, per_week) for e in inp.employees
+        employee.id: daily_capacity_tenths(employee.weekly_capacity_hours, per_week)
+        for employee in planning_input.employees
     }
     weekly: dict[str, dict[tuple[int, int], float]] = defaultdict(lambda: defaultdict(float))
-    for a in inp.allocations:
-        if a.employee_id not in capacity or a.hours <= 0:
+    for allocation in planning_input.allocations:
+        if allocation.employee_id not in capacity or allocation.hours <= 0:
             continue
-        lo, hi = week_workdays(inp.start_date, a.week_start, per_week)
+        lo, hi = week_workdays(planning_input.start_date, allocation.week_start, per_week)
         if hi > lo:
-            weekly[a.employee_id][(lo, hi)] += a.hours
+            weekly[allocation.employee_id][(lo, hi)] += allocation.hours
     blocks: dict[str, list[Block]] = {}
-    for emp, weeks in weekly.items():
+    for employee_id, weeks in weekly.items():
         out = []
         for (lo, hi), hours in sorted(weeks.items()):
-            tenths = min(math.ceil(hours * TENTHS / per_week), capacity[emp])
+            tenths = min(math.ceil(hours * TENTHS / per_week), capacity[employee_id])
             if tenths > 0:
                 out.append(Block(lo, hi, tenths))
         if out:
-            blocks[emp] = out
+            blocks[employee_id] = out
     return blocks

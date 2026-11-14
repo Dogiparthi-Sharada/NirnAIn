@@ -1,12 +1,10 @@
 """Lookups behind the report of a solved plan (`explain.build_report`).
 
-`ReportContext` answers what the report needs about a plan: dates and weeks
-of working-day indices, hours, utilization and the busiest day per person,
-whether someone is over their daily capacity, labor cost, and which
-dependencies bind.
-`critical_chain` walks the binding chain back from the last task. Durations
-are read off the plan (a part-timer's task runs longer than its WBS
-duration), so the report states what the solver actually scheduled.
+Purpose: Durations are read off the plan (a part-timer's task runs longer than its WBS duration), so
+the report states what the solver actually scheduled: dates and weeks, hours, utilization and the
+busiest day per person, over-allocation, labor cost and the binding dependency chain.
+How it fits: `ReportContext` is shared by explain.py and run_summary.py; layer: optimization.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -17,7 +15,8 @@ from app.optimization.baseline import dependency_offset, task_dependencies
 from app.optimization.calendar import week_index, workday_date
 from app.optimization.costing import daily_load, plan_cost
 from app.optimization.load import TENTHS, allocation_blocks, daily_capacity_tenths, task_mode
-from app.optimization.model import Plan, PlanningInput, Resource, SolveOutcome, Task
+from app.optimization.model import PlanningInput, Task
+from app.optimization.outcome import Plan, Resource, SolveOutcome
 from app.optimization.speed import pace_percent, work_hours
 
 
@@ -30,23 +29,27 @@ def planned_days(plan: Plan, task_id: str) -> int:
 class ReportContext:
     """Lookups shared by every part of the report (tasks, resources, calendar, load)."""
 
-    def __init__(self, inp: PlanningInput, outcome: SolveOutcome, plan: Plan) -> None:
-        self.inp = inp
+    def __init__(self, planning_input: PlanningInput, outcome: SolveOutcome, plan: Plan) -> None:
+        """Index the input's tasks, resources, bookings and dependencies for one plan."""
+        self.planning_input = planning_input
         self.plan = plan
         self.baseline = outcome.baseline
-        self.per_week = inp.constraints.working_days_per_week
-        self.tasks = {task.id: task for task in inp.tasks}
+        self.per_week = planning_input.constraints.working_days_per_week
+        self.tasks = {task.id: task for task in planning_input.tasks}
         self.resources = {resource.id: resource for resource in outcome.resources}
-        self.blocks = allocation_blocks(inp)
-        self.deps = task_dependencies(inp)
+        self.blocks = allocation_blocks(planning_input)
+        self.deps = task_dependencies(planning_input)
 
     def date_of(self, index: int) -> date:
-        return workday_date(self.inp.start_date, index, self.per_week)
+        """Return the calendar date of a working-day index."""
+        return workday_date(self.planning_input.start_date, index, self.per_week)
 
     def week_of(self, index: int) -> int:
-        return week_index(self.inp.start_date, self.date_of(index))
+        """Return the 0-based calendar week of a working-day index."""
+        return week_index(self.planning_input.start_date, self.date_of(index))
 
     def weeks(self, start: int, end: int) -> tuple[int, int]:
+        """Return the first and last week a [start, end) working-day span touches."""
         return self.week_of(start), self.week_of(max(end - 1, start))
 
     def paced(self, plan: Plan) -> bool:
@@ -75,33 +78,37 @@ class ReportContext:
             total += days * block.tenths / TENTHS
         return total
 
-    def utilization(self, plan: Plan, res: Resource) -> int:
+    def utilization(self, plan: Plan, resource: Resource) -> int:
+        """Return the person's planned hours (plus bookings) as a percent of their hours available.
+
+        Contractor profiles are capped at 100%: they stand for as many people as needed.
+        """
         span = plan.makespan
         if span <= 0:
             return 0
-        available = res.weekly_capacity_hours * span / self.per_week
+        available = resource.weekly_capacity_hours * span / self.per_week
         if available <= 0:
             return 0
-        used = self.hours(plan, res.id) + self.other_hours(res.id, span)
+        used = self.hours(plan, resource.id) + self.other_hours(resource.id, span)
         pct = round(100 * used / available)
-        return min(pct, 100) if res.kind == "contractor" else pct
+        return min(pct, 100) if resource.kind == "contractor" else pct
 
     def over_allocated(self, plan: Plan, resource_id: str) -> bool:
         """Whether the person's load exceeds their daily capacity on any working day."""
-        res = self.resources.get(resource_id)
-        if res is None or res.kind != "employee":
+        resource = self.resources.get(resource_id)
+        if resource is None or resource.kind != "employee":
             return False
-        capacity = daily_capacity_tenths(res.weekly_capacity_hours, self.per_week)
-        load = daily_load(self.inp, plan, res, self.blocks, self.paced(plan))
+        capacity = daily_capacity_tenths(resource.weekly_capacity_hours, self.per_week)
+        load = daily_load(self.planning_input, plan, resource, self.blocks, self.paced(plan))
         return any(tenths > capacity for tenths in load)
 
-    def peak_percent(self, plan: Plan, res: Resource) -> int:
+    def peak_percent(self, plan: Plan, resource: Resource) -> int:
         """The person's busiest working day in `plan`: that day's load, bookings on other
         projects included, as a percent of their daily hours (0 without hours)."""
-        capacity = daily_capacity_tenths(res.weekly_capacity_hours, self.per_week)
+        capacity = daily_capacity_tenths(resource.weekly_capacity_hours, self.per_week)
         if capacity <= 0:
             return 0
-        load = daily_load(self.inp, plan, res, self.blocks, self.paced(plan))
+        load = daily_load(self.planning_input, plan, resource, self.blocks, self.paced(plan))
         return round(100 * max(load, default=0) / capacity)
 
     def hours_label(self, task: Task, resource: Resource, days: int) -> str:
@@ -114,14 +121,15 @@ class ReportContext:
         return hours
 
     def name(self, resource_id: str | None) -> str:
+        """Return the resource's display name, or "Unassigned"."""
         if resource_id is None:
             return "Unassigned"
-        res = self.resources.get(resource_id)
-        return res.name if res else "Unassigned"
+        resource = self.resources.get(resource_id)
+        return resource.name if resource else "Unassigned"
 
     def cost(self, plan: Plan) -> int:
         """Labor cost of the plan, overtime premium included (`costing.plan_cost`)."""
-        return plan_cost(self.inp, self.resources, plan, self.blocks)
+        return plan_cost(self.planning_input, self.resources, plan, self.blocks)
 
     def tight_predecessors(self, plan: Plan, task_id: str) -> list[str]:
         """Predecessors whose dependency holds with no slack in `plan` (planned durations)."""
@@ -139,7 +147,7 @@ class ReportContext:
         return binding
 
 
-def critical_chain(ctx: ReportContext, plan: Plan) -> list[Task]:
+def critical_chain(context: ReportContext, plan: Plan) -> list[Task]:
     """Walk back from the last task through binding dependencies or the same assignee."""
     if not plan.tasks:
         return []
@@ -149,7 +157,7 @@ def critical_chain(ctx: ReportContext, plan: Plan) -> list[Task]:
     while True:
         scheduled = plan.tasks[current]
         before = [
-            task_id for task_id in ctx.tight_predecessors(plan, current) if task_id not in seen
+            task_id for task_id in context.tight_predecessors(plan, current) if task_id not in seen
         ]
         if not before:
             before = [
@@ -165,4 +173,4 @@ def critical_chain(ctx: ReportContext, plan: Plan) -> list[Task]:
         current = before[0]
         chain.append(current)
         seen.add(current)
-    return [ctx.tasks[task_id] for task_id in reversed(chain)]
+    return [context.tasks[task_id] for task_id in reversed(chain)]

@@ -1,24 +1,19 @@
 """Every independent blocker of an infeasible plan, each in plain English (round 3, R6).
 
-The explanation model (`builder.py`, `explain=True`) has no objective and
-puts every hard constraint group (the deadline, a milestone, the budget, a
-work package's required skill, a person's capacity, a dependency) behind an
-assumption literal; `conflicts.py` words each group. `explain_infeasibility`
-repeats, at most `MAX_BLOCKERS` times and within the time budget:
-
-1. Find a core: groups that can't all hold, from CP-SAT's
-   `sufficient_assumptions_for_infeasibility()`, shrunk by deletion (drop a
-   group, re-solve, keep it dropped if still infeasible). Each group in it
-   is then usually needed; if the time runs out it may keep extra groups.
-2. Relax the core's headline group (the first in `KIND_ORDER`: the deadline
-   before the budget before a skill before a person's capacity ...) for the
-   rest of the search, as if the project manager had changed it.
-3. Stop as soon as the model is feasible: no blocker is left.
-
-Each round may use half of the time left (the last one all of it), so a
-slow first core can't starve the others. All cores are reported together,
-headline constraints first: a project that misses two skills and can't make
-its deadline names all three in one run, not one per run.
+Purpose: A PM must learn everything that makes the plan impossible in one run, not one blocker
+per run. The explanation model (`builder.py`, `explain=True`) puts every hard constraint group
+(deadline, milestone, budget, a package's required skill, a person's capacity, a dependency)
+behind an assumption literal; `explain_infeasibility` repeats, at most `MAX_BLOCKERS` times:
+    1. find a core: groups that can't all hold, from CP-SAT's
+       `sufficient_assumptions_for_infeasibility()`, shrunk by deletion;
+    2. relax the core's headline group (first in `KIND_ORDER`) for the rest of the search,
+       as if the PM had changed it;
+    3. stop as soon as the model is feasible: no blocker is left.
+Each round may use half of the time left (the last one all of it), so a slow first core can't
+starve the others; all cores are reported together, headline constraints first.
+How it fits: Called by `solver.solve` for an infeasible run; texts come from conflicts.py;
+layer: optimization.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -29,7 +24,7 @@ from ortools.sat.python import cp_model
 
 from app.optimization import conflicts
 from app.optimization.builder import ModelBuilder
-from app.optimization.model import Conflict
+from app.optimization.outcome import Conflict
 from app.optimization.problem import Problem
 from app.optimization.runtime import SolveControl, SolveOptions, new_solver, run_model
 
@@ -44,6 +39,7 @@ class _Search:
     def __init__(
         self, problem: Problem, options: SolveOptions, control: SolveControl | None
     ) -> None:
+        """Build the explanation model once and index its assumption literals."""
         builder = ModelBuilder(problem, explain=True)
         builder.build()
         self.model = builder.model
@@ -65,6 +61,8 @@ class _Search:
     def core(self, assumed: set[int], limit: float) -> set[int] | None:
         """A core within `assumed` if they can't all hold, else None (feasible or no time)."""
         self.model.clear_assumptions()
+        # Assuming a group's literal switches its constraints on; on infeasibility CP-SAT names
+        # a subset of the assumptions it needed, which is the core.
         self.model.add_assumptions([self.literals[index] for index in sorted(assumed)])
         solver = new_solver(limit, self.options.workers, self.options.random_seed)
         if run_model(self.model, solver, self.control) != cp_model.INFEASIBLE:
@@ -108,6 +106,7 @@ def explain_infeasibility(
             break  # feasible without the relaxed groups: every blocker is named
         core = search.shrink(core, round_end, step)
         found |= core
+        # Relax the core's headline group, as if the PM had changed it, to find the next one.
         assumed.discard(min(core, key=search.rank.__getitem__))
     if not found:
         return (conflicts.GENERIC,)

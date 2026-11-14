@@ -8,17 +8,8 @@ from datetime import date
 from app.domain.optimization import RunResult
 from app.optimization.explain import build_report
 from app.optimization.formatting import EN_DASH
-from app.optimization.model import (
-    Conflict,
-    Constraints,
-    Dependency,
-    Employee,
-    Plan,
-    ScheduledTask,
-    SkillRequirement,
-    SolveOutcome,
-    Task,
-)
+from app.optimization.model import Constraints, Dependency, Employee, SkillRequirement, Task
+from app.optimization.outcome import Conflict, Plan, ScheduledTask, SolveOutcome
 from app.optimization.resources import build_resources
 from app.optimization.solver import solve
 from tests.test_optimization_solver import FAST, MONDAY, SAP, make_input, with_constraints

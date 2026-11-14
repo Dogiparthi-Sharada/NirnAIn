@@ -1,12 +1,11 @@
 """Plain-English texts for the hard constraint groups of an infeasible model.
 
-`builder.py` puts every hard constraint group of the explanation model
-behind an assumption literal and attaches one of these (lazily, via
-`functools.partial`) so `blockers.explain_infeasibility` can report the groups
-in the conflict. Each text states a fact read off the `Problem` (e.g. the
-dependency chain's earliest finish, the cheapest qualified staffing, how
-long a part-timer needs for a task) or, failing that, says the constraint
-can't hold together with the others listed.
+Purpose: Each text states a fact read off the `Problem` (the dependency chain's earliest finish, the
+cheapest qualified staffing, how long a part-timer needs) or, failing that, says the constraint
+can't hold together with the others listed; nothing is invented.
+How it fits: `builder.py` attaches these lazily (via `functools.partial`) to the explanation model's
+assumption literals; `blockers.explain_infeasibility` reports them; layer: optimization.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -14,14 +13,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from app.optimization import formatting as fmt
-from app.optimization.model import (
-    Conflict,
-    Dependency,
-    Milestone,
-    Resource,
-    SkillRequirement,
-    Task,
-)
+from app.optimization.model import Dependency, Milestone, SkillRequirement, Task
+from app.optimization.outcome import Conflict, Resource
 from app.optimization.problem import Problem
 
 GENERIC = Conflict(
@@ -39,7 +32,7 @@ def names(people: Sequence[str]) -> str:
 
 def deadline(problem: Problem) -> Conflict:
     """The go-live date: the dependency chain alone, or not enough capacity by then."""
-    due = problem.inp.constraints.must_finish_by
+    due = problem.planning_input.constraints.must_finish_by
     name = f"Deadline: must finish by {fmt.day(due)}" if due else "Deadline"
     if problem.deadline is not None and problem.baseline.makespan > problem.deadline:
         critical = fmt.day(problem.finish_date(problem.baseline.makespan))
@@ -103,7 +96,7 @@ def budget(problem: Problem, label: str, amount: int, held: int = 0) -> Conflict
 
 def skill(problem: Problem, task: Task, requirement: SkillRequirement) -> Conflict:
     """A required skill: who has it, or why nobody (on the team or outside) can cover it."""
-    constraints = problem.inp.constraints
+    constraints = problem.planning_input.constraints
     name = f"Skill: {task.label} requires {requirement.skill_name} ≥ {requirement.min_proficiency}"
     able = [
         resource.name

@@ -1,38 +1,21 @@
 """Priced ways to keep the target date ("Your call"), or out of an infeasible run.
 
-Round-2 decision D2. When a solved run finishes after its target date
-(`model.target_of`: the plan in force's completion for a re-plan, else the
-must-finish-by date), or the run is infeasible, the worker re-solves
-relaxed copies of the frozen input. Each copy changes one thing the
-project manager decides:
-
-* `specialist`: bring in a contractor, at the project's contractor rate or
-  the $175/h estimate: a specialist for skills nobody on the team has
-  (D6), and a contractor who may take any other late work package,
-  skill-agnostic (`Constraints.contractor_any_work`).
-* `overtime`: "Can flex" capacity: the people on the late work may work up
-  to 25% over their hours, billed at 1.5x an employee's cost and at a
-  contractor's own rate.
-* `move_deadline`: accept the later date. For a plan that slips this is
-  the plan itself (no re-solve, no extra cost); for an infeasible run,
-  go-live and hard phase milestones become soft.
-
-* `combined` (round 3, R6): "Change these together", only for an
-  infeasible run that no single copy gets a plan. What every kind of
-  blocker (`blockers.py`) needs at once: specialists for missing skills, a
-  movable go-live and milestones, and a budget exceeded only when nothing
-  else fits (`change_together`). Its `changes` list the ones the relaxed
-  plan needs, e.g. a contractor for two missing skills and a later go-live.
-
-The specialist, overtime and combined copies try hard to keep the target
-(`target_penalty_per_day`), so they reach the earliest date their
-relaxation allows. A copy is offered only if it produces a plan, actually
-uses what it adds (contractor or overtime hours) and, for a plan that
-slips, finishes earlier than it. `costCents` is the extra cost against
-this plan; an infeasible run has no plan, so its remedies carry the whole
-relaxed plan's cost. Variants skip the infeasibility explanation and share
-the run's time limit. A run created with `remedy` applies the same copy
-up front (`apply_remedy`). `remedy_options.py` words and prices each option.
+Purpose: Round-2 D2: when a run finishes after its target date or is infeasible, the worker
+re-solves relaxed copies of the frozen input, each changing one thing the PM decides:
+    * `specialist`: bring in a contractor (project rate or the $175/h estimate) for skills
+      nobody has and any other late work package;
+    * `overtime`: "Can flex" capacity, up to 25% over hours at 1.5x for employees;
+    * `move_deadline`: accept the later date (for an infeasible run, go-live and hard
+      milestones become soft);
+    * `combined` (round 3, R6): "Change these together", only when no single copy gets an
+      infeasible run a plan.
+A copy is offered only if it produces a plan, uses what it adds and, for a slipping plan,
+finishes earlier; `costCents` is the extra cost against this plan (the whole relaxed plan's cost
+for an infeasible run).
+How it fits: `price_remedies` is called by the optimizer job; `apply_remedy` by the API when a
+run is created with `remedy`; remedy_options.py words and prices each option;
+layer: optimization.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -40,7 +23,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 
-from app.optimization.model import PlanningInput, SolveOutcome, Task
+from app.optimization.model import PlanningInput, Task
+from app.optimization.outcome import SolveOutcome
 from app.optimization.remedy_options import (
     DEFAULT_SPECIALIST_RATE_CENTS,
     DESCRIBE,
@@ -85,13 +69,13 @@ def covers(skills: Mapping[str, int], task: Task) -> bool:
     )
 
 
-def allow_specialists(inp: PlanningInput) -> PlanningInput:
+def allow_specialists(planning_input: PlanningInput) -> PlanningInput:
     """Contractors for skill gaps and for any late work, at the contractor rate or the
     $175/h estimate, to keep the target."""
-    constraints = inp.constraints
+    constraints = planning_input.constraints
     rate = constraints.contractor_rate_cents or DEFAULT_SPECIALIST_RATE_CENTS
     return replace(
-        inp,
+        planning_input,
         constraints=replace(
             constraints,
             allow_contractors=True,
@@ -102,28 +86,28 @@ def allow_specialists(inp: PlanningInput) -> PlanningInput:
     )
 
 
-def allow_overtime(inp: PlanningInput) -> PlanningInput:
+def allow_overtime(planning_input: PlanningInput) -> PlanningInput:
     """People may work up to 25% over their hours ("Can flex"), to keep the target."""
     constraints = replace(
-        inp.constraints,
+        planning_input.constraints,
         capacity_mode="soft",
         target_penalty_per_day=KEEP_TARGET_PENALTY_PER_DAY,
     )
-    return replace(inp, constraints=constraints)
+    return replace(planning_input, constraints=constraints)
 
 
-def move_deadline(inp: PlanningInput) -> PlanningInput:
+def move_deadline(planning_input: PlanningInput) -> PlanningInput:
     """Go-live and every phase milestone become soft: they may slip, at a penalty per day.
 
     The penalty keeps the solver finishing as early as it can, so the
     relaxed plan's completion date is the earliest date go-live can move to.
     """
-    milestones = tuple(replace(milestone, mode="soft") for milestone in inp.milestones)
-    constraints = replace(inp.constraints, deadline_mode="soft")
-    return replace(inp, constraints=constraints, milestones=milestones)
+    milestones = tuple(replace(milestone, mode="soft") for milestone in planning_input.milestones)
+    constraints = replace(planning_input.constraints, deadline_mode="soft")
+    return replace(planning_input, constraints=constraints, milestones=milestones)
 
 
-def change_together(inp: PlanningInput) -> PlanningInput:
+def change_together(planning_input: PlanningInput) -> PlanningInput:
     """What every kind of blocker needs at once ("Change these together", R6).
 
     Specialists for the skills nobody on the team has, a go-live and milestones that
@@ -132,7 +116,7 @@ def change_together(inp: PlanningInput) -> PlanningInput:
     Everyone's hours stay as they are: once the dates may move, overtime only trades
     money for time, so it is never needed for a plan.
     """
-    relaxed = move_deadline(inp)
+    relaxed = move_deadline(planning_input)
     constraints = relaxed.constraints
     return replace(
         relaxed,
@@ -148,35 +132,37 @@ def change_together(inp: PlanningInput) -> PlanningInput:
     )
 
 
-def apply_remedy(inp: PlanningInput, remedy: RemedyId | None) -> PlanningInput:
+def apply_remedy(planning_input: PlanningInput, remedy: RemedyId | None) -> PlanningInput:
     """The option a PM picked ("Use this option"), applied up front to one run."""
     if remedy == "specialist":
-        return allow_specialists(inp)
+        return allow_specialists(planning_input)
     if remedy == "overtime":
-        return allow_overtime(inp)
+        return allow_overtime(planning_input)
     if remedy == "move_deadline":
-        return move_deadline(inp)
+        return move_deadline(planning_input)
     if remedy == "combined":
-        return change_together(inp)
-    return inp
+        return change_together(planning_input)
+    return planning_input
 
 
-def variants(inp: PlanningInput, solved: bool) -> list[tuple[RemedyId, PlanningInput]]:
+def variants(planning_input: PlanningInput, solved: bool) -> list[tuple[RemedyId, PlanningInput]]:
     """The relaxed inputs worth re-solving for a plan that slips (`solved`) or none."""
-    constraints = inp.constraints
-    found: list[tuple[RemedyId, PlanningInput]] = [("specialist", allow_specialists(inp))]
+    constraints = planning_input.constraints
+    found: list[tuple[RemedyId, PlanningInput]] = [
+        ("specialist", allow_specialists(planning_input))
+    ]
     # Under "Can flex" an infeasible run already had overtime: nothing to gain.
     if solved or constraints.capacity_mode == "hard":
-        found.append(("overtime", allow_overtime(inp)))
+        found.append(("overtime", allow_overtime(planning_input)))
     hard_deadline = constraints.must_finish_by is not None and constraints.deadline_mode == "hard"
-    hard_milestone = any(milestone.mode == "hard" for milestone in inp.milestones)
+    hard_milestone = any(milestone.mode == "hard" for milestone in planning_input.milestones)
     if not solved and (hard_deadline or hard_milestone):
-        found.append(("move_deadline", move_deadline(inp)))
+        found.append(("move_deadline", move_deadline(planning_input)))
     return found
 
 
 def price_remedies(
-    inp: PlanningInput,
+    planning_input: PlanningInput,
     options: SolveOptions,
     control: SolveControl | None = None,
     current: SolveOutcome | None = None,
@@ -188,17 +174,17 @@ def price_remedies(
     always the last option.
     """
     solved = current is not None and current.plan is not None
-    found = variants(inp, solved)
+    found = variants(planning_input, solved)
     if not solved:
         # Tried last, and only when no single option gets a plan (R6).
-        found.append(("combined", change_together(inp)))
+        found.append(("combined", change_together(planning_input)))
     share = SolveOptions(
         time_limit_s=max(options.time_limit_s / len(found), MIN_VARIANT_SECONDS),
         workers=options.workers,
         random_seed=options.random_seed,
     )
-    base_finish = finish_of(inp, current) if current is not None and solved else None
-    base_cost = cost_of(inp, current) if current is not None and solved else 0
+    base_finish = finish_of(planning_input, current) if current is not None and solved else None
+    base_cost = cost_of(planning_input, current) if current is not None and solved else 0
     remedies: list[Remedy] = []
     for remedy_id, variant in found:
         if (control is not None and control.stopped) or (remedy_id == "combined" and remedies):
@@ -208,9 +194,11 @@ def price_remedies(
             continue
         if base_finish is not None and finish_of(variant, outcome) >= base_finish:
             continue
-        remedy = DESCRIBE[remedy_id](inp, variant, outcome, cost_of(variant, outcome) - base_cost)
+        remedy = DESCRIBE[remedy_id](
+            planning_input, variant, outcome, cost_of(variant, outcome) - base_cost
+        )
         if remedy is not None:
             remedies.append(remedy)
     if current is not None and solved:
-        remedies.append(accept_remedy(inp, current))
+        remedies.append(accept_remedy(planning_input, current))
     return remedies
