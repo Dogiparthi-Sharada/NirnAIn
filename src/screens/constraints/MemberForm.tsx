@@ -1,15 +1,25 @@
 /**
  * The add / edit form under the team table on step 5 (approved mockup views/constraints-team.js
- * `openMemberForm` / `saveMember`): name, role, hours per week on this project and skills.
+ * `openMemberForm` / `saveMember`): name, role, hours per week on this project, hourly rate and
+ * skills.
  *
  * The form checks what it can before saving (a name, a role, no second person with the same name,
- * hours a whole number from 1 to 80) and lists every problem at once; the server's answer (for
- * example a 409 duplicate or the plan lock) is shown in the same box. Skills are picked from the
- * project's skill list; skills a person has outside that list are kept when they are edited.
+ * hours a whole number from 1 to 80, a rate in dollars or blank) and lists every problem at once;
+ * the server's answer (for example a 409 duplicate or the plan lock) is shown in the same box. A
+ * blank rate means the optimizer's default rate. Skills are picked from the project's skill list;
+ * skills a person has outside that list are kept when they are edited.
  */
 import { useEffect, useRef, useState } from 'react'
 import { errorMessage } from '@/lib/api'
-import { isWholeHours, type ProjectSkill, type ProjectTeamMember, type TeamMemberInput } from '@/lib/inputs'
+import { parseDollars } from '@/lib/constraints'
+import {
+  hourlyRateText,
+  isHourlyRate,
+  isWholeHours,
+  type ProjectSkill,
+  type ProjectTeamMember,
+  type TeamMemberInput,
+} from '@/lib/inputs'
 
 const NEW_MEMBER_HOURS = '40'
 
@@ -27,6 +37,7 @@ export function MemberForm({ member, team, skills, skillsLoading, saving, server
   const [name, setName] = useState(member?.fullName ?? '')
   const [role, setRole] = useState(member?.roleTitle ?? '')
   const [hours, setHours] = useState(member ? String(member.hoursPerWeek) : NEW_MEMBER_HOURS)
+  const [rate, setRate] = useState(member?.hourlyRateCents != null ? String(member.hourlyRateCents / 100) : '')
   const [picked, setPicked] = useState<Set<string>>(() => new Set(member?.skills ?? []))
   const [problems, setProblems] = useState<string[]>([])
   const nameRef = useRef<HTMLInputElement>(null)
@@ -55,12 +66,16 @@ export function MemberForm({ member, team, skills, skillsLoading, saving, server
     }
     if (!roleTitle) found.push('Enter a role.')
     if (hours.trim() === '' || !isWholeHours(hoursPerWeek)) found.push('Hours per week must be a whole number from 1 to 80.')
+    const hourlyRateCents = parseDollars(rate)
+    if (hourlyRateCents !== null && !isHourlyRate(hourlyRateCents)) {
+      found.push('Rate must be dollars per hour, for example 95, or blank for the default.')
+    }
     setProblems(found)
     if (found.length > 0) return
     const listed = new Set(skills.map((skill) => skill.name))
     const keptOutsideList = (member?.skills ?? []).filter((skillName) => !listed.has(skillName))
     const chosen = skills.map((skill) => skill.name).filter((skillName) => picked.has(skillName))
-    onSave({ fullName, roleTitle, hoursPerWeek, skills: [...chosen, ...keptOutsideList] })
+    onSave({ fullName, roleTitle, hoursPerWeek, hourlyRateCents, skills: [...chosen, ...keptOutsideList] })
   }
 
   const messages = serverError && problems.length === 0 ? [errorMessage(serverError)] : problems
@@ -73,7 +88,7 @@ export function MemberForm({ member, team, skills, skillsLoading, saving, server
           <div key={message}>{message}</div>
         ))}
       </div>
-      <div className="g3">
+      <div className="g4">
         <div className="field">
           <label htmlFor="mf-name">
             Name<span className="req">*</span>
@@ -99,6 +114,17 @@ export function MemberForm({ member, team, skills, skillsLoading, saving, server
             Hours per week on this project<span className="req">*</span>
           </label>
           <input className="in" id="mf-hours" type="number" min={1} max={80} step={1} value={hours} onChange={(event) => setHours(event.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="mf-rate">Rate ($/h)</label>
+          <input
+            className="in"
+            id="mf-rate"
+            inputMode="decimal"
+            placeholder={hourlyRateText(null)}
+            value={rate}
+            onChange={(event) => setRate(event.target.value)}
+          />
         </div>
       </div>
       <div className="field mt">

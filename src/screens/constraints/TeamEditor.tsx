@@ -1,7 +1,8 @@
 /**
  * The Team & capacity card on step 5 (approved mockup views/constraints-team.js): who works on
- * this project, their role, the hours per week each can give it, and how much of that other
- * projects already book (utilization), with the capacity Must hold / Can flex switch.
+ * this project, their role and hourly rate (blank = the optimizer's default rate), the hours per
+ * week each can give it, and how much of that other projects already book (utilization), with the
+ * capacity Must hold / Can flex switch.
  *
  * Capacity rule: Must hold = nobody is scheduled beyond the hours entered here; Can flex = people
  * may be scheduled up to 25% above them (overtime), at a penalty. Hours are edited inline (whole
@@ -15,6 +16,7 @@ import { errorMessage } from '@/lib/api'
 import { policyOf, type PolicyInputs, type PolicyRisk } from '@/lib/constraintPolicy'
 import { ADD_MEMBER_ID, hoursText, policyChanges, useInputsRefresh, useSaveFailure, type ConstraintChanges } from '@/lib/constraints'
 import {
+  hourlyRateText,
   isWholeHours,
   ROLES,
   useAddTeamMember,
@@ -39,6 +41,7 @@ function memberChanges(member: ProjectTeamMember, input: TeamMemberInput): Parti
   if (input.fullName !== member.fullName) changes.fullName = input.fullName
   if (input.roleTitle !== (member.roleTitle ?? '')) changes.roleTitle = input.roleTitle
   if (input.hoursPerWeek !== member.hoursPerWeek) changes.hoursPerWeek = input.hoursPerWeek
+  if ((input.hourlyRateCents ?? null) !== (member.hourlyRateCents ?? null)) changes.hourlyRateCents = input.hourlyRateCents ?? null
   if ([...input.skills].sort().join('\n') !== [...member.skills].sort().join('\n')) changes.skills = input.skills
   return changes
 }
@@ -56,7 +59,9 @@ function MemberRow({ member, locked, onHours, onEdit, onRemove }: {
     <tr>
       <td>
         <b>{member.fullName}</b>
-        <div className="small muted">{member.roleTitle || 'No role yet'}</div>
+        <div className="small muted">
+          {member.roleTitle || 'No role yet'} &middot; {hourlyRateText(member.hourlyRateCents)}
+        </div>
       </td>
       <td>
         <CommitInput
