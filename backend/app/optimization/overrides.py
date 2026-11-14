@@ -5,7 +5,8 @@ stored in `optimization_runs.options`): `budgetTotalCents`, `mustFinishBy`,
 `durationDays` (WBS node id -> working days left; 0 = done, not scheduled
 again), `hoursPerWeek` (employee id
 -> hours), `addMembers` (people joining: `employeeId`, `fullName`,
-`hoursPerWeek`, `skills` by name, `hourlyRateCents`, `isContractor`) and
+`hoursPerWeek`, `skills` by name, `hourlyRateCents`, `workerType`; the older
+`isContractor` flag is still read when `workerType` is absent) and
 `removeMembers` (employee ids leaving). The API applies them to the loaded
 input before freezing the snapshot, so the run is reproducible and the
 project's saved inputs stay untouched (Changes & Versions writes them back
@@ -47,6 +48,14 @@ def _with_duration(task: Task, days: int) -> Task:
     return replace(task, duration_days=days, effort_hours=effort)
 
 
+def _is_contractor(entry: Mapping[str, Any]) -> bool:
+    """`workerType == "contractor"`; entries stored before the rename carry `isContractor`."""
+    worker_type = entry.get("workerType")
+    if worker_type is not None:
+        return str(worker_type) == "contractor"
+    return bool(entry.get("isContractor", False))
+
+
 def _newcomer(entry: Mapping[str, Any], skill_ids: Mapping[str, str]) -> Employee:
     """A person joining the project as a resource. Skills are matched to the work
     packages' required skills by name; a missing rate stays null, so the optimizer prices
@@ -57,7 +66,7 @@ def _newcomer(entry: Mapping[str, Any], skill_ids: Mapping[str, str]) -> Employe
         name=str(entry["fullName"]),
         weekly_capacity_hours=float(entry["hoursPerWeek"]),
         hourly_rate_cents=None if rate is None else int(rate),
-        is_contractor=bool(entry.get("isContractor", False)),
+        is_contractor=_is_contractor(entry),
         skills={
             skill_ids[name.casefold()]: NEW_MEMBER_PROFICIENCY
             for name in entry.get("skills") or []
