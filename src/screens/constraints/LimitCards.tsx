@@ -116,9 +116,13 @@ export function DeadlineCard({ constraints, policy, risks, locked, onSave }: Car
   const startDate = constraints.startDate
   const finishDate = constraints.mustFinishBy
 
-  /** Dates are optional, but the plan cannot finish before it starts. */
+  /**
+   * A date can be changed but not removed: without one the server falls back to the project's own
+   * dates, so an empty field would only hide the date the plan really uses.
+   */
   function commitDates(start: string | null, finish: string | null) {
-    if (start && finish && finish < start) toast('The must-finish-by date can\u2019t be before the start date.')
+    if ((startDate && !start) || (finishDate && !finish)) toast('Pick a date. To let the deadline move, answer \u201CCan move\u201D above.')
+    else if (start && finish && finish < start) toast('The must-finish-by date can\u2019t be before the start date.')
     else onSave({ startDate: start, mustFinishBy: finish })
   }
 

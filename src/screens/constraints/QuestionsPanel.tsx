@@ -276,25 +276,24 @@ export function QuestionsPanel({ projectId, constraints, skillGaps, workPackageG
               Hard &rarr; the plan must finish by {formatDate(deadlineDate)}. Can move &rarr; the solver may finish later if that&rsquo;s the only way.
             </>
           ) : (
-            <>no must-finish-by date is set, so the solver plans without a deadline. Enter one on the Deadline card below if the plan has to finish by a date.</>
+            <>
+              no must-finish-by date is set here, so the plan follows the project&rsquo;s target end date, if it has one. Hard &rarr; the plan must
+              finish by it. Can move &rarr; the solver may finish later if that&rsquo;s the only way.
+            </>
           )
         }
       >
-        {deadlineDate && (
-          <>
-            <AnswerOptions name="deadline" label={deadlineTitle} options={DEADLINE_OPTIONS} picked={deadline} onPick={(answer) => onSave(deadlineChanges(answer))} />
-            <div className="answer" id="qB-ans">
-              {(deadline === 'hard' || deadline === 'soft') && <Chip kind="confirmed" />}
-              {deadline === 'hard' && ` ${formatDate(deadlineDate)} is a hard deadline.`}
-              {deadline === 'soft' && ' The date can move if that is the only way.'}
-              {deadline === 'unknown' && (
-                <>
-                  <Chip kind="assumed" /> Hard deadline (the safer default). The plan will say so.
-                </>
-              )}
-            </div>
-          </>
-        )}
+        <AnswerOptions name="deadline" label={deadlineTitle} options={DEADLINE_OPTIONS} picked={deadline} onPick={(answer) => onSave(deadlineChanges(answer))} />
+        <div className="answer" id="qB-ans">
+          {(deadline === 'hard' || deadline === 'soft') && <Chip kind="confirmed" />}
+          {deadline === 'hard' && ` ${deadlineDate ? formatDate(deadlineDate) : 'The target end date'} is a hard deadline.`}
+          {deadline === 'soft' && ' The date can move if that is the only way.'}
+          {deadline === 'unknown' && (
+            <>
+              <Chip kind="assumed" /> Hard deadline (the safer default). The plan will say so.
+            </>
+          )}
+        </div>
       </Question>
 
       <div className="checked">

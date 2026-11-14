@@ -78,13 +78,29 @@ export function useSaveFailure(projectId: string): (error: unknown) => void {
   )
 }
 
-/** Saves partial changes to the project's constraint set (see the module comment). */
+/**
+ * Saves partial changes to the project's constraint set (see the module comment). Saves run one at
+ * a time (one mutation scope per project), so the last click is also the last write; each save
+ * sends the cached set as it is when the save starts, which already holds the earlier changes.
+ */
 export function useConstraintEditor(projectId: string) {
   const queryClient = useQueryClient()
   const cacheKey = queryKeys.constraints(projectId)
   const mutationKey = ['save-constraints', projectId]
+
+  /** `base` with the changes of every save still waiting applied on top, oldest first. */
+  function withWaitingChanges(base: ConstraintInputs, skip?: ConstraintChanges): ConstraintInputs {
+    return queryClient
+      .getMutationCache()
+      .findAll({ mutationKey, status: 'pending' })
+      .map((mutation) => mutation.state.variables as ConstraintChanges)
+      .filter((changes) => changes !== skip)
+      .reduce<ConstraintInputs>((current, changes) => ({ ...current, ...changes }), base)
+  }
+
   return useMutation({
     mutationKey,
+    scope: { id: `save-constraints:${projectId}` },
     onMutate: async (changes: ConstraintChanges) => {
       await queryClient.cancelQueries({ queryKey: cacheKey })
       const previous = queryClient.getQueryData<ConstraintInputs>(cacheKey)
@@ -96,14 +112,16 @@ export function useConstraintEditor(projectId: string) {
         method: 'PUT',
         json: { ...queryClient.getQueryData<ConstraintInputs>(cacheKey), ...changes },
       }),
-    onSuccess: (saved) => {
-      // A later save still in flight already carries this change; let its answer win.
-      if (queryClient.isMutating({ mutationKey }) <= 1) queryClient.setQueryData(cacheKey, saved)
+    onSuccess: async (saved) => {
+      // A background refetch that started before this write must not land on top of it.
+      await queryClient.cancelQueries({ queryKey: cacheKey })
+      queryClient.setQueryData(cacheKey, withWaitingChanges(saved))
       refreshPlanningInputs(queryClient, projectId)
     },
-    onError: (error, _changes, context) => {
-      if (context?.previous) queryClient.setQueryData(cacheKey, context.previous)
-      void queryClient.invalidateQueries({ queryKey: cacheKey })
+    onError: async (error, changes, context) => {
+      await queryClient.cancelQueries({ queryKey: cacheKey })
+      if (context?.previous) queryClient.setQueryData(cacheKey, withWaitingChanges(context.previous, changes))
+      if (queryClient.isMutating({ mutationKey }) <= 1) void queryClient.invalidateQueries({ queryKey: cacheKey })
       refreshPlanningInputs(queryClient, projectId, error)
     },
   })
@@ -140,9 +158,9 @@ export function specialistQuestion(gaps: string[]): string {
   return gaps.length === 1 ? `Can we bring in an outside ${gaps[0]} specialist?` : 'Can we bring in an outside specialist?'
 }
 
-/** "Is Sep 30, 2025 a hard deadline?" */
+/** "Is Sep 30, 2025 a hard deadline?" (the project's target end date when step 5 has no date). */
 export function deadlineQuestion(mustFinishBy: string | null): string {
-  return mustFinishBy ? `Is ${formatDate(mustFinishBy)} a hard deadline?` : 'Is there a hard deadline?'
+  return mustFinishBy ? `Is ${formatDate(mustFinishBy)} a hard deadline?` : 'Is the target end date a hard deadline?'
 }
 
 /** Low-impact settings we use without asking (all editable on the cards below). */
@@ -161,7 +179,9 @@ export function checkedNotAsked(constraints: ConstraintInputs): string {
 
 /* ───────────────────────────── Run Optimization gate ───────────────────────────── */
 
+/** One missing input that keeps the optimizer from running, as the banner and status line show it. */
 export interface GateBlocker {
+  /** The server's `missing` key where there is one: estimates, specialist, deadline, team… */
   key: string
   /** Words for the status line: "To continue: answer the deadline question." */
   hint: string
@@ -184,6 +204,7 @@ export interface GateFacts {
   serverBlocking: string[]
 }
 
+/** Element ids the gate's links move focus to. */
 export const SPECIALIST_QUESTION_ID = 'q-specialist'
 export const DEADLINE_QUESTION_ID = 'q-deadline'
 export const ADD_MEMBER_ID = 'btn-add-member'
@@ -212,7 +233,8 @@ export function gateBlockers(facts: GateFacts): GateBlocker[] {
       const question = specialistQuestion(facts.skillGaps)
       blockers.push({ key: 'specialist', hint: 'answer the specialist question', label: `Answer \u201C${question}\u201D`, target: { selector: `#${SPECIALIST_QUESTION_ID} .opt` } })
     }
-    if (constraints.deadlineAnswer == null && constraints.mustFinishBy) {
+    // Without a date here the server still plans to the project's target end date, so it may ask too.
+    if (constraints.deadlineAnswer == null && (constraints.mustFinishBy || serverSays('deadline'))) {
       const question = deadlineQuestion(constraints.mustFinishBy)
       blockers.push({ key: 'deadline', hint: 'answer the deadline question', label: `Answer \u201C${question}\u201D`, target: { selector: `#${DEADLINE_QUESTION_ID} .opt` } })
     }
