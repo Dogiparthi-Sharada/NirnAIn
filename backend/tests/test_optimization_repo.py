@@ -19,7 +19,7 @@ from app.repositories.optimization import (
     ProjectContext,
 )
 from app.repositories.optimization_store import OptimizationJobStore
-from tests.support.connections import Conn, Result, Rows, project_ctx
+from tests.support.connections import Conn, Result, Rows, project_context
 from tests.support.solver_inputs import FAST, make_input
 
 NOW = datetime(2026, 10, 14, 12, 0, tzinfo=UTC)
@@ -47,7 +47,7 @@ def run_row(**overrides: Any) -> dict[str, Any]:
 
 
 async def test_project_and_can_write() -> None:
-    ctx = project_ctx()
+    ctx = project_context()
     conn = Conn(Rows([_ctx_dict(ctx)]), Rows([{"x": True}]))
     repo = OptimizationRepository(conn)  # type: ignore[arg-type]
     assert await repo.project(ctx.id) == ctx

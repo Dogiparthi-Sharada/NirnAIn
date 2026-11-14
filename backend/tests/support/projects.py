@@ -1,4 +1,10 @@
-"""Creating a project through the API, the first step of most endpoint tests."""
+"""Creating users, organizations and projects: the first step of most endpoint tests.
+
+Purpose: Keep one way to set up "Jane Doe of Acme with project CRM" instead of a copy per module.
+How it fits: Used by the endpoint tests together with the in-memory Store (tests/support/store.py)
+and the auth fixture; layer: tests.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 

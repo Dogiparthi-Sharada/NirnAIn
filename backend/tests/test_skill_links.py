@@ -29,7 +29,7 @@ from app.optimization.skill_links import PackageText, ProjectSkill, link_skills,
 from app.optimization.solver import solve
 from app.repositories.optimization import OptimizationRepository
 from app.repositories.wbs import WbsRepository
-from tests.support.connections import Conn, Rows, project_ctx
+from tests.support.connections import Conn, Rows, project_context
 from tests.support.solver_inputs import FAST, make_input
 
 OKTA = ProjectSkill("okta", "Okta SSO", required=True)
@@ -185,7 +185,7 @@ async def test_qa_case_okta_required_and_a_specialist_at_185_reach_the_plan() ->
         Rows([]),  # no dependencies
         Rows([constraint_set]),
     )
-    inp = await OptimizationRepository(conn).load_input(project_ctx(), date(2026, 10, 1))  # type: ignore[arg-type]
+    inp = await OptimizationRepository(conn).load_input(project_context(), date(2026, 10, 1))  # type: ignore[arg-type]
     assert inp.tasks[0].skills == (SkillRequirement(str(okta), "Okta SSO", 3),)
     assert (inp.constraints.allow_contractors, inp.constraints.contractor_rate_cents) == (
         True,

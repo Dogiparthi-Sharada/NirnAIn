@@ -13,10 +13,10 @@ from fastapi.testclient import TestClient
 from app.ai.documents import (
     Extraction,
 )
-from app.domain.common import DocumentKind, OrgRole
+from app.domain.common import DocumentKind
 from app.domain.intake import SourceDocument
 from tests.support.clock import NOW
-from tests.support.store import Store
+from tests.support.store import ProjectScopedFake, Store
 
 
 def pdf_with_text(text: str) -> bytes:
@@ -64,21 +64,12 @@ class DocumentData:
     texts: dict[uuid.UUID, str | None] = field(default_factory=dict)
 
 
-class FakeDocuments:
+class FakeDocuments(ProjectScopedFake):
     """In-memory documents with the RLS rules the API relies on."""
 
     def __init__(self, store: Store, data: DocumentData, user_id: uuid.UUID) -> None:
-        self.store, self.data, self.user_id = store, data, user_id
-
-    def _role(self, project_id: uuid.UUID) -> OrgRole | None:
-        project = self.store.projects.get(project_id)
-        return self.store.role(project.org_id, self.user_id) if project else None
-
-    async def project_exists(self, project_id: uuid.UUID) -> bool:
-        return self._role(project_id) is not None
-
-    async def can_write(self, project_id: uuid.UUID) -> bool:
-        return self._role(project_id) not in (None, OrgRole.VIEWER)
+        super().__init__(store, user_id)
+        self.data = data
 
     async def create(
         self,

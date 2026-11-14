@@ -15,7 +15,7 @@ from app.repositories.constraint_input import build_constraints
 from app.repositories.optimization import (
     OptimizationRepository,
 )
-from tests.support.connections import Conn, Rows, project_ctx
+from tests.support.connections import Conn, Rows, project_context
 from tests.support.solver_inputs import make_input
 
 # When a person confirmed an AI estimate in the fake rows.
@@ -23,7 +23,7 @@ CONFIRMED_AT = datetime(2026, 10, 14, 12, 0, tzinfo=UTC)
 
 
 async def test_load_input_builds_planning_input() -> None:
-    ctx = project_ctx()
+    ctx = project_context()
     root, d1, wp1, wp2, d2 = (uuid.uuid4() for _ in range(5))
     e1, e2, sap = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
 
@@ -159,7 +159,7 @@ async def test_load_input_with_constraint_set_and_no_data() -> None:
     # nodes, project team (empty), org employees (fallback), deps, constraint set,
     # milestones (no task ids -> no skills/profs/alloc queries)
     conn = Conn(Rows([]), Rows([]), Rows([]), Rows([]), Rows([cs]), Rows([]))
-    ctx = project_ctx()
+    ctx = project_context()
     inp = await OptimizationRepository(conn).load_input(ctx, date(2026, 10, 1))  # type: ignore[arg-type]
     assert (inp.tasks, inp.employees) == ((), ())
     c = inp.constraints
@@ -209,7 +209,7 @@ def test_answers_set_deadline_and_specialist_policy(
         deadline_answer=deadline_answer,
         specialist_answer=specialist_answer,
     )
-    constraints, _ = build_constraints(constraint_set, project_ctx(), date(2026, 10, 1))
+    constraints, _ = build_constraints(constraint_set, project_context(), date(2026, 10, 1))
     assert constraints.deadline_mode == deadline_mode
     assert constraints.allow_contractors is contractors
     assert constraints.contractor_rate_cents == 9_000
@@ -217,7 +217,7 @@ def test_answers_set_deadline_and_specialist_policy(
 
 
 async def test_input_facts_reads_answers_and_confirmations() -> None:
-    ctx = project_ctx()
+    ctx = project_context()
     inp = make_input(
         tasks=(Task(str(uuid.uuid4()), "1.1", "Design", 5),),
         constraints=Constraints(budget_total_cents=ctx.budget_cents),

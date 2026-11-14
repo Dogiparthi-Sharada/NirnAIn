@@ -6,10 +6,10 @@ import uuid
 from dataclasses import dataclass, field
 
 from app.domain.ai import AiJob
-from app.domain.common import AiJobKind, JobStatus, OrgRole
+from app.domain.common import AiJobKind, JobStatus
 from app.repositories.ai_jobs import ActiveJob, ActiveJobExistsError
 from tests.support.clock import NOW
-from tests.support.store import Store
+from tests.support.store import ProjectScopedFake, Store
 
 
 # --------------------------------------------------------------------------- API
@@ -21,30 +21,21 @@ class JobData:
     race: bool = False
 
 
-class FakeJobs:
+class FakeJobs(ProjectScopedFake):
     def __init__(self, store: Store, data: JobData, user_id: uuid.UUID) -> None:
-        self.s, self.d, self.uid = store, data, user_id
-
-    def _role(self, project_id: uuid.UUID) -> OrgRole | None:
-        p = self.s.projects.get(project_id)
-        return self.s.role(p.org_id, self.uid) if p else None
-
-    async def project_exists(self, project_id: uuid.UUID) -> bool:
-        return self._role(project_id) is not None
-
-    async def can_write(self, project_id: uuid.UUID) -> bool:
-        return self._role(project_id) not in (None, OrgRole.VIEWER)
+        super().__init__(store, user_id)
+        self.data = data
 
     async def has_wbs(self, project_id: uuid.UUID) -> bool:
-        return self.d.has_wbs
+        return self.data.has_wbs
 
     async def active_job(
         self, project_id: uuid.UUID, kind: AiJobKind, stale_after_s: int
     ) -> ActiveJob | None:
-        return self.d.active
+        return self.data.active
 
     async def create(self, project_id: uuid.UUID, kind: AiJobKind) -> uuid.UUID:
-        if self.d.race:
+        if self.data.race:
             raise ActiveJobExistsError
         job = AiJob(
             id=uuid.uuid4(),
@@ -57,16 +48,16 @@ class FakeJobs:
             started_at=None,
             finished_at=None,
         )
-        self.d.jobs[job.id] = job
+        self.data.jobs[job.id] = job
         return job.id
 
     async def get(self, project_id: uuid.UUID, job_id: uuid.UUID) -> AiJob | None:
-        return self.d.jobs.get(job_id)
+        return self.data.jobs.get(job_id)
 
     async def latest(self, project_id: uuid.UUID, kind: AiJobKind) -> AiJob | None:
         rows = [
             j
-            for j in self.d.jobs.values()
+            for j in self.data.jobs.values()
             if j.project_id == project_id and j.kind == kind and self._role(project_id)
         ]
         return rows[-1] if rows else None

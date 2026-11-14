@@ -20,7 +20,7 @@ from app.optimization.explain import build_report
 from app.optimization.model import Task
 from app.optimization.solver import solve
 from app.repositories.optimization import OptimizationRepository
-from tests.support.connections import Conn, Rows, project_ctx
+from tests.support.connections import Conn, Rows, project_context
 from tests.support.solver_inputs import FAST, make_input
 
 
@@ -70,7 +70,7 @@ async def test_finished_work_is_loaded_done_at_its_applied_dates() -> None:
         Rows([]),  # constraint set
         Rows([]),  # milestones
     )
-    inp = await OptimizationRepository(connection).load_input(project_ctx(), date(2026, 10, 21))  # type: ignore[arg-type]
+    inp = await OptimizationRepository(connection).load_input(project_context(), date(2026, 10, 21))  # type: ignore[arg-type]
 
     assert [(task.code, task.done) for task in inp.tasks] == [("1.1.1", True), ("1.1.3", False)]
     finished = inp.tasks[0]

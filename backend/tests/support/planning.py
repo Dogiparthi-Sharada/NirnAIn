@@ -10,7 +10,6 @@ from typing import Any
 
 from sqlalchemy.exc import DBAPIError
 
-from app.domain.common import OrgRole
 from app.domain.planning import (
     CapacityEntry,
     ConstraintSet,
@@ -21,7 +20,7 @@ from app.domain.planning import (
     PoolEmployee,
 )
 from app.repositories.access import ProjectRef
-from tests.support.store import Store
+from tests.support.store import ProjectScopedFake, Store
 
 
 def p0001(message: str) -> DBAPIError:
@@ -44,25 +43,19 @@ class PlanStore:
     weeks: list[Sequence[date]] = field(default_factory=list)
 
 
-class FakePlanning:
+class FakePlanning(ProjectScopedFake):
     def __init__(self, store: Store, ps: PlanStore, user_id: uuid.UUID) -> None:
-        self.s, self.ps, self.uid = store, ps, user_id
-
-    def _role(self, project_id: uuid.UUID) -> OrgRole | None:
-        p = self.s.projects.get(project_id)
-        return self.s.role(p.org_id, self.uid) if p else None
+        super().__init__(store, user_id)
+        self.plans = ps
 
     async def project(self, project_id: uuid.UUID) -> ProjectRef | None:
-        p = self.s.projects.get(project_id)
+        p = self.store.projects.get(project_id)
         if p is None or self._role(project_id) is None:
             return None
         return ProjectRef(p.id, p.org_id, p.name, p.start_date, p.target_end_date, p.budget_cents)
 
-    async def can_write(self, project_id: uuid.UUID) -> bool:
-        return self._role(project_id) not in (None, OrgRole.VIEWER)
-
     async def constraints(self, project: ProjectRef) -> ConstraintSet:
-        return self.ps.constraints.get(project.id) or ConstraintSet(
+        return self.plans.constraints.get(project.id) or ConstraintSet(
             budget_total_cents=project.budget_cents,
             contingency_pct=0,
             labor_cap_cents=None,
@@ -78,11 +71,11 @@ class FakePlanning:
         )
 
     async def node_ids(self, project_id: uuid.UUID, ids: set[uuid.UUID]) -> set[uuid.UUID]:
-        return {i for i in ids if i in self.ps.nodes and self.ps.nodes[i][0] == project_id}
+        return {i for i in ids if i in self.plans.nodes and self.plans.nodes[i][0] == project_id}
 
     async def save_constraints(self, project_id: uuid.UUID, body: ConstraintSetInput) -> None:
-        previous = self.ps.constraints.get(project_id)
-        self.ps.constraints[project_id] = ConstraintSet.model_validate(
+        previous = self.plans.constraints.get(project_id)
+        self.plans.constraints[project_id] = ConstraintSet.model_validate(
             {
                 **(previous.model_dump(by_alias=False) if previous else {}),
                 **body.values(),
@@ -96,39 +89,39 @@ class FakePlanning:
         )
 
     async def capacity(self, project: ProjectRef, weeks: Sequence[date]) -> list[CapacityEntry]:
-        self.ps.weeks.append(weeks)
+        self.plans.weeks.append(weeks)
         return [
             CapacityEntry.model_validate({**e.model_dump(by_alias=False), "allocated_hours": 7.5})
-            for e in self.ps.team
+            for e in self.plans.team
         ]
 
     async def employees(self, org_id: uuid.UUID) -> list[PoolEmployee]:
-        return self.ps.team
+        return self.plans.team
 
     async def required_skills(self, project_id: uuid.UUID) -> dict[uuid.UUID, tuple[str, int]]:
-        return self.ps.required
+        return self.plans.required
 
     async def held_skills(self, org_id: uuid.UUID) -> dict[uuid.UUID, tuple[str, int]]:
-        return self.ps.held
+        return self.plans.held
 
     def _label(self, node_id: uuid.UUID) -> str:
-        return self.ps.nodes[node_id][1]
+        return self.plans.nodes[node_id][1]
 
     async def dependencies(self, project_id: uuid.UUID) -> list[Dependency]:
         return [
             d
-            for dep_id, row in self.ps.deps.items()
+            for dep_id, row in self.plans.deps.items()
             if row["project_id"] == project_id and (d := await self.dependency(dep_id)) is not None
         ]
 
     async def dependency_project(self, dependency_id: uuid.UUID) -> uuid.UUID | None:
-        row = self.ps.deps.get(dependency_id)
+        row = self.plans.deps.get(dependency_id)
         if row is None or self._role(row["project_id"]) is None:
             return None
         return uuid.UUID(str(row["project_id"]))
 
     async def dependency(self, dependency_id: uuid.UUID) -> Dependency | None:
-        row = self.ps.deps.get(dependency_id)
+        row = self.plans.deps.get(dependency_id)
         if row is None:
             return None
         return Dependency.model_validate(
@@ -141,10 +134,10 @@ class FakePlanning:
 
     async def create_dependency(self, project_id: uuid.UUID, body: DependencyCreate) -> uuid.UUID:
         for node in (body.predecessor_id, body.successor_id):
-            if self.ps.nodes.get(node, (None, ""))[0] != project_id:
+            if self.plans.nodes.get(node, (None, ""))[0] != project_id:
                 raise p0001("Work package not found in this project")
         dep_id = uuid.uuid4()
-        self.ps.deps[dep_id] = {
+        self.plans.deps[dep_id] = {
             "id": dep_id,
             "project_id": project_id,
             **body.model_dump(by_alias=False),
@@ -153,11 +146,11 @@ class FakePlanning:
         return dep_id
 
     async def update_dependency(self, dependency_id: uuid.UUID, changes: dict[str, Any]) -> bool:
-        self.ps.deps[dependency_id].update(changes)
+        self.plans.deps[dependency_id].update(changes)
         return True
 
     async def delete_dependency(self, dependency_id: uuid.UUID) -> bool:
-        return self.ps.deps.pop(dependency_id, None) is not None
+        return self.plans.deps.pop(dependency_id, None) is not None
 
 
 CONSTRAINTS: dict[str, Any] = {

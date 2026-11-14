@@ -1,4 +1,10 @@
-"""Moved test support."""
+"""Planning inputs and solve options for the optimizer tests.
+
+Purpose: Build small, readable optimizer inputs (two tasks, one link, two people by default) that
+each test varies with keyword overrides.
+How it fits: Imported by the solver, explain, remedies, inputs and job tests; layer: tests.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -48,14 +54,18 @@ def make_input(**overrides: Any) -> PlanningInput:
     return PlanningInput(**base)
 
 
-def with_constraints(inp: PlanningInput, **changes: Any) -> PlanningInput:
-    return dataclasses.replace(inp, constraints=dataclasses.replace(inp.constraints, **changes))
+def with_constraints(planning_input: PlanningInput, **changes: Any) -> PlanningInput:
+    """Return the input with some constraint fields changed."""
+    return dataclasses.replace(
+        planning_input, constraints=dataclasses.replace(planning_input.constraints, **changes)
+    )
 
 
 DATA = SkillRequirement("data", "Data Engineering", 3)
 
 
 def leo_martins(hours: float = 40) -> Employee:
+    """Return Leo Martins, a data engineer at the minimum level for data work, at `hours` a week."""
     return Employee(
         "leo",
         "Leo Martins",
