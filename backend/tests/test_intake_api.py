@@ -123,13 +123,13 @@ class FakeIntakes:
 
 class FakePlanLock:
     def __init__(self, data: IntakeStore) -> None:
-        self.d = data
+        self.data = data
 
     async def version(self, project_id: uuid.UUID) -> int | None:
-        return self.d.applied_version
+        return self.data.applied_version
 
     async def scope_item_version(self, item_id: uuid.UUID) -> int | None:
-        return self.d.applied_version
+        return self.data.applied_version
 
 
 class FakeIntaker:
