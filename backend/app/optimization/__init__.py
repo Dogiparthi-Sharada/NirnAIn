@@ -10,4 +10,9 @@ returns.
     baseline.py   "before" plan: forward pass with current owners, no levelling
     solver.py     CP-SAT model, status mapping, infeasibility explanation
     explain.py    UI payload (kpis, reassignments, scheduleChanges, utilization)
+    run_summary.py  timeline rows and plain-number summary added to the payload
+    overrides.py  per-run what-ifs (budget, deadline, durations, hours) and baseline owners
+    remedies.py   priced ways out of an infeasible plan ("What it would take")
+    inputs.py     facts behind the confirmation sheet, inputs fingerprint
+    input_sheet.py  confirmation sheet rows, sources and blockers
 """
