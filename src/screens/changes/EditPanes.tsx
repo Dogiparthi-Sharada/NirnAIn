@@ -238,7 +238,14 @@ export function EditsPane({ projectId, current, busy, onSubmit }: { projectId: s
             onCancel={() => setAdding(false)}
           />
         ) : (
-          <button className="btn sm sec mt8" id="chg-add-person" type="button" disabled={newcomers.length >= MAX_NEWCOMERS} onClick={() => setAdding(true)}>
+          <button
+            className="btn sm sec mt8"
+            id="chg-add-person"
+            type="button"
+            disabled={newcomers.length >= MAX_NEWCOMERS}
+            title={newcomers.length >= MAX_NEWCOMERS ? `At most ${MAX_NEWCOMERS} people join in one change.` : undefined}
+            onClick={() => setAdding(true)}
+          >
             + Add person
           </button>
         )}
