@@ -1,12 +1,14 @@
 /**
- * The bottom of step 5 (approved mockup views/constraints.js `conGate`): the red `#con-banner`,
- * the `#con-hint` status line, Back to WBS Builder and Run Optimization.
+ * The bottom of step 5: the `#con-banner` of missing inputs, the `#con-hint` status line, Back and Run Optimization.
  *
- * Gate rule: Run Optimization is never disabled. A click while inputs are missing opens the red
- * banner listing each one as a link that moves focus to where it is fixed (or opens step 4); the
- * banner shrinks as items are fixed and closes when none are left. The status line always says
- * what is missing, or that the inputs are ready and how many settings are flagged.
+ * Purpose: Run Optimization is never disabled: a click while inputs are missing opens the banner
+ * listing each one as a link to where it is fixed (or to step 4); the banner shrinks as items are
+ * fixed, and the status line always says what is missing or that the inputs are ready.
+ * How it fits: Port of the mockup's views/constraints.js `conGate`; rendered by
+ * `screens/Constraints.tsx` with the blockers from `lib/constraints.ts`; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { GateBanner, type GateItem } from '@/components/InputsKit'
 import type { GateBlocker } from '@/lib/constraints'
 

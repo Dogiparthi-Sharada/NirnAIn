@@ -1,13 +1,15 @@
 /**
- * "Constraint check": do any Must hold / Can flex choices need to change for this project to
- * finish as planned? (port of the mockup's views/optimize-advice.js)
+ * The "Constraint check" card: whether any Must hold / Can flex choice must change for the project to finish as planned.
  *
- * The confirmation sheet shows a one-line brief before the solver runs; the plan shows the
- * full card. Items come from `policyRisks()` (shared with Constraints) plus facts from the run
- * itself: peak load and budget headroom (summary), a go-live that moved past the deadline,
- * and a deadline that was only assumed hard. Levels: change = we recommend changing it,
- * check = confirm it is intended, decide = a trade-off only the project manager can make.
+ * Purpose: Before the solver runs the PM sees a one-line brief; the plan shows the full card.
+ * Items combine `policyRisks()` (shared with Constraints) with facts from the run: peak load,
+ * budget headroom, a go-live past the deadline and a deadline that was only assumed hard. Levels:
+ * change, check, or decide (a trade-off only the PM can make).
+ * How it fits: Port of the mockup's views/optimize-advice.js; used by `ConfirmSheet.tsx` and
+ * `PlanView.tsx`; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { Link } from 'react-router'
 import { POLICY_KEYS, POLICY_LABEL, POLICY_NAME, policyOf, policyRisks, type PolicyInputs, type PolicyRisk } from '@/lib/constraintPolicy'
 import { formatMoney } from '@/lib/format'

@@ -23,6 +23,7 @@ import WbsValidationCard from '@/components/WbsValidationCard'
 import { WbsSkillsOffBanner } from '@/components/WbsSkillPicks'
 import { errorMessage } from '@/lib/api'
 import { useCapacity, useCreateWbsNode, useMoveWbsNode, useProject, useScopeItems, useUpdateWbsNode, useWbs } from '@/lib/queries'
+import { toggledIn, withoutValue } from '@/lib/sets'
 import { useStepNav } from '@/lib/steps'
 import type { WbsNodePatch } from '@/lib/types'
 import { displayCode, movePosition, totalWeeks, useConfirmEstimates, useWbsSkills, wbsBlockers, weeksLabel, type WbsTreeNode } from '@/lib/wbs'
@@ -105,11 +106,7 @@ export default function WBSBuilder() {
   /** Adds a work package under a deliverable and expands it so the new row shows. */
   function addPackageUnder(parentId: string) {
     addOnce(() => Promise.resolve(parentId), 'New work package')
-    setCollapsed((previous) => {
-      const next = new Set(previous)
-      next.delete(parentId)
-      return next
-    })
+    setCollapsed((previous) => withoutValue(previous, parentId))
   }
 
   /** Adds to the selected deliverable (or the selected package's deliverable), else the last one. */
@@ -132,24 +129,14 @@ export default function WBSBuilder() {
 
   /** Collapses or expands a deliverable's work packages. */
   function toggleDeliverable(deliverableId: string) {
-    setCollapsed((previous) => {
-      const next = new Set(previous)
-      if (next.has(deliverableId)) next.delete(deliverableId)
-      else next.add(deliverableId)
-      return next
-    })
+    setCollapsed((previous) => toggledIn(previous, deliverableId))
   }
 
   /** Confirms one AI estimate, showing that row as busy until it is saved. */
   function confirmOne(nodeId: string) {
     setConfirming((previous) => new Set(previous).add(nodeId))
     confirmEstimates.mutate([nodeId], {
-      onSettled: () =>
-        setConfirming((previous) => {
-          const next = new Set(previous)
-          next.delete(nodeId)
-          return next
-        }),
+      onSettled: () => setConfirming((previous) => withoutValue(previous, nodeId)),
     })
   }
 

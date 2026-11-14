@@ -1,12 +1,15 @@
 /**
- * The Task dependencies card on step 5 (approved mockup views/constraints.js `#deps-body`): which
- * work package must finish (or start) before another, edited in place.
+ * The Task dependencies card on step 5: which work package must finish (or start) before another, edited in place.
  *
- * Dependencies always hold: the solver never starts a task before the work it depends on, so the
- * card has no Must hold / Can flex switch. Data: `GET/POST …/projects/{id}/dependencies` and
- * `PATCH/DELETE …/dependencies/{id}` (existing endpoints); the picker lists the WBS work packages.
- * Every change refreshes the step 6 confirmation sheet.
+ * Purpose: Dependencies always hold (the solver never starts a task before the work it depends
+ * on), so the card has no Must hold / Can flex switch; every change refreshes the step 6
+ * confirmation sheet.
+ * How it fits: Port of the mockup's views/constraints.js `#deps-body`; rendered by
+ * `screens/Constraints.tsx`; uses the dependency hooks and the WBS work packages from
+ * `lib/queries`; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useState } from 'react'
 import { errorMessage } from '@/lib/api'
 import { useInputsRefresh, useSaveFailure } from '@/lib/constraints'
@@ -17,12 +20,14 @@ import { toast } from '@/lib/toast'
 const TYPES = Object.keys(DEPENDENCY_TYPE_LABELS) as DependencyType[]
 const EMPTY_DRAFT = { predecessorId: '', successorId: '', type: 'FS' as DependencyType }
 
+/** The dependency type in words, with its lag when there is one ("Finish-to-Start (+2 days lag)"). */
 function typeText(dependency: Dependency): string {
   const lag = dependency.lagDays
   const lagText = lag === 0 ? '' : ` (${lag > 0 ? '+' : ''}${lag} day${Math.abs(lag) === 1 ? '' : 's'} lag)`
   return `${DEPENDENCY_TYPE_LABELS[dependency.type]}${lagText}`
 }
 
+/** A select of the four dependency types. */
 function TypeSelect({ id, label, value, onChange }: { id: string; label?: string; value: DependencyType; onChange: (type: DependencyType) => void }) {
   return (
     <select className="in sm" id={id} aria-label={label} value={value} onChange={(event) => onChange(event.target.value as DependencyType)}>
@@ -51,10 +56,12 @@ export function DependenciesCard({ projectId }: { projectId: string }) {
   const dependencies = dependenciesQuery.data ?? []
   const workPackages = (wbsQuery.data ?? []).filter((node) => node.level === 3)
 
+  /** Opens the type editor on one dependency. */
   function startEdit(dependency: Dependency) {
     setEditing({ id: dependency.id, type: dependency.type })
   }
 
+  /** Saves the edited type (closing without a request when it didn't change). */
   function saveEdit(dependency: Dependency) {
     if (!editing) return
     if (editing.type === dependency.type) {
@@ -73,6 +80,7 @@ export function DependenciesCard({ projectId }: { projectId: string }) {
     )
   }
 
+  /** Deletes a dependency and confirms it in a toast. */
   function remove(dependency: Dependency) {
     deleteDependency.mutate(dependency.id, {
       onSuccess: () => {
@@ -83,11 +91,13 @@ export function DependenciesCard({ projectId }: { projectId: string }) {
     })
   }
 
+  /** Opens an empty add form. */
   function openForm() {
     setFormError('')
     setDraft(EMPTY_DRAFT)
   }
 
+  /** Checks the new dependency (both ends picked, not itself, not a duplicate) and adds it. */
   function add() {
     if (!draft) return
     let problem = ''

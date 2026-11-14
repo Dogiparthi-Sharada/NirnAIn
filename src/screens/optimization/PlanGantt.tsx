@@ -1,12 +1,15 @@
 /**
- * Timeline by deliverable on Optimization Results (port of the mockup's `gantt()` in
- * views/optimize.js, without the sample week numbers).
+ * Timeline by deliverable on Optimization Results.
  *
- * The run's `result.schedule` lists every work package with its dates; bars here are grouped
- * by deliverable (earliest start to latest finish of its work packages). The axis starts on the
- * Monday of the first week and runs to the later of go-live and the deadline, with month labels
- * placed like the mockup's MONTHS row and a dashed red line at the deadline.
+ * Purpose: Bars group each deliverable's work packages (earliest start to latest finish) on an
+ * axis from the Monday of the first week to the later of go-live and the deadline, with month
+ * labels and a dashed red line at the deadline, so a slip is visible at a glance.
+ * How it fits: Port of the mockup's `gantt()` in views/optimize.js (without the sample week
+ * numbers); rendered by `PlanView.tsx` from `result.schedule`; dates via `dates.ts`;
+ * layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { formatDate } from '@/lib/format'
 import type { ScheduleItem } from '@/lib/optimize'
 import { DAY_MS, dayCount, dayValue, monthName, nextMonthStart, shortDay, weekStart } from './dates'
@@ -84,6 +87,7 @@ export function PlanGantt({ schedule, deadline }: { schedule: ScheduleItem[]; de
   const axisStart = weekStart(firstStart)
   // Inclusive end date, padded so the last bar and the deadline label never touch the edge.
   const totalDays = dayCount(axisStart, lastEnd) + 7
+  /** The horizontal position of a day offset on the axis, as a CSS percentage. */
   const percentAt = (offsetDays: number) => `${((offsetDays / totalDays) * 100).toFixed(2)}%`
   const deadlineOffset = deadline ? dayCount(axisStart, dayValue(deadline)) : null
 

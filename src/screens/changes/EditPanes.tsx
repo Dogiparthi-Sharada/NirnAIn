@@ -1,20 +1,25 @@
 /**
- * The structured inputs of "Report a change" (step 7): direct edits and a progress update.
+ * The structured inputs of "Report a change": direct edits and a progress update.
  *
- * Nothing here is parsed or guessed: the panes read the project's current inputs
- * (constraints, WBS, team), and send only the values that differ as `edits` to
- * POST /projects/{id}/changes through the `onSubmit` given by `ReportChange`. People can
- * join ("+ Add person", `TeamEdits.tsx`) or leave ("Remove") the project mid-way.
- * Progress is a percent per work package; the backend turns it into the remaining duration.
+ * Purpose: Nothing is parsed or guessed: the panes read the current inputs (constraints, WBS,
+ * team) and send only the values that differ. People can join or leave mid-way, a plan needs at
+ * least one person, and progress is a percent per work package that the backend turns into the
+ * remaining duration.
+ * How it fits: Rendered by `ReportChange.tsx`, whose `onSubmit` posts the `edits`; uses
+ * `TeamEdits.tsx` for newcomers; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useMemo, useState } from 'react'
 import { errorMessage } from '@/lib/api'
 import { useChangeTeam, type ChangeEdits, type NewMember, type PlanVersion } from '@/lib/changes'
 import { formatDate, formatMoney } from '@/lib/format'
 import { useConstraints, useWbs } from '@/lib/queries'
+import { toggledIn } from '@/lib/sets'
 import type { ConstraintSet, WbsNode } from '@/lib/types'
+import { DAYS_PER_WEEK } from '@/lib/wbs'
 import { NewcomerForm, NewcomerList } from './TeamEdits'
-import { DAYS_PER_WEEK, weeks } from './ui'
+import { weeks } from './ui'
 
 // At most this many people join in one change (the server's limit).
 const MAX_NEWCOMERS = 10
@@ -46,6 +51,7 @@ function parseDollars(raw: string): number | null {
   return Number.isFinite(value) && value >= 0 ? Math.round(value * (thousands ? 1000 : 1) * 100) : NaN
 }
 
+/** Loading and error states while the project's inputs load. */
 function InputsState({ loading, error, retry }: { loading: boolean; error: unknown; retry: () => void }) {
   if (loading) {
     return (
@@ -117,13 +123,8 @@ export function EditsPane({ projectId, current, busy, onSubmit }: { projectId: s
   if (leaving.size) edits.removeMembers = [...leaving]
   // Business rule (the server checks it too): a plan needs at least one person.
   const nobodyLeft = leaving.size > 0 && team.data.length - leaving.size + newcomers.length < 1
-  const toggleLeaving = (employeeId: string) =>
-    setLeaving((previous) => {
-      const next = new Set(previous)
-      if (next.has(employeeId)) next.delete(employeeId)
-      else next.add(employeeId)
-      return next
-    })
+  /** Marks a team member as leaving the project, or not. */
+  const toggleLeaving = (employeeId: string) => setLeaving((previous) => toggledIn(previous, employeeId))
   if (workPackage && workPackageDays !== null && Number.isFinite(workPackageDays) && workPackageDays >= 0 && workPackageDays !== workPackage.durationDays) edits.durationDays = { [workPackage.id]: workPackageDays }
   const invalid = nobodyLeft || Object.keys(hoursProblems).length > 0 || (budgetCents !== null && Number.isNaN(budgetCents)) || (workPackageDays !== null && (!Number.isFinite(workPackageDays) || workPackageDays < 0))
   const was = { fontWeight: 400 }

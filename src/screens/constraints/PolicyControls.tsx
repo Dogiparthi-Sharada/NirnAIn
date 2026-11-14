@@ -1,13 +1,14 @@
 /**
- * The Must hold / Can flex controls on the Budget, Deadline, Team & capacity and Required skills
- * cards (approved mockup views/constraints.js `renderPolicy`).
+ * The Must hold / Can flex controls of the Budget, Deadline, Team & capacity and Required skills cards.
  *
- * Must hold = a hard constraint: the solver never breaks it. Can flex = a soft constraint: it may
- * bend, with a penalty, if that is the only way. The PM decides because it is a business call;
- * each card explains the current choice, shows our recommended setting and why, and warns when
- * the combination would make the plan misleading. The wording and the warnings come from
- * `lib/constraintPolicy.ts` (shared with Optimization Results), so both screens agree.
+ * Purpose: The PM decides because it is a business call: each card explains the current choice,
+ * shows the recommended setting and why, and warns when the combination would make the plan
+ * misleading, with the same wording as Optimization Results.
+ * How it fits: Port of the mockup's views/constraints.js `renderPolicy`; used by the step 5 cards;
+ * wording and warnings from `lib/constraintPolicy.ts`; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { POLICY_LABEL, POLICY_NAME, policyHelp, policyOf, type PolicyInputs, type PolicyKey, type PolicyMode, type PolicyRisk } from '@/lib/constraintPolicy'
 
 const MODES: PolicyMode[] = ['hard', 'soft']

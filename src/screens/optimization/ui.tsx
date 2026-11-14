@@ -1,7 +1,13 @@
 /**
- * Small building blocks shared by the Optimization Results states: provenance chips, the toast,
- * and the error/loading notes, all in the approved design's classes (`.chip`, `.toast`, `.alert`).
+ * Small building blocks of the Optimization Results states: provenance chips and the error and loading notes.
+ *
+ * Purpose: Keeps the states in the approved design's classes (`.chip`, `.alert`) with one wording
+ * for where an input came from.
+ * How it fits: Used by `screens/OptimizationResults.tsx` and `screens/optimization/*`;
+ * layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import type { ReactNode } from 'react'
 import { errorMessage } from '@/lib/api'
 import type { InputSource } from '@/lib/optimize'

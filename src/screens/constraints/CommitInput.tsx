@@ -1,14 +1,15 @@
 /**
- * An input that saves when you leave it (or press Enter), used for every inline edit on the
- * Constraints screen: hours per week, skill names, budget amounts, dates and the specialist rate.
+ * An input that saves when you leave it (or press Enter), used for every inline edit on the Constraints screen.
  *
- * Why: the approved design edits values in place without a Save button. Saving on every
- * keystroke would send half-typed values to the server, so the typed text stays a local draft
- * until the PM is done. Escape drops the draft. When the parent rejects a value it either explains
- * why in a toast and lets the field fall back to the saved value (like the design's "reverted"
- * input), or returns `false` from `onCommit` to keep the typed text next to an inline message so
- * the PM can correct it.
+ * Purpose: The design edits values in place without a Save button; saving on every keystroke would
+ * send half-typed values, so the typed text stays a local draft until the PM is done. Escape drops
+ * the draft; a rejected value either falls back to the saved one (explained in a toast) or stays
+ * next to an inline message when `onCommit` returns `false`.
+ * How it fits: Used by the cards in `screens/constraints/*` for hours, skill names, budget
+ * amounts, dates and the specialist rate; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useState, type InputHTMLAttributes } from 'react'
 
 type NativeProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'defaultValue' | 'onChange' | 'onBlur' | 'onKeyDown'>
@@ -29,6 +30,9 @@ export interface CommitInputProps extends NativeProps {
 export function CommitInput({ value, onCommit, onRevert, ...inputProps }: CommitInputProps) {
   const [draft, setDraft] = useState<string | null>(null)
 
+  /**
+   * Saves the draft when it changed; keeps the typed text when the parent refuses it, else drops the draft.
+   */
   function commit() {
     if (draft === null) return
     if (draft.trim() === value.trim()) onRevert?.()

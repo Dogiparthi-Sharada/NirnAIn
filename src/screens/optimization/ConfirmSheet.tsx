@@ -1,13 +1,16 @@
 /**
- * The confirmation sheet of Optimization Results (`#opt-confirm`; port of `renderConfirm()` in the
- * mockup's views/optimize.js): "Check the inputs the solver will use".
+ * The confirmation sheet of Optimization Results: "Check the inputs the solver will use".
  *
- * Nothing runs until the project manager approves this exact set of inputs. Rows come from
- * `GET …/optimization/inputs` with a provenance chip each; `ready: false` disables approval and
- * lists what is blocking, each with a link to the step that fixes it. The Constraint check brief
- * repeats the Must hold / Can flex warnings from Constraints. A failed start (422 with `missing`,
- * 403, 409) is explained here, below the table.
+ * Purpose: Nothing runs until the project manager approves this exact set of inputs: each row
+ * shows where it came from, `ready: false` disables approval and lists what blocks it with links
+ * to the step that fixes it, and a failed start (422 with `missing`, 403, 409) is explained below
+ * the table.
+ * How it fits: Port of `renderConfirm()` in the mockup's views/optimize.js (`#opt-confirm`);
+ * rendered by `screens/OptimizationResults.tsx`; repeats the Constraint check brief;
+ * layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import type { UseQueryResult } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { errorMessage, isApiError } from '@/lib/api'

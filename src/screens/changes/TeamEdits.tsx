@@ -1,23 +1,20 @@
 /**
- * People joining the project in a step 7 "Edit inputs" change: the "+ Add person" form and the
- * list of newcomers the change will bring in.
+ * People joining the project in a step 7 change: the "+ Add person" form and the list of newcomers.
  *
- * Why: after Plan v1 the team screen is read-only, so a mid-project hire, specialist or
- * contractor is recorded as a change, re-planned and approved here. How it fits: `EditsPane`
- * keeps the newcomers and sends them as `edits.addMembers` (POST /projects/{id}/changes); the
- * backend reserves an employee for each and adds them to the team when the change is approved.
- * The form reuses the Team screen's `.member-form` / `.skill-picks` markup and checks what it
- * can before adding (name, role, no second person with the same name, whole hours 1–80, a
- * contractor's rate),
- * listing every problem at once like the Team screen. Business rules (round 2): an employee is
- * costed from their company record, so only a contractor has a rate field; it may be left
- * empty when the project has a contractor rate, which then applies. Skills are picked from
- * the project's skill list.
+ * Purpose: After Plan v1 a mid-project hire, specialist or contractor is recorded as a change,
+ * re-planned and approved. The form checks what it can before adding and lists every problem at
+ * once; only a contractor has a rate, which may be left empty when the project has a contractor
+ * rate.
+ * How it fits: Used by `EditPanes.tsx`, which sends newcomers as `edits.addMembers`; reuses the
+ * Team screen's `.member-form` / `.skill-picks` markup; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useEffect, useRef, useState } from 'react'
 import type { NewMember, WorkerType } from '@/lib/changes'
 import { formatMoney } from '@/lib/format'
 import { isWholeHours, useProjectSkills } from '@/lib/inputs'
+import { toggledIn } from '@/lib/sets'
 import { memberSummary } from './ui'
 
 const NEW_MEMBER_HOURS = '40'
@@ -65,15 +62,12 @@ export function NewcomerForm({
     nameRef.current?.focus()
   }, [])
 
+  /** Picks or unpicks a skill for the newcomer. */
   function togglePick(skillName: string) {
-    setPicked((previous) => {
-      const next = new Set(previous)
-      if (next.has(skillName)) next.delete(skillName)
-      else next.add(skillName)
-      return next
-    })
+    setPicked((previous) => toggledIn(previous, skillName))
   }
 
+  /** Checks the form and adds the newcomer, or lists every problem. */
   function add() {
     const fullName = name.trim().replace(/\s+/g, ' ')
     const roleTitle = role.trim()

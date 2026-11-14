@@ -1,11 +1,14 @@
 /**
- * Before/after Gantt of step 7 (port of the mockup's `gantt(rows, {ghost, deadline, today})`).
+ * Before/after Gantt of step 7: the new plan over the plan in force, by deliverable.
  *
- * Work packages from GET /changes/{id}/compare are grouped under their deliverable, the
- * in-force plan is drawn dashed underneath, moved bars use the lighter red, and the
- * deadline / today markers are overlaid. The time axis fits the plans instead of the
- * mockup's fixed 40 weeks.
+ * Purpose: The in-force plan is drawn dashed underneath and moved bars use the lighter red, with
+ * the deadline and today marked, so the PM sees what a change moves; the axis fits the plans
+ * instead of the mockup's fixed 40 weeks.
+ * How it fits: Port of the mockup's `gantt(rows, {ghost, deadline, today})`; rendered by
+ * `PlanComparison.tsx` from the compare rows; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import type { CompareRow } from '@/lib/changes'
 import { DAY_MS, day, monthName, shortDay } from './ui'
 
@@ -23,6 +26,7 @@ interface GanttRow {
 
 const MAX_MONTH_LABELS = 12
 
+/** Stretches a span to cover `start`–`end` (or starts one). */
 function widen(span: Span | null, start: number, end: number): Span {
   return span ? { start: Math.min(span.start, start), end: Math.max(span.end, end) } : { start, end }
 }
@@ -65,8 +69,11 @@ export function PlanGantt({ rows, deadline }: { rows: CompareRow[]; deadline: st
   const min = Math.min(...spans.map((span) => span.start))
   const max = Math.max(...spans.map((span) => span.end + DAY_MS), deadlineDay ?? 0)
   const total = Math.max(max - min, DAY_MS)
+  /** The horizontal position of a moment on the axis, as a CSS percentage. */
   const left = (time: number) => `${(((time - min) / total) * 100).toFixed(2)}%`
+  /** The width of a span on the axis (inclusive of its last day), as a CSS percentage. */
   const width = (span: Span) => `${(((span.end - span.start + DAY_MS) / total) * 100).toFixed(2)}%`
+  /** True when a moment falls within the axis. */
   const inside = (time: number | null): time is number => time !== null && time >= min && time <= max
 
   return (

@@ -1,8 +1,12 @@
 /**
- * Side cards of the step 7 impact view: what a change touches, what the re-plan will
- * regenerate, and why a re-plan produced no plan. Display only; data comes from the
- * change's `impact` and C1's optimization run.
+ * Side cards of the step 7 impact view: what a change touches, what the re-plan regenerates and why no plan was found.
+ *
+ * Purpose: Gives the PM the reach of a change before re-planning; display only, from the change's
+ * `impact` and the re-plan run.
+ * How it fits: Rendered by `ChangeImpact.tsx`; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import type { ChangeRequest, DetectedChange } from '@/lib/changes'
 import { formatDate, formatMoney } from '@/lib/format'
 import type { OptimizationRun } from '@/lib/types'
@@ -42,6 +46,7 @@ export function Touches({ change, baseVersion }: { change: ChangeRequest; baseVe
 
 /** The mockup's "What will be regenerated" tiles, filled from the detected changes. */
 export function Regenerated({ changes }: { changes: DetectedChange[] }) {
+  /** How many detected changes match. */
   const count = (matches: (change: DetectedChange) => boolean) => changes.filter(matches).length
   const budget = count((change) => change.kind === 'budget')
   const deadline = count((change) => change.kind === 'deadline')

@@ -1,22 +1,17 @@
 /**
- * Step 6, Optimization Results (port of the approved mockup's views/optimize*.js).
+ * Step 6, Optimization Results: confirm the inputs, solve, and review, apply or export the plan.
  *
- * One screen, four states, picked from the latest run and the inputs sheet:
- * 1. confirm — "Check the inputs the solver will use": shown when there is no run yet, when the
- *    inputs changed after the latest run, or after "Run again". Approving starts a run from the
- *    inputs the sheet shows: their hash goes along, and the server refuses (409, the sheet reloads)
- *    when they changed since.
- * 2. solving — while the run is queued or running (`useLatestRun` polls it).
- * 3. infeasible — the conflicting constraints and priced remedies; a remedy starts a new run.
- * 4. plan — KPIs, the ways to keep the date when it slips, Constraint check, timeline, details,
- *    rate confirmation, Apply and Export. A remedy picked there starts a new run, as in 3.
- * A failed or timed-out run shows its error with "Run again".
- *
- * Inputs stay editable after a plan is applied, so when the plan in force no longer matches them
- * (`hash !== appliedHash` on the inputs sheet) the plan view says so and offers a re-run. A plan not
- * applied yet that was solved from other inputs (`hash !== run.options.inputsHash`) can't be applied
- * (the server refuses it too): Apply is disabled with the reason, next to "Run again".
+ * Purpose: One screen with four states picked from the latest run and the inputs sheet: confirm
+ * (nothing runs until the PM approves this exact set of inputs; the server refuses with 409 when
+ * they changed since), solving, infeasible (conflicts and priced remedies) and plan. The plan in
+ * force says when the inputs changed after it was applied, and a plan solved from other inputs
+ * can't be applied.
+ * How it fits: Port of the mockup's views/optimize*.js; route `projects/:projectId/optimization`
+ * in `App.tsx`; the states live in `screens/optimization/*` and the data in `lib/optimize.ts` and
+ * `lib/queries`; layer: screen.
+ * Created: 2026-09-24 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useRef, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { policyRisks } from '@/lib/constraintPolicy'

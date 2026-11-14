@@ -1,18 +1,17 @@
 /**
- * Step 5, Constraints (port of the approved mockup's views/constraints.js and
- * constraints-team.js), on live data: the limits the plan must respect, the two questions that
- * change the plan, the team, the skills, the task dependencies, and the gate to step 6.
+ * Step 5, Constraints: the limits the plan must respect, the questions that change it, the team, skills, dependencies and the gate to step 6.
  *
- * Each limit (budget, deadline, capacity, skills) is Must hold (a hard constraint: the solver
- * never breaks it) or Can flex (a soft constraint: it may bend, with a penalty, if that is the
- * only way); `lib/constraintPolicy.ts` recommends a setting and warns about misleading
- * combinations. The cards live in `screens/constraints/*`; the rules (saving, the gate, the
- * questions) in `lib/constraints.ts`.
- *
- * Gate: Run Optimization is never disabled; a blocked click opens `#con-banner` with a link to
- * each missing input. The inputs stay editable after a plan version is applied; a banner then says
- * that changes take effect once step 6 re-runs and the result is applied as the next version.
+ * Purpose: Each limit is Must hold (the solver never breaks it) or Can flex (it may bend, with a
+ * penalty, if that is the only way), with a recommended setting and warnings about misleading
+ * combinations. Run Optimization is never disabled: a blocked click opens `#con-banner` with a
+ * link to each missing input. Inputs stay editable after a plan is applied; changes take effect
+ * when step 6 re-runs.
+ * How it fits: Port of the mockup's views/constraints.js and constraints-team.js; route
+ * `projects/:projectId/constraints` in `App.tsx`; the cards live in `screens/constraints/*` and
+ * the rules (saving, the gate, the questions) in `lib/constraints.ts`; layer: screen.
+ * Created: 2026-09-24 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router'
 import { Crumb, PlanInForceBanner } from '@/components/InputsKit'
@@ -76,6 +75,7 @@ export default function Constraints() {
     serverBlocking: sheetQuery.data?.blocking ?? [],
   })
 
+  /** Saves a partial change to the constraint set (merged into the cached set first). */
   function save(changes: ConstraintChanges) {
     editor.mutate(changes)
   }

@@ -1,18 +1,16 @@
 /**
- * "Ways to keep the date" on Optimization Results: shown on a plan that finishes after the date it
- * tries to keep (contract D2). It says by how much, lists each priced, re-solved way to keep the
- * date (bring in a contractor, overtime up to 25%, …) with its finish date and extra cost, and
- * offers to accept the later date instead.
+ * "Ways to keep the date": the priced, re-solved options when a plan finishes after the date it tries to keep.
  *
- * Business rule: the project manager decides; nothing is chosen automatically. "Use this option"
- * starts a new run with that remedy; "Accept" applies this plan as it is. Styled as the approved
- * mockup's advice card ("Your call", views/optimize-advice.js).
- *
- * Also shared with the infeasible states of step 6 (`RunStates.tsx`) and step 7
- * (`changes/KeepDate.tsx`): wording that follows the kind of limit the plan runs into (budget,
- * date, skills or hours, read from the solver's conflicts) and the round-3 "Change these
- * together" option (R6 `combined`), which lists every change it makes.
+ * Purpose: The project manager decides and nothing is chosen automatically: the card says by how
+ * much the plan slips, lists each way to keep the date (a contractor, overtime up to 25%, or
+ * several changes together) with its finish date and extra cost, and offers to accept the later
+ * date instead (contract D2). The wording follows the kind of limit the plan runs into.
+ * How it fits: Styled as the mockup's "Your call" advice card (views/optimize-advice.js); rendered
+ * by `PlanView.tsx` and shared with `RunStates.tsx` and step 7's `screens/changes/KeepDate.tsx`;
+ * layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { formatDate, formatMoney } from '@/lib/format'
 import type { DateSlip, RemedyId } from '@/lib/optimize'
 import { ProblemAlert } from './ui'
@@ -51,6 +49,7 @@ export interface BlockerWording {
   none: string
 }
 
+/** The text with its first letter in upper case. */
 const capitalized = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)
 
 /**

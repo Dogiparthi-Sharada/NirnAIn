@@ -17,6 +17,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch, errorMessage, isApiError } from './api'
 import { useProjectSkills, type ProjectSkill } from './inputs'
 import { queryKeys } from './queries'
+import { toggledIn } from './sets'
 import type { WbsNode, WbsSkill } from './types'
 
 /** Durations are stored in working days; the builder shows weeks. */
@@ -191,12 +192,7 @@ export function useSkillPicks(current: WbsSkill[]) {
 
   /** Picks or unpicks a skill (names compare case-insensitively). */
   function toggle(name: string) {
-    setPicked((previous) => {
-      const next = new Set(previous)
-      if (next.has(skillNameKey(name))) next.delete(skillNameKey(name))
-      else next.add(skillNameKey(name))
-      return next
-    })
+    setPicked((previous) => toggledIn(previous, skillNameKey(name)))
   }
 
   /** The names to save, or null when the PM changed nothing. */

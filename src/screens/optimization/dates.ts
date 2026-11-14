@@ -1,7 +1,11 @@
 /**
- * Calendar-date helpers for the results screen (timeline axis, advice wording).
- * Dates on the wire are ISO `YYYY-MM-DD` calendar days; all maths is done in UTC so a
+ * Calendar-date helpers for the results screen: the timeline axis and the advice wording.
+ *
+ * Purpose: Dates on the wire are ISO `YYYY-MM-DD` calendar days; all maths is done in UTC so a
  * negative-offset time zone never shifts a bar or a label by a day.
+ * How it fits: Used by `PlanGantt.tsx`, `ConstraintCheck.tsx` and `KeepDateCard.tsx`;
+ * layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
 
 export const DAY_MS = 86_400_000
