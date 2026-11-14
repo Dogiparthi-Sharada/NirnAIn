@@ -81,7 +81,7 @@ export function KeepDateCard({
           <div className="adv-why">{remedy.detail}</div>
           <RemedyChanges option={remedy} />
           <div className="adv-fix">
-            Finishes {formatDate(remedy.completionDate)} &middot; {optionCost(remedy)}
+            Finishes {formatDate(remedy.completionDate)} &middot; {optionCost(remedy, infeasible)}
           </div>
         </div>
       ))}

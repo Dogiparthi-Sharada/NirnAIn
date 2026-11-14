@@ -142,12 +142,14 @@ const OVERTIME_HOURS = /([\d.,]+) overtime hours?/
 /**
  * What an option costs against the plan. Overtime is paid (1.5x for employees), so it always
  * shows its hours and never "no extra cost": when it costs nothing extra overall, that is because
- * it replaces other paid hours, and the text says so.
+ * it replaces other paid hours, and the text says so. With no plan to compare against (an
+ * infeasible run, `wholePlan`), the cost is the whole plan's.
  */
-export function optionCost(option: PricedOption): string {
+export function optionCost(option: PricedOption, wholePlan = false): string {
   if (option.costCents == null) return 'cost not priced'
   const hours = option.id === 'overtime' ? OVERTIME_HOURS.exec(option.detail)?.[1] : undefined
   const paid = hours ? `${hours} paid overtime hours \u00B7 ` : ''
+  if (wholePlan) return `${paid}about ${formatMoney(option.costCents)} in total`
   if (option.costCents > 0) return `${paid}+${formatMoney(option.costCents)} extra`
   if (option.id === 'overtime') {
     const total = option.costCents < 0 ? `${formatMoney(-option.costCents)} less in total` : 'same total cost'
