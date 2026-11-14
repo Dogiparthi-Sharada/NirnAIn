@@ -91,7 +91,7 @@ All endpoints are under `/api/v1` except health. JSON uses camelCase. Errors are
 | GET | `/api/v1/projects/{projectId}/optimization/runs/latest` | Latest run, or 404 when there are none |
 | GET | `/api/v1/projects/{projectId}/optimization/runs/{runId}` | One run |
 
-| POST | `/api/v1/projects/{projectId}/documents` | Multipart `file`. 201 + `SourceDocument`. 403 not a writer, 404 project not visible, 413 over 50 MB, 415 unsupported type. |
+| POST | `/api/v1/projects/{projectId}/documents` | Multipart `file`. 201 + `SourceDocument`. 403 not a writer, 404 project not visible, 413 over 100 MB, 415 video or unsupported type. |
 | GET | `/api/v1/projects/{projectId}/documents` | Uploaded documents, newest first (pasted notes are not listed) |
 | DELETE | `/api/v1/documents/{documentId}` | 204. 403 not a writer, 404 not visible. |
 | POST | `/api/v1/projects/{projectId}/intake/runs` | `{text}` (may be empty when an upload was read; 422 when there is nothing to analyze). 202 + `IntakeRun`, extracted in the background. 409 a run is active. |
@@ -133,15 +133,24 @@ and before answering 409, runs stuck in queued/running for longer than
 
 `POST .../documents` keeps only the text of an upload (no object storage yet):
 PDF (pypdf), Word `.docx` (paragraphs and table cells), `.txt`/`.md`/`.vtt`/`.srt`
-transcripts (WebVTT/SRT headers, cue numbers and timings removed). The kind comes
-from the extension, then the MIME type. Text is capped at 200 000 characters per
-file. Audio is stored as a failed extraction ("Audio transcription is not available
-yet."), as are scanned or corrupt files, always with a fixed message.
+transcripts (WebVTT/SRT headers, cue numbers and timings removed, consecutive
+captions of the same speaker merged into one line). The kind comes from the
+extension, then the MIME type. Files may be up to 100 MB ("Files can be at most
+100 MB."): a larger declared Content-Length is refused before reading, the body is
+otherwise counted as it streams in, and the spooled file is parsed in place (text
+files: the first 8 MB). Text is capped at 200 000 characters per file. Video
+(`.mp4 .mov .m4v .avi .mkv .wmv`, `.webm` unless `audio/webm`, any `video/*` type)
+is refused with 415 ("MP4 and other video files are not supported. Upload the
+meeting's transcript (.vtt, .srt or .txt) instead."). Audio is stored as a failed
+extraction ("Audio transcription is not available yet."), as are scanned or
+corrupt files, always with a fixed message. The same size and video rules apply to
+`POST /orgs/{orgId}/project-drafts/extract`.
 `SourceDocument = {id, projectId, kind: pdf|docx|transcript|audio, title, mimeType,
 sizeBytes, extractionStatus: succeeded|failed, extractionError, chars, createdAt}`.
 
-An intake run reads its own pasted notes plus every upload whose text was read,
-each as `<document title="…">` inside one `<project_notes>` block (≤ 400 000
+An intake run reads its own pasted notes plus every upload whose text was read
+(transcripts, including captions pasted as notes, first reduced to one line per
+speaker turn), each as `<document title="…">` inside one `<project_notes>` block (≤ 400 000
 characters; longer notes are cut longest-document-first, with a note saying so).
 The worker (`app/jobs/intake.py`) writes results on a service connection:
 
@@ -149,11 +158,19 @@ The worker (`app/jobs/intake.py`) writes results on a service connection:
   its evidence. A quote is kept only if it really occurs in the notes (ignoring
   case, whitespace and typographic quotes); otherwise the item becomes
   `inferred` with "No exact quote found in the notes." (`app/ai/evidence.py`).
-- Without a key, a rule-based extractor runs (`app/ai/intake_rules.py`, run
-  `model = "rules"`): bullets under OBJECTIVES/GOALS, REQUIREMENTS, DELIVERABLES,
+- Without a key, or when the Claude call fails (API error, refusal, invalid
+  answer; logged), a rule-based extractor runs (`app/ai/intake_rules.py`, run
+  `model = "rules"`, no tokens). Every item is `stated` and quotes the notes
+  verbatim. Bullets under OBJECTIVES/GOALS, REQUIREMENTS, DELIVERABLES,
   CONSTRAINTS/BUDGET/TIMELINE, RISKS/CONCERNS and OPEN ITEMS/UNKNOWNS/QUESTIONS
-  headings become `stated` items quoting the bullet; a bullet naming money or a
-  deadline under any other heading also becomes a constraint.
+  headings take that category (plus a constraint when they name money or a
+  deadline). Everything else, and transcripts always, is read sentence by sentence
+  without speaker labels (`app/ai/intake_sentences.py`) and classified by the first
+  matching keyword rule (`app/ai/intake_keywords.py`): missing info (don't know, not
+  sure, TBD, unclear, open questions), risk, constraint (budget, amounts, deadlines,
+  "only N"), objective, deliverable, requirement; sentences matching nothing are
+  skipped. Near-duplicates count once and a run keeps at most 60 items, shared
+  fairly between the categories.
 
 `ScopeItem` carries `sourceQuote`, `evidence` (`stated` | `inferred` | `flagged` |
 null for items added by hand), `evidenceNote`, `suggestedText` (flagged items: the
