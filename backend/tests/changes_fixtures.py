@@ -267,6 +267,9 @@ class FakeChanges:
         for member in overrides.add_members or []:
             self.change_store.employees[member.employee_id]["active"] = True
 
+    async def record_inputs_in_force(self, run_id: uuid.UUID, saved_inputs_hash: str) -> None:
+        self.change_store.runs[run_id]["applied_inputs_hash"] = saved_inputs_hash
+
     async def reserve_members(
         self, project: ProjectRef, found: list[DetectedChange]
     ) -> list[DetectedChange]:

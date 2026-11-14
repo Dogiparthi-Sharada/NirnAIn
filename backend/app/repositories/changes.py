@@ -169,6 +169,24 @@ class ChangeRepository(ChangeTeamWrites):
         """
         await self._connection.execute(sa.select(sa.func.public.apply_optimization_run(run_id)))
 
+    async def record_inputs_in_force(self, run_id: uuid.UUID, saved_inputs_hash: str) -> None:
+        """Remember the inputs hash the plan came into force with.
+
+        Approval writes the change's values into the saved inputs, so the hash the re-plan
+        was solved from is no longer the hash of the inputs behind the new plan. Step 6
+        compares against this one ("Inputs changed since Plan vN" must stay quiet).
+        """
+        runs = optimization_runs
+        await self._connection.execute(
+            sa.update(runs)
+            .where(runs.c.id == run_id)
+            .values(
+                options=sa.func.coalesce(runs.c.options, sa.text("'{}'::jsonb")).op("||")(
+                    sa.func.jsonb_build_object("appliedInputsHash", saved_inputs_hash)
+                )
+            )
+        )
+
     async def write_overrides(self, project: ProjectRef, overrides: PlanOverrides) -> None:
         """The approved change becomes the project's inputs for every later run:
         constraint set budget / must-finish-by (and the policy stated with them), WBS

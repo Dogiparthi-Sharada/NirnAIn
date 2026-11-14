@@ -113,6 +113,8 @@ def test_change_flow_notes_to_approved_plan(
     )
     assert change_store.applied == [plan_v2_run]
     assert change_store.runs[plan_v2_run]["version"] == 2
+    # Plan v2 stands on the inputs the approval saved, so step 6 doesn't call it outdated.
+    assert change_store.runs[plan_v2_run]["applied_inputs_hash"] == change_store.inputs_hash
     assert change_store.written == [
         PlanOverrides(
             budget_total_cents=36_500_000, duration_days={str(SALESFORCE): 0, str(SAP): 30}

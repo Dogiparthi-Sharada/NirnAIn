@@ -225,7 +225,10 @@ class OptimizationRepository:
         row = (await self._conn.execute(statement)).first()
         if row is None:
             return None
-        inputs_hash = (row.options or {}).get("inputsHash")
+        options = row.options or {}
+        # A change approved on step 7 records the inputs it put in force; otherwise the
+        # plan stands on the inputs it was solved from.
+        inputs_hash = options.get("appliedInputsHash") or options.get("inputsHash")
         return AppliedRun(row.id, str(inputs_hash) if inputs_hash else None)
 
     async def change_request_status(

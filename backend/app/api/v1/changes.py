@@ -258,6 +258,9 @@ async def approve_change(
     await changes.write_overrides(project, overrides)
     await changes.add_requirements(project.id, requirements_to_add(change.impact))
     await changes.release_members(project, unused_reservations(change.impact, overrides))
+    # The plan in force now stands on the inputs the approval just saved.
+    in_force_hash = await changes.saved_inputs_hash(project, datetime.now(UTC).date())
+    await changes.record_inputs_in_force(run_id, in_force_hash)
     await changes.decide(change_id, ChangeStatus.APPROVED, run_id)
     return await _change(changes, change_id)
 
