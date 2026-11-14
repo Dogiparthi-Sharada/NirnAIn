@@ -26,7 +26,7 @@ export function Touches({ change, baseVersion }: { change: ChangeRequest; baseVe
         <Chip kind="default">People</Chip>
         <div>
           {affects.people.length ? affects.people.map((person) => person.name).join(', ') : 'Nobody directly'}
-          <small>Owners of that work, and anyone whose hours change.</small>
+          <small>Owners of that work, anyone whose hours change, and who joins or leaves.</small>
         </div>
       </div>
       <div className="risk">
@@ -48,15 +48,22 @@ export function Regenerated({ changes }: { changes: DetectedChange[] }) {
   const effort = count((change) => change.kind === 'duration' && change.to !== 0)
   const done = count((change) => change.kind === 'duration' && change.to === 0)
   const people = count((change) => change.kind === 'capacity')
-  const scope = count((change) => change.kind === 'scope')
+  const joining = count((change) => change.kind === 'team' && change.action === 'add')
+  const leaving = count((change) => change.kind === 'team' && change.action === 'remove')
+  const scope = count((change) => change.kind === 'scope' && change.action !== 'remove')
+  const team = [
+    joining ? `${joining} join${joining > 1 ? '' : 's'}` : '',
+    leaving ? `${leaving} leave${leaving > 1 ? '' : 's'}` : '',
+    people ? `${people} ${people > 1 ? 'people’s' : 'person’s'} hours` : '',
+  ].filter(Boolean)
   const limits = [budget ? 'Budget' : '', deadline ? 'deadline' : ''].filter(Boolean).join(' and ')
   const tiles: [string, string][] = [
     ['Constraints', limits ? `${limits}, if you take the new value` : 'Unchanged'],
     ['WBS', [effort ? `${effort} effort change${effort > 1 ? 's' : ''}` : '', done ? `${done} done` : ''].filter(Boolean).join(' · ') || 'Unchanged'],
-    ['Team', people ? `${people} ${people > 1 ? 'people’s' : 'person’s'} hours` : 'Unchanged'],
+    ['Team', team.join(' · ') || 'Unchanged'],
     ['Timeline', 'Re-solved, minimal disruption'],
     ['Assignments & cost', 'Recalculated'],
-    ['Scope', scope ? `${scope} new requirement${scope > 1 ? 's' : ''}: add in WBS Builder` : 'Unchanged'],
+    ['Scope', scope ? `${scope} new requirement${scope > 1 ? 's' : ''}, added when you approve` : 'Unchanged'],
   ]
   return (
     <div className="art">

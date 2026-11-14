@@ -7,7 +7,7 @@
  */
 import { useEffect, useState, type ReactNode } from 'react'
 import { formatDate, formatMoney } from '@/lib/format'
-import type { DetectedChange } from '@/lib/changes'
+import type { DetectedChange, NewMember } from '@/lib/changes'
 
 export const DAYS_PER_WEEK = 5
 export const DAY_MS = 86_400_000
@@ -100,6 +100,7 @@ export function changeValue(change: DetectedChange, value: number | string | nul
     case 'duration':
       return weeks(num(value))
     case 'capacity':
+    case 'team':
       return num(value) === 0 ? 'off the project' : value == null ? '—' : `${value}h/week`
     default:
       return typeof value === 'string' ? value : '—'
@@ -109,7 +110,17 @@ export function changeValue(change: DetectedChange, value: number | string | nul
 /** The small caps label in the left column of a change row. */
 export function kindLabel(change: DetectedChange): string {
   if (change.kind === 'duration') return change.to === 0 ? 'Progress' : 'Effort'
-  return { budget: 'Budget', deadline: 'Deadline', capacity: 'Team', scope: 'New requirement' }[change.kind]
+  if (change.kind === 'scope') return change.action === 'remove' ? 'Scope' : 'New requirement'
+  return { budget: 'Budget', deadline: 'Deadline', capacity: 'Team', team: 'Team' }[change.kind]
+}
+
+/** "Dana Lee · Security Specialist · 24 h/wk · contractor" (the role only when it isn't the name). */
+export function memberSummary(member: NewMember, hours: number | null | undefined = member.hoursPerWeek): string {
+  const parts = [member.fullName]
+  if (member.roleTitle.toLowerCase() !== member.fullName.toLowerCase()) parts.push(member.roleTitle)
+  if (hours != null) parts.push(`${hours} h/wk`)
+  if (member.isContractor) parts.push('contractor')
+  return parts.join(' · ')
 }
 
 /** One-line title of a change ("Budget cut", "1.1.1 Salesforce connector: done", …). */
@@ -127,6 +138,9 @@ export function changeTitle(change: DetectedChange): string {
       return change.to === 0 ? `${label}: done` : `${label}: new effort`
     case 'capacity':
       return change.to === 0 ? `${label} leaves the project` : `${label}: hours per week`
+    case 'team':
+      if (change.action === 'remove') return `Remove ${label}`
+      return change.member ? `Add ${memberSummary(change.member, num(change.to))}` : `Add ${label}`
     default:
       return typeof change.to === 'string' ? change.to : 'Scope change'
   }

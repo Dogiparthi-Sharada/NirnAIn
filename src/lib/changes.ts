@@ -28,7 +28,9 @@ export interface PlanVersion {
 }
 
 export type ChangeSource = 'notes' | 'edits' | 'progress'
-export type ChangeKind = 'budget' | 'deadline' | 'duration' | 'capacity' | 'scope'
+export type ChangeKind = 'budget' | 'deadline' | 'duration' | 'capacity' | 'scope' | 'team'
+/** team: someone joins / leaves the project; scope: a requirement is added / removed. */
+export type ChangeAction = 'add' | 'remove'
 export type ChangeStatus = 'draft' | 'analyzing' | 'ready' | 'replanning' | 'proposed' | 'approved' | 'rejected' | 'failed'
 
 export interface TargetOption {
@@ -38,10 +40,31 @@ export interface TargetOption {
   to: number | null
 }
 
-/** budget = cents, deadline = ISO date, duration = working days, capacity = hours/week (0 = leaves), scope = text. */
+/** Someone joining the project mid-way (a hire, a specialist or a contractor). No rate = priced like the team. */
+export interface NewMember {
+  fullName: string
+  roleTitle: string
+  /** Whole hours per week on this project, 1–80. */
+  hoursPerWeek: number
+  skills: string[]
+  hourlyRateCents?: number | null
+  isContractor?: boolean
+}
+
+/** A newcomer in the re-plan overrides, with the organization employee the change reserved for them. */
+export interface AddedMember extends NewMember {
+  employeeId: string
+}
+
+/**
+ * budget = cents, deadline = ISO date, duration = working days, capacity = hours/week (0 = leaves),
+ * scope = text, team = hours/week of who joins (`member`; null until the notes say) or leaves (0).
+ */
 export interface DetectedChange {
   id: string
   kind: ChangeKind
+  action: ChangeAction | null
+  member: NewMember | null
   target: string | null
   targetLabel: string | null
   from: number | string | null
@@ -55,7 +78,7 @@ export interface DetectedChange {
 
 export interface ChangeQuestion {
   id: string
-  kind: 'budget' | 'deadline' | 'duration' | 'capacity' | 'target'
+  kind: 'budget' | 'deadline' | 'duration' | 'capacity' | 'target' | 'team'
   changeId: string
   tier: 'high' | 'blocking'
   text: string
@@ -82,6 +105,8 @@ export interface PlanOverrides {
   mustFinishBy?: string
   durationDays?: Record<string, number>
   hoursPerWeek?: Record<string, number>
+  addMembers?: AddedMember[]
+  removeMembers?: string[]
 }
 
 export interface ChangeRequest {
@@ -110,6 +135,10 @@ export interface ChangeEdits {
   hoursPerWeek?: Record<string, number>
   /** Percent complete per work package (100 = done). */
   progress?: Record<string, number>
+  /** People joining the project (at most 10). */
+  addMembers?: NewMember[]
+  /** Employee ids of team members leaving the project. */
+  removeMembers?: string[]
 }
 
 export interface PlanBar {
@@ -295,6 +324,8 @@ export function useDecideChange(projectId: string) {
         queryKeys.capacity(projectId),
         keys.team(projectId),
         ['projects', projectId, 'team'],
+        ['projects', projectId, 'skills'],
+        queryKeys.scopeItems(projectId),
         ['projects', projectId, 'overview'],
         queryKeys.notifications,
         ['orgs'],
