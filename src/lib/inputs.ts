@@ -74,6 +74,15 @@ export interface PlanVersion {
   label: string | null
 }
 
+/**
+ * The plan version in force (the latest applied one), or null before any plan is applied. Inputs
+ * stay editable either way; it only tells the screens which version a re-run would replace.
+ */
+export function versionInForce(versions: PlanVersion[] | undefined): number | null {
+  if (!versions || versions.length === 0) return null
+  return Math.max(...versions.map((planVersion) => planVersion.version))
+}
+
 /** Suggestions for the Role field (free text is still allowed). */
 export const ROLES = [
   'Lead Architect',

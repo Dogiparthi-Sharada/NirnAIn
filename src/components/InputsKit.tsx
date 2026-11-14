@@ -1,9 +1,12 @@
 /**
  * Small pieces of the approved design shared by Scope Review, WBS Builder and Constraints:
- * provenance chips, the step-gate banner, the toast and the utilization bar.
+ * provenance chips, the step-gate banner, the plan-in-force banner, the toast and the utilization
+ * bar.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
+import { usePlanVersions, versionInForce } from '@/lib/inputs'
+import { stepPath } from '@/lib/steps'
 
 const CHIP = {
   stated: ['st-stated', 'Stated'],
@@ -118,6 +121,25 @@ export function UtilBar({ pct }: { pct: number }) {
       </span>
       {pct}%
     </span>
+  )
+}
+
+/**
+ * Info banner on the input steps once a plan is applied. Inputs stay editable: a change takes
+ * effect when the PM re-runs step 6 and applies the result as the next version, and step 7 records
+ * why a plan changed. Shows nothing before the first plan, while the versions load, or when they
+ * can't be loaded (it informs; it never blocks).
+ */
+export function PlanInForceBanner({ projectId, id }: { projectId: string; id: string }) {
+  const versions = usePlanVersions(projectId)
+  const version = versionInForce(versions.data)
+  if (version === null) return null
+  return (
+    <div className="banner" id={id} role="status">
+      <b>Plan v{version} is in force.</b> Changes here take effect when you re-run on{' '}
+      <Link to={stepPath('optimization', projectId)}>step 6</Link> and apply it as Plan v{version + 1}. To record why the plan changed
+      (meeting notes, before/after comparison), use <Link to={stepPath('changes', projectId)}>step 7</Link>.
+    </div>
   )
 }
 

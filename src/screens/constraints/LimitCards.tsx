@@ -25,7 +25,6 @@ interface CardProps {
   constraints: ConstraintInputs
   policy: PolicyInputs
   risks: PolicyRisk[]
-  locked: boolean
   onSave: (changes: ConstraintChanges) => void
 }
 
@@ -41,7 +40,7 @@ const SOURCE_CHIP: Record<InputSource, ChipKind> = {
 type MoneyField = 'budgetTotalCents' | 'laborCapCents' | 'infraCapCents'
 
 /** The Budget card: total, contingency and the optional labor and infrastructure caps. */
-export function BudgetCard({ constraints, policy, risks, locked, onSave, budgetSource }: CardProps & { budgetSource: InputSource | undefined }) {
+export function BudgetCard({ constraints, policy, risks, onSave, budgetSource }: CardProps & { budgetSource: InputSource | undefined }) {
   // An amount that can't be saved stays in its field with the reason underneath, as on step 1.
   const [moneyProblems, setMoneyProblems] = useState<Partial<Record<MoneyField, string>>>({})
 
@@ -79,7 +78,6 @@ export function BudgetCard({ constraints, policy, risks, locked, onSave, budgetS
           onRevert={() => showMoneyProblem(field, null)}
           aria-invalid={problem ? true : undefined}
           aria-describedby={problem ? `${id}-err` : undefined}
-          disabled={locked}
         />
         {problem && (
           <p className="err" id={`${id}-err`} role="alert">
@@ -107,7 +105,7 @@ export function BudgetCard({ constraints, policy, risks, locked, onSave, budgetS
           <label htmlFor="con-contingency">
             Contingency Reserve <Chip kind={constraints.contingencyPct > 0 ? 'yours' : 'default'} />
           </label>
-          <CommitInput className="in" id="con-contingency" inputMode="decimal" value={`${constraints.contingencyPct} %`} onCommit={commitContingency} disabled={locked} />
+          <CommitInput className="in" id="con-contingency" inputMode="decimal" value={`${constraints.contingencyPct} %`} onCommit={commitContingency} />
         </div>
         <div className="field">
           <label htmlFor="con-labor-cap">
@@ -145,7 +143,7 @@ function finishChip(constraints: ConstraintInputs) {
 }
 
 /** The Deadline card: start, must-finish-by, phase milestones and working days per week. */
-export function DeadlineCard({ constraints, policy, risks, locked, onSave }: CardProps) {
+export function DeadlineCard({ constraints, policy, risks, onSave }: CardProps) {
   const startDate = constraints.startDate
   const finishDate = constraints.mustFinishBy
 
@@ -182,18 +180,18 @@ export function DeadlineCard({ constraints, policy, risks, locked, onSave }: Car
       <div className="g2 mt">
         <div className="field">
           <label htmlFor="con-start">Project Start Date {startDate ? <Chip kind="yours" /> : <Chip kind="default">Not set</Chip>}</label>
-          <CommitInput className="in" id="con-start" type="date" value={startDate ?? ''} onCommit={(text) => commitDates(text || null, finishDate)} disabled={locked} />
+          <CommitInput className="in" id="con-start" type="date" value={startDate ?? ''} onCommit={(text) => commitDates(text || null, finishDate)} />
         </div>
         <div className="field">
           <label htmlFor="con-finish">Must-Finish-By Date {finishChip(constraints)}</label>
-          <CommitInput className="in" id="con-finish" type="date" value={finishDate ?? ''} onCommit={(text) => commitDates(startDate, text || null)} disabled={locked} />
+          <CommitInput className="in" id="con-finish" type="date" value={finishDate ?? ''} onCommit={(text) => commitDates(startDate, text || null)} />
         </div>
         {constraints.milestones.map((milestone, position) => (
           <div className="field" key={milestone.id ?? `${milestone.name}-${position}`}>
             <label htmlFor={`con-milestone-${position}`}>
               {milestone.name} <Chip kind="default">{milestone.mode === 'soft' ? 'Soft' : 'Hard'} milestone</Chip>
             </label>
-            <CommitInput className="in" id={`con-milestone-${position}`} type="date" value={milestone.dueDate} onCommit={(text) => commitMilestone(position, text)} disabled={locked} />
+            <CommitInput className="in" id={`con-milestone-${position}`} type="date" value={milestone.dueDate} onCommit={(text) => commitMilestone(position, text)} />
           </div>
         ))}
       </div>
@@ -206,7 +204,6 @@ export function DeadlineCard({ constraints, policy, risks, locked, onSave }: Car
           id="con-working-days"
           value={constraints.workingDaysPerWeek}
           onChange={(event) => onSave({ workingDaysPerWeek: Number(event.target.value) })}
-          disabled={locked}
         >
           {dayChoices.map((days) => (
             <option key={days} value={days}>

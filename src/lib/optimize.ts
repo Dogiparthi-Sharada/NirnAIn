@@ -40,6 +40,8 @@ export interface OptimizationInputs {
   missing?: string[]
   /** Fingerprint of exactly these inputs (shown as "Inputs locked · hash …"). */
   hash?: string
+  /** Fingerprint of the inputs of the plan in force; null before one is applied (absent on older servers). */
+  appliedHash?: string | null
 }
 
 /** The two ways out of an infeasible plan the backend can price. */
@@ -232,8 +234,9 @@ export function shortHash(hash: string | null | undefined): string | null {
 
 /**
  * The inputs hash to compare with the sheet, to tell whether the latest run is out of date.
- * Only plain proposals qualify: an applied plan is the locked baseline, and a remedy or
- * change-request run deliberately differs from the saved inputs.
+ * Only plain proposals qualify: an applied plan stays on screen as the plan in force (the sheet's
+ * `appliedHash` tells whether inputs changed since), and a remedy or change-request run
+ * deliberately differs from the saved inputs.
  */
 export function comparableInputsHash(run: PlanRun | null): string | null {
   const options = run?.options

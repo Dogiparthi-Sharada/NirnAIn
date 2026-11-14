@@ -5,7 +5,7 @@
  * Dependencies always hold: the solver never starts a task before the work it depends on, so the
  * card has no Must hold / Can flex switch. Data: `GET/POST …/projects/{id}/dependencies` and
  * `PATCH/DELETE …/dependencies/{id}` (existing endpoints); the picker lists the WBS work packages.
- * Every change refreshes the step 6 confirmation sheet. Read-only while a plan version is in force.
+ * Every change refreshes the step 6 confirmation sheet.
  */
 import { useState } from 'react'
 import { errorMessage } from '@/lib/api'
@@ -35,8 +35,8 @@ function TypeSelect({ id, label, value, onChange }: { id: string; label?: string
   )
 }
 
-/** The dependencies card. `editable()` returns false (and explains the plan lock) when inputs are frozen. */
-export function DependenciesCard({ projectId, editable }: { projectId: string; editable: () => boolean }) {
+/** The dependencies card: the list, inline type edits, Remove, and the add form. */
+export function DependenciesCard({ projectId }: { projectId: string }) {
   const dependenciesQuery = useDependencies(projectId)
   const wbsQuery = useWbs(projectId)
   const createDependency = useCreateDependency(projectId)
@@ -52,11 +52,11 @@ export function DependenciesCard({ projectId, editable }: { projectId: string; e
   const workPackages = (wbsQuery.data ?? []).filter((node) => node.level === 3)
 
   function startEdit(dependency: Dependency) {
-    if (editable()) setEditing({ id: dependency.id, type: dependency.type })
+    setEditing({ id: dependency.id, type: dependency.type })
   }
 
   function saveEdit(dependency: Dependency) {
-    if (!editing || !editable()) return
+    if (!editing) return
     if (editing.type === dependency.type) {
       setEditing(null)
       return
@@ -74,7 +74,6 @@ export function DependenciesCard({ projectId, editable }: { projectId: string; e
   }
 
   function remove(dependency: Dependency) {
-    if (!editable()) return
     deleteDependency.mutate(dependency.id, {
       onSuccess: () => {
         toast('Dependency removed.')
@@ -85,13 +84,12 @@ export function DependenciesCard({ projectId, editable }: { projectId: string; e
   }
 
   function openForm() {
-    if (!editable()) return
     setFormError('')
     setDraft(EMPTY_DRAFT)
   }
 
   function add() {
-    if (!draft || !editable()) return
+    if (!draft) return
     let problem = ''
     if (!draft.predecessorId || !draft.successorId) problem = 'Pick the work that comes first and the work that depends on it.'
     else if (draft.predecessorId === draft.successorId) problem = 'A task cannot depend on itself.'
@@ -107,7 +105,7 @@ export function DependenciesCard({ projectId, editable }: { projectId: string; e
       },
       onError: (error) => {
         setFormError(errorMessage(error))
-        refresh(error)
+        refresh()
       },
     })
   }

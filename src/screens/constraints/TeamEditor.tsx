@@ -7,14 +7,13 @@
  * Capacity rule: Must hold = nobody is scheduled beyond the hours entered here; Can flex = people
  * may be scheduled up to 25% above them (overtime), at a penalty. Hours are edited inline (whole
  * numbers 1–80; anything else is explained and reverted). Data: `GET/POST/PATCH/DELETE
- * …/team` (contract [B]); every change refreshes the step 6 confirmation sheet. When a plan
- * version is in force the inputs are read-only and `editable()` explains why instead.
+ * …/team` (contract [B]); every change refreshes the step 6 confirmation sheet.
  */
 import { useState } from 'react'
 import { UtilBar } from '@/components/InputsKit'
 import { errorMessage } from '@/lib/api'
 import { policyOf, type PolicyInputs, type PolicyRisk } from '@/lib/constraintPolicy'
-import { ADD_MEMBER_ID, hoursText, policyChanges, useInputsRefresh, useSaveFailure, type ConstraintChanges } from '@/lib/constraints'
+import { ADD_MEMBER_ID, hoursText, policyChanges, useSaveFailure, type ConstraintChanges } from '@/lib/constraints'
 import {
   hourlyRateText,
   isWholeHours,
@@ -45,9 +44,8 @@ function memberChanges(member: ProjectTeamMember, input: TeamMemberInput): Parti
 }
 
 /** One person: name and role, inline hours, utilization, Edit / Remove. */
-function MemberRow({ member, locked, onHours, onEdit, onRemove }: {
+function MemberRow({ member, onHours, onEdit, onRemove }: {
   member: ProjectTeamMember
-  locked: boolean
   onHours: (text: string) => void
   onEdit: () => void
   onRemove: () => void
@@ -72,7 +70,6 @@ function MemberRow({ member, locked, onHours, onEdit, onRemove }: {
           aria-label={`Hours per week for ${member.fullName}`}
           value={String(member.hoursPerWeek)}
           onCommit={onHours}
-          disabled={locked}
         />
       </td>
       <td>
@@ -98,14 +95,12 @@ function MemberRow({ member, locked, onHours, onEdit, onRemove }: {
   )
 }
 
-/** The team card. `editable()` returns false (and explains the plan lock) when inputs are frozen. */
-export function TeamEditor({ projectId, policy, risks, locked, editable, onSavePolicy }: {
+/** The team card: the people, their hours and utilization, the add / edit form and the capacity switch. */
+export function TeamEditor({ projectId, policy, risks, onSavePolicy }: {
   projectId: string
   /** Null while the constraint set is loading or failed: the card works without its switch. */
   policy: PolicyInputs | null
   risks: PolicyRisk[]
-  locked: boolean
-  editable: () => boolean
   onSavePolicy: (changes: ConstraintChanges) => void
 }) {
   const teamQuery = useTeam(projectId)
@@ -114,7 +109,6 @@ export function TeamEditor({ projectId, policy, risks, locked, editable, onSaveP
   const updateHours = useUpdateTeamMember(projectId)
   const removeMember = useRemoveTeamMember(projectId)
   const reportFailure = useSaveFailure(projectId)
-  const refreshOnLock = useInputsRefresh(projectId)
   // 'new' = the add form; an employee id = editing that person; null = closed.
   const [formFor, setFormFor] = useState<string | null>(null)
 
@@ -124,21 +118,18 @@ export function TeamEditor({ projectId, policy, risks, locked, editable, onSaveP
   const formError = formFor === 'new' ? addMember.error : updateMember.error
 
   function openForm(target: string) {
-    if (!editable()) return
     addMember.reset()
     updateMember.reset()
     setFormFor(target)
   }
 
   function saveForm(input: TeamMemberInput) {
-    if (!editable()) return
     if (!editing) {
       addMember.mutate(input, {
         onSuccess: () => {
           setFormFor(null)
           toast(`${input.fullName} added. The optimizer will assign their work.`)
         },
-        onError: refreshOnLock,
       })
       return
     }
@@ -154,7 +145,6 @@ export function TeamEditor({ projectId, policy, risks, locked, editable, onSaveP
           setFormFor(null)
           toast(`${input.fullName} updated.`)
         },
-        onError: refreshOnLock,
       },
     )
   }
@@ -165,12 +155,10 @@ export function TeamEditor({ projectId, policy, risks, locked, editable, onSaveP
       toast(HOURS_RULE)
       return
     }
-    if (!editable()) return
     updateHours.mutate({ employeeId: member.employeeId, patch: { hoursPerWeek: hours } }, { onError: reportFailure })
   }
 
   function remove(member: ProjectTeamMember) {
-    if (!editable()) return
     if (formFor === member.employeeId) setFormFor(null)
     removeMember.mutate(member.employeeId, {
       onSuccess: () => toast(`${member.fullName} removed from this project.`),
@@ -214,7 +202,6 @@ export function TeamEditor({ projectId, policy, risks, locked, editable, onSaveP
       <MemberRow
         key={member.employeeId}
         member={member}
-        locked={locked}
         onHours={(text) => saveHours(member, text)}
         onEdit={() => openForm(member.employeeId)}
         onRemove={() => remove(member)}

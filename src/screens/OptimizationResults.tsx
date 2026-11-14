@@ -8,6 +8,9 @@
  * 3. infeasible — the conflicting constraints and priced remedies; a remedy starts a new run.
  * 4. plan — KPIs, Constraint check, timeline, details, rate confirmation, Apply and Export.
  * A failed or timed-out run shows its error with "Run again".
+ *
+ * Inputs stay editable after a plan is applied, so when the plan in force no longer matches them
+ * (`hash !== appliedHash` on the inputs sheet) the plan view says so and offers a re-run.
  */
 import { useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
@@ -63,6 +66,8 @@ export default function OptimizationResults() {
   const inputsChanged = Boolean(runHash && inputs.data?.hash && runHash !== inputs.data.hash)
   const showSheet = !run || sheetRequested || (inputsChanged && !stalePlanAccepted)
   const planShown = !solving && !showSheet && (status === 'optimal' || status === 'feasible')
+  const appliedHash = inputs.data?.appliedHash
+  const changedSinceApplied = Boolean(run?.version != null && appliedHash && inputs.data?.hash && inputs.data.hash !== appliedHash)
 
   /** Starts a run (with a remedy when re-solving an infeasible plan); success closes the sheet. */
   function start(remedy?: RemedyId) {
@@ -173,6 +178,16 @@ export default function OptimizationResults() {
             </div>
           )}
         </div>
+        {planShown && changedSinceApplied && (
+          <div className="alert warn row between" id="opt-inputs-changed" role="status">
+            <span>
+              Inputs changed since Plan v{run?.version}. Run to see the new plan.
+            </span>
+            <button className="btn sm" type="button" onClick={runAgain}>
+              Check the inputs &amp; run
+            </button>
+          </div>
+        )}
         {body}
         {toast}
       </div>

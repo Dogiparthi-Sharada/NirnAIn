@@ -7,6 +7,9 @@
  * has no WBS yet, generation starts once automatically ("AI has pre-populated based on scope"); a
  * first validation also runs once so the issues card reflects the real tree.
  *
+ * The WBS stays editable after a plan version is applied; a banner then says that changes take
+ * effect once step 6 re-runs and the result is applied as the next version.
+ *
  * Gate: Continue to Constraints is never disabled. While a work package's duration is an
  * unconfirmed AI estimate (or missing), a click opens `#wbs-banner` listing them, each linking to its
  * Confirm button, plus "Confirm all" — the solver must never plan on numbers nobody checked.
@@ -14,6 +17,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { GapBanner, useBannerFocus, type GapItem } from '@/components/CreateForm'
+import { PlanInForceBanner } from '@/components/InputsKit'
 import WbsTable, { estimateControlId } from '@/components/WbsTable'
 import WbsEmptyState from '@/components/WbsEmptyState'
 import WbsValidationCard from '@/components/WbsValidationCard'
@@ -224,6 +228,7 @@ export default function WBSBuilder() {
           </div>
         </div>
 
+        <PlanInForceBanner projectId={projectId} id="wbs-in-force" />
         {packages.length > 0 && (
           <div className="banner" id="wbs-src">
             {nodes.some((node) => node.origin === 'ai') ? (
