@@ -50,6 +50,8 @@ def create_engine(settings: Settings) -> AsyncEngine | None:
         pool_timeout=settings.db_pool_timeout_s,
         pool_recycle=settings.db_pool_recycle_s,
         pool_pre_ping=True,
+        # Bound parameters can carry user content (notes, names); keep them out of error logs.
+        hide_parameters=True,
         connect_args={
             # Works with both the session (5432) and transaction (6543) pooler.
             "statement_cache_size": 0,
