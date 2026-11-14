@@ -339,6 +339,7 @@ export interface MissingInputHint {
 
 const MISSING_INPUT_HINTS: Record<string, Omit<MissingInputHint, 'key'>> = {
   workPackages: { label: 'Work packages with durations', step: 'wbs', action: 'Open WBS Builder' },
+  durations: { label: 'A duration for every work package', step: 'wbs', action: 'Open WBS Builder' },
   estimates: { label: 'Confirmed AI estimates', step: 'wbs', action: 'Open WBS Builder' },
   team: { label: 'Team members', step: 'constraints', action: 'Open Constraints' },
   deadline: { label: 'An answer to the deadline question', step: 'constraints', action: 'Open Constraints' },

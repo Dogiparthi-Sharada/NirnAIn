@@ -66,8 +66,7 @@ from app.repositories.tables import (
     task_skill_requirements,
     wbs_nodes_with_code,
 )
-
-DELIVERABLE_LEVEL = 2
+from app.repositories.work_packages import DELIVERABLE_LEVEL, work_packages
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,8 +144,9 @@ class PlanningInputReader:
 
         Work packages are level-3 nodes and level-2 nodes without children,
         with a positive duration, plus finished work (0 days left, scheduled by an
-        applied plan). Dependencies and milestones on summary nodes are expanded to
-        the work packages underneath them.
+        applied plan). The others block the run (`work_packages.packages_without_duration`).
+        Dependencies and milestones on summary nodes are expanded to the work packages
+        underneath them.
         """
         project_id = project.id
         view = wbs_nodes_with_code
@@ -171,11 +171,7 @@ class PlanningInputReader:
         for node in nodes:
             if node.parent_id is not None:
                 children[node.parent_id].append(node.id)
-        packages = [
-            node
-            for node in nodes
-            if node.level == 3 or (node.level == DELIVERABLE_LEVEL and not children.get(node.id))
-        ]
+        packages = work_packages(nodes)
         finished = await finished_work(
             self._conn, project_id, [node.id for node in packages if node.duration_days == 0]
         )

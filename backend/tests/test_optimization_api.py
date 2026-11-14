@@ -43,6 +43,8 @@ class RunStore:
     # Change requests: id -> {"project_id", "status", "proposed_run_id"}.
     changes: dict[uuid.UUID, dict[str, Any]] = field(default_factory=dict)
     race: bool = False  # simulate a concurrent insert hitting the unique index
+    # Work packages without a usable duration ('code name'), per project.
+    without_duration: dict[uuid.UUID, list[str]] = field(default_factory=dict)
 
 
 class FakeRuns:
@@ -79,6 +81,9 @@ class FakeRuns:
 
     async def input_facts(self, project: ProjectContext, inp: PlanningInput) -> InputFacts:
         return facts_from_input(inp, **self.r.facts.get(project.id, {}))
+
+    async def packages_without_duration(self, project_id: uuid.UUID) -> list[str]:
+        return self.r.without_duration.get(project_id, [])
 
     async def baseline_owners(
         self, project_id: uuid.UUID, run_id: uuid.UUID

@@ -31,6 +31,7 @@ from app.repositories.tables import (
     projects,
     recommendations,
 )
+from app.repositories.work_packages import packages_without_duration
 
 __all__ = [
     "ActiveRun",
@@ -190,6 +191,10 @@ class OptimizationRepository:
     async def input_facts(self, project: ProjectContext, inp: PlanningInput) -> InputFacts:
         """What the confirmation sheet shows beyond `inp` (answers, confirmations, sources)."""
         return await InputFactsReader(self._conn).facts(project, inp)
+
+    async def packages_without_duration(self, project_id: uuid.UUID) -> list[str]:
+        """'code name' of the work packages the optimizer can't plan (see work_packages)."""
+        return await packages_without_duration(self._conn, project_id)
 
     async def baseline_owners(
         self, project_id: uuid.UUID, run_id: uuid.UUID

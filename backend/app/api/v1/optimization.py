@@ -17,6 +17,7 @@ unless the body names another `baselineRunId`.
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Request, Response, status
@@ -25,7 +26,7 @@ from app.api.deps import OptimizationRuns, Optimizer, ProjectId, RunId
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableError
 from app.domain.optimization import InputRow, OptimizationInputs, OptimizationRun, RunCreate
 from app.jobs.optimizer import RESTART_ERROR, run_settings
-from app.optimization.input_sheet import Blocker, Sheet, blocking_detail, build_sheet
+from app.optimization.input_sheet import Blocker, Row, Sheet, blocking_detail, build_sheet
 from app.optimization.inputs import inputs_hash
 from app.optimization.model import PlanningInput
 from app.optimization.overrides import apply_overrides, with_baseline, with_plan_in_force
@@ -43,6 +44,8 @@ LIFTED_BY_REMEDY = {
     "move_deadline": ("deadline",),
     "combined": ("specialist", "deadline"),
 }
+DURATIONS_KEY = "durations"
+LISTED_PACKAGES = 5
 
 
 class AppliedInputs(OptimizationInputs):
@@ -72,9 +75,39 @@ async def _plan_in_force(
     return dates, summary.completion_date if summary is not None else None
 
 
+def _with_unplanned_work(sheet: Sheet, packages: list[str]) -> Sheet:
+    """The sheet with a blocker naming the work packages the solver can't plan.
+
+    Business rule (WBS-003, WBS-004): a work package without a usable duration is never
+    left out of a plan silently; the run waits until a person enters one on step 4.
+    """
+    if not packages:
+        return sheet
+    if len(packages) == 1:
+        message = f"{packages[0]} has no duration: enter one on step 4"
+    else:
+        names = packages[:LISTED_PACKAGES]
+        if len(packages) > LISTED_PACKAGES:
+            names.append(f"{len(packages) - LISTED_PACKAGES} more")
+        message = f"{', '.join(names[:-1])} and {names[-1]} have no duration: enter them on step 4"
+
+    def flagged(row: Row) -> Row:
+        if row.key != "workPackages":
+            return row
+        return replace(
+            row, value=f"{row.value} · {len(packages)} without a duration", source="needs_you"
+        )
+
+    return Sheet(
+        rows=[flagged(row) for row in sheet.rows],
+        blockers=[Blocker(DURATIONS_KEY, message), *sheet.blockers],
+    )
+
+
 async def _sheet(runs: OptimizationRuns, project: ProjectContext) -> tuple[PlanningInput, Sheet]:
     inp = await runs.load_input(project, datetime.now(UTC).date())
-    return inp, build_sheet(await runs.input_facts(project, inp))
+    sheet = build_sheet(await runs.input_facts(project, inp))
+    return inp, _with_unplanned_work(sheet, await runs.packages_without_duration(project.id))
 
 
 async def _from_baseline(
