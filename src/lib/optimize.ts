@@ -44,10 +44,16 @@ export interface OptimizationInputs {
   appliedHash?: string | null
 }
 
-/** The two ways out of an infeasible plan the backend can price. */
-export type RemedyId = 'specialist' | 'move_deadline'
+/**
+ * The ways to keep the target date the backend prices: bring in a contractor, let the people on
+ * the late work go up to 25% over their hours, or accept the later date.
+ */
+export type RemedyId = 'specialist' | 'overtime' | 'move_deadline'
 
-/** A priced remedy for an infeasible run ("What it would take"). */
+/**
+ * A priced, re-solved way to keep the target date: offered when a plan finishes late or can't be
+ * built ("What it would take"). For a late plan, `costCents` is the extra cost over that plan.
+ */
 export interface Remedy {
   id: RemedyId
   title: string
@@ -91,6 +97,13 @@ export interface RunSummary {
   peakUtilization: { name: string; percent: number } | null
   specialists: SpecialistBooking[]
   softViolations: string[]
+  /**
+   * The date the plan tries to keep: the completion date of the plan in force for a step 7
+   * re-plan, otherwise the must-finish-by date (absent on older servers).
+   */
+  targetDate?: string | null
+  /** Working days the plan finishes after `targetDate`; 0 when on time (absent on older servers). */
+  slipDays?: number
 }
 
 /** The run result with the fields the approved design adds (all optional on older runs). */
@@ -225,6 +238,33 @@ export function policyInputsOf(constraints: ConstraintAnswers, inputs: Optimizat
 /** True when the plan books an outside specialist, so its cost rests on a rate someone must confirm. */
 export function usesSpecialist(run: PlanRun): boolean {
   return run.options?.remedy === 'specialist' || (run.result?.summary?.specialists.length ?? 0) > 0
+}
+
+/** A plan that finishes after the date it tries to keep, and the priced ways to keep that date. */
+export interface DateSlip {
+  completionDate: string
+  targetDate: string
+  /** Working days after `targetDate`. */
+  slipDays: number
+  /** Re-solved variants that finish earlier; accepting the later date is offered separately. */
+  waysToKeep: Remedy[]
+}
+
+/**
+ * When a plan slips past its target date, the PM is told and offered ways to keep it (nothing is
+ * chosen for them). Null when the plan is on time, the server doesn't report the slip (older
+ * servers), or the PM already chose to move the date for this run.
+ */
+export function dateSlipOf(run: PlanRun): DateSlip | null {
+  const summary = run.result?.summary
+  if (!summary?.targetDate || !summary.slipDays || summary.slipDays <= 0) return null
+  if (run.options?.remedy === 'move_deadline') return null
+  return {
+    completionDate: summary.completionDate,
+    targetDate: summary.targetDate,
+    slipDays: summary.slipDays,
+    waysToKeep: (run.result?.remedies ?? []).filter((remedy) => remedy.id !== 'move_deadline'),
+  }
 }
 
 /** "3f9a1c…e21b": enough of the inputs hash to recognise it. */

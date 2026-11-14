@@ -6,7 +6,8 @@
  *    inputs changed after the latest run, or after "Run again". Approving starts a run.
  * 2. solving — while the run is queued or running (`useLatestRun` polls it).
  * 3. infeasible — the conflicting constraints and priced remedies; a remedy starts a new run.
- * 4. plan — KPIs, Constraint check, timeline, details, rate confirmation, Apply and Export.
+ * 4. plan — KPIs, the ways to keep the date when it slips, Constraint check, timeline, details,
+ *    rate confirmation, Apply and Export. A remedy picked there starts a new run, as in 3.
  * A failed or timed-out run shows its error with "Run again".
  *
  * Inputs stay editable after a plan is applied, so when the plan in force no longer matches them
@@ -134,6 +135,9 @@ export default function OptimizationResults() {
         onRetryConstraints={() => void constraintsQuery.refetch()}
         policy={policy}
         showToast={showToast}
+        onUseRemedy={(remedy) => start(remedy)}
+        remedyStarting={startRun.isPending}
+        remedyError={startRun.error}
       />
     )
   } else {
