@@ -42,7 +42,7 @@ export default function ScopeReview() {
 
   const items = useMemo(() => (itemsQuery.data ?? []) as EvidenceScopeItem[], [itemsQuery.data])
   const visible = items.filter((i) => i.status !== 'removed')
-  const removed = items.filter((i) => i.status === 'removed')
+  const removed = items.filter((item) => item.status === 'removed')
   const accepted = visible.filter((i) => i.status === 'accepted').length
   // Pending items (and, first, those saying more than the notes) block the WBS step.
   const gate = scopeGate(items, () => void acceptAllQuoted())
@@ -108,8 +108,8 @@ export default function ScopeReview() {
   async function acceptAllQuoted() {
     const quoted = items.filter((i) => i.evidence === 'stated' && i.status === 'pending')
     const results = await Promise.allSettled(
-      quoted.map((i) =>
-        updateItem.mutateAsync({ itemId: i.id, patch: { status: 'accepted' } }).then((saved) => syncList(saved)),
+      quoted.map((item) =>
+        updateItem.mutateAsync({ itemId: item.id, patch: { status: 'accepted' } }).then((saved) => syncList(saved)),
       ),
     )
     const done = results.filter((r) => r.status === 'fulfilled').length
@@ -202,7 +202,7 @@ export default function ScopeReview() {
         )}
         <div id="sc-body">
           {SCOPE_CATEGORIES.map((category) => {
-            const shown = visible.filter((i) => i.category === category)
+            const shown = visible.filter((item) => item.category === category)
             const acc = shown.filter((i) => i.status === 'accepted').length
             return (
               <div className="card sc-sec" key={category}>

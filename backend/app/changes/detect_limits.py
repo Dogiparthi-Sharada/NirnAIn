@@ -40,6 +40,7 @@ EARLIER = re.compile(
     re.I,
 )
 
+# Hands out the next change id (c1, c2…) when a change is kept.
 NextId = Callable[[], str]
 
 
