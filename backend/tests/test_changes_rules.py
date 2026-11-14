@@ -41,6 +41,7 @@ SPECIALIST = NewMember(
     full_name="Security Specialist",
     role_title="Security Specialist",
     hours_per_week=40,
+    skills=["Security & Compliance Review"],
     worker_type="contractor",
 )
 
@@ -292,6 +293,7 @@ async def test_claude_may_report_a_newcomer_and_hours() -> None:
                     kind="team",
                     role="Security Specialist",
                     contractor=True,
+                    skills=["security & compliance review", "Knitting"],
                     quote=quote,
                     confidence=0.8,
                 ),
@@ -319,7 +321,7 @@ async def test_claude_may_report_a_newcomer_and_hours() -> None:
         ("team", "add", None, SPECIALIST.model_dump()),
         ("capacity", None, 16, None),
     ]
-    assert "- Leo Martins | 40" in llm.prompts[0]
+    assert "- Security & Compliance Review" in llm.prompts[0]
 
 
 class _BrokenLLM(LLM):

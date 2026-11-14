@@ -17,7 +17,7 @@ from typing import Annotated, Any, Literal
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.domain.common import CamelModel, InputModel, SolverStatus
-from app.domain.team import HoursPerWeek, PersonName, RoleTitle
+from app.domain.team import HoursPerWeek, PersonName, RoleTitle, SkillNames, clean_skill_names
 
 ChangeSource = Literal["notes", "edits", "progress"]
 ChangeKind = Literal["budget", "deadline", "duration", "capacity", "scope", "team"]
@@ -74,6 +74,7 @@ class NewMember(InputModel):
     full_name: PersonName
     role_title: RoleTitle
     hours_per_week: HoursPerWeek
+    skills: SkillNames = Field(default_factory=list)
     worker_type: WorkerType = "employee"
     hourly_rate_cents: int | None = Field(default=None, ge=0, le=MAX_HOURLY_RATE_CENTS)
 
@@ -82,11 +83,15 @@ class NewMember(InputModel):
     def _squash(cls, value: str) -> str:
         return " ".join(value.split())
 
+    @field_validator("skills")
+    @classmethod
+    def _clean(cls, value: list[str]) -> list[str]:
+        return clean_skill_names(value)
+
 
 class StoredMember(NewMember):
-    """A newcomer as stored in a change's impact. Changes recorded before worker types and
-    the removal of skills carry `isContractor` and `skills`: read as the worker type and
-    ignored, so those changes still load."""
+    """A newcomer as stored in a change's impact. Changes recorded before worker types carry
+    `isContractor`: read as the worker type, so those changes still load."""
 
     model_config = ConfigDict(extra="ignore")
 

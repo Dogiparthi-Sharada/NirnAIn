@@ -119,6 +119,7 @@ def test_a_changes_overrides_are_a_valid_run_body() -> None:
         "fullName": "Dana Lee",
         "roleTitle": "Security Specialist",
         "hoursPerWeek": 24,
+        "skills": ["Security & Compliance Review"],
         "workerType": "contractor",
         "hourlyRateCents": 17_500,
     }

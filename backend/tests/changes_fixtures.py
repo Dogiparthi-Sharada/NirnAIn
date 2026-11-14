@@ -100,6 +100,7 @@ def qa_context() -> ChangeContext:
         plan_cost_cents=30_000_000,
         plan_finish=date(2027, 1, 22),
         today=date(2027, 1, 15),
+        skills=("Security & Compliance Review", "Data Engineering"),
     )
 
 
@@ -166,6 +167,7 @@ class FakeChanges:
             edges=context.edges,
             plan_version=in_force.version if in_force else None,
             today=today,
+            skills=context.skills,
             contractor_rate_cents=context.contractor_rate_cents,
         )
 

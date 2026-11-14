@@ -23,6 +23,7 @@ DANA = NewMember(
     full_name="Dana Lee",
     role_title="Security Specialist",
     hours_per_week=24,
+    skills=["Security & Compliance Review"],
     worker_type="contractor",
     hourly_rate_cents=17_500,
 )
@@ -78,8 +79,12 @@ async def test_release_only_deletes_unused_inactive_candidates() -> None:
 
 
 async def test_approval_writes_who_joins_and_who_leaves() -> None:
-    sam, dana = uuid.uuid4(), uuid.uuid4()
-    conn = Conn(Result([]))  # no team yet: the organization's pool becomes the team first
+    sam, dana, skill = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    conn = Conn(
+        Result([]),  # no team yet: the organization's pool becomes the team first
+        *[Result([]) for _ in range(6)],
+        Rows([{"id": skill, "name": "Security & Compliance Review"}]),
+    )
     overrides = PlanOverrides(
         add_members=[AddedMember(employee_id=dana, **DANA.model_dump(by_alias=False))],
         remove_members=[sam],
@@ -92,6 +97,9 @@ async def test_approval_writes_who_joins_and_who_leaves() -> None:
         "UPDATE public.wbs_nodes SET",
         "UPDATE public.employees SET",
         "INSERT INTO public.project_team_members",
+        "INSERT INTO public.skills",
+        "SELECT public.skills.id, public.skills.name",
+        "INSERT INTO public.employee_skills",
     ]
     pool, removal, ownership, activation, joining = conn.params[1:6]
     assert "FROM public.employees" in conn.sql[1]
@@ -111,6 +119,7 @@ async def test_approval_writes_who_joins_and_who_leaves() -> None:
         24,
         "Security Specialist",
     )
+    assert (conn.params[8]["employee_id_m0"], conn.params[8]["skill_id_m0"]) == (dana, skill)
 
 
 async def test_approved_requirements_become_accepted_scope_items() -> None:

@@ -45,6 +45,8 @@ class ChangeContext:
     plan_cost_cents: int | None = None
     plan_finish: date | None = None
     today: date = field(default_factory=date.today)
+    # Skill names the project needs: what a newcomer named in the notes may bring.
+    skills: tuple[str, ...] = ()
     # The project's contractor rate (cents per hour): the default for a contractor who joins.
     contractor_rate_cents: int | None = None
 

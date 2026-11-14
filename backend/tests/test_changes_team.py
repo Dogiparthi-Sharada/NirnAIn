@@ -44,6 +44,7 @@ DANA: dict[str, Any] = {
     "fullName": "Dana Lee",
     "roleTitle": "Security Specialist",
     "hoursPerWeek": 24,
+    "skills": ["Security & Compliance Review"],
     "workerType": "contractor",
     "hourlyRateCents": 17_500,
 }
@@ -134,7 +135,6 @@ def test_bring_in_a_specialist_then_remove_someone(
             {"addMembers": [{**DANA, "hourlyRateCents": None}]},
             "Enter the contractor's hourly rate for Dana Lee.",
         ),
-        ({"addMembers": [{**DANA, "skills": ["Security"]}]}, None),  # no skills any more
         ({"addMembers": [{**DANA, "fullName": f"Person {index}"} for index in range(11)]}, None),
     ],
 )

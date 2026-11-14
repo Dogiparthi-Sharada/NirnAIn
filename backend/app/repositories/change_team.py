@@ -1,8 +1,8 @@
 """Step 7 team writes: people joining or leaving the project through an approved change.
 
 What: reserves an organization employee for each newcomer when the change is recorded,
-releases the reservations nobody uses, and on approval writes who joins (team row, rate)
-and who leaves (team row, work package ownership), plus the change's new requirements.
+releases the reservations nobody uses, and on approval writes who joins (team row, skills,
+rate) and who leaves (team row, work package ownership), plus the change's new requirements.
 Why: step 7 records why a plan changed; a mid-project hire, contractor or departure is a
 change that is re-planned and approved, and only approval changes the team.
 How it fits: `ChangeRepository` (app/repositories/changes.py) extends this class; everything
@@ -30,6 +30,7 @@ from app.repositories.tables import (
     project_team_members,
     wbs_nodes,
 )
+from app.repositories.team import TeamRepository
 
 
 class ChangeTeamWrites(ChangePlanReads):
@@ -167,7 +168,7 @@ class ChangeTeamWrites(ChangePlanReads):
 
     async def _add_member(self, project: ProjectRef, member: AddedMember) -> None:
         """Put a newcomer on the team: activate their employee (a candidate becomes a real
-        one; a reused one stays as is) and set a contractor's rate."""
+        one; a reused one stays as is), set a contractor's rate, and add their skills."""
         activate: dict[str, Any] = {"active": True}
         if member.hourly_rate_cents is not None:
             activate["hourly_rate_cents"] = member.hourly_rate_cents
@@ -187,4 +188,8 @@ class ChangeTeamWrites(ChangePlanReads):
                 ],
                 set_=joining,
             )
+        )
+        team = TeamRepository(self._connection)
+        await team.add_employee_skills(
+            member.employee_id, await team.ensure_skills(project.org_id, member.skills)
         )

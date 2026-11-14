@@ -35,8 +35,8 @@ SYSTEM_PROMPT = (
     "the total budget, the deadline, the duration of a listed work package (including work "
     "that is now done), the weekly hours of a listed team member (0 when they leave), a "
     "person brought onto the project (kind team: their role, their name only if the notes "
-    "give it, their hours only if stated, and whether they come from outside as a "
-    "contractor), or new or removed scope. Report only changes the notes "
+    "give it, their hours only if stated, whether they come from outside as a contractor, and "
+    "which listed skills they bring), or new or removed scope. Report only changes the notes "
     "state. Never invent numbers, dates, people or work packages; skip anything that is "
     "merely on track or unchanged. "
     "For every change copy the sentence it comes from verbatim into `quote`. " + DATA_RULE
@@ -65,6 +65,9 @@ class ProposedChange(BaseModel):
     contractor: bool = Field(
         default=False, description="team: true when they come from outside the organization"
     )
+    skills: list[str] = Field(
+        default_factory=list, description="team: listed project skills they bring, exactly"
+    )
     quote: str
     confidence: float = Field(ge=0, le=1)
 
@@ -92,6 +95,8 @@ def build_prompt(notes: str, context: ChangeContext) -> str:
             f"- {as_data(one_line(person.name, 120))} | {person.hours_per_week:g}"
             for person in context.people
         ),
+        "Skills the project needs:",
+        *(f"- {as_data(one_line(skill, 100))}" for skill in context.skills),
         "",
         "New meeting notes:",
         as_data(notes),
@@ -197,9 +202,9 @@ def _proposal_to_change(  # noqa: PLR0911
 def _newcomer(
     proposal: ProposedChange, value: str, base: dict[str, object], context: ChangeContext
 ) -> DetectedChange | None:
-    """A person brought in: needs a role; the name defaults to the role, hours count only
-    when stated (else 40 h a week and a question asks), and a contractor is costed at the
-    project's contractor rate (else a question asks)."""
+    """A person brought in: needs a role; the name defaults to the role, skills must be the
+    project's, hours count only when stated (else 40 h a week and a question asks), and a
+    contractor is costed at the project's contractor rate (else a question asks)."""
     role = " ".join((proposal.role or "").split())[:120]
     if not role:
         return None
@@ -211,11 +216,15 @@ def _newcomer(
     except ValueError:
         stated = None
     hours = stated if stated is not None and 1 <= stated <= 80 else None
+    known = {skill.casefold(): skill for skill in context.skills}
     try:
         member = NewMember(
             full_name=name,
             role_title=role,
             hours_per_week=hours or DEFAULT_NEW_MEMBER_HOURS,
+            skills=[
+                known[skill.casefold()] for skill in proposal.skills if skill.casefold() in known
+            ],
             worker_type="contractor" if proposal.contractor else "employee",
             hourly_rate_cents=context.contractor_rate_cents if proposal.contractor else None,
         )

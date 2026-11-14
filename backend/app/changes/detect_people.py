@@ -6,8 +6,8 @@ What: finds who gives the project different hours ("Leo can only give 16 hours a
 Why: mid-project the PM's meetings change the team as often as dates and money; the
 deterministic reader must catch it without Claude and without inventing anything: a
 newcomer's hours are asked when the notes don't give them, and so is a contractor's rate
-when the project has none (see `app.changes.questions`). People have no skills (round 2,
-D8): a specialist is a contractor with the phrase's role, able to take any work.
+when the project has none (see `app.changes.questions`). A newcomer brings the project's
+skills the sentence names.
 How it fits: `app.changes.detect.detect` calls `capacity_change` and `newcomer_change` per
 sentence; team members are matched by case-insensitive full, first or last name.
 """
@@ -116,6 +116,19 @@ def _title(words: list[str]) -> str:
     return " ".join(word if word.isupper() else word.capitalize() for word in words)
 
 
+def project_skills_named(text: str, skills: tuple[str, ...]) -> list[str]:
+    """The project's skills a sentence mentions: every distinctive word of the skill, or at
+    least two of them ("compliance review" names "Security & Compliance Review")."""
+    words = parsing.tokens(text)
+    named = []
+    for skill in skills:
+        skill_words = parsing.distinctive(skill)
+        shared = skill_words & words
+        if skill_words and (shared == skill_words or len(shared) >= 2):
+            named.append(skill)
+    return named
+
+
 def newcomer_change(
     sentence: parsing.Sentence, context: ChangeContext, change_id: str, *, hours_taken: bool
 ) -> DetectedChange | None:
@@ -152,6 +165,7 @@ def newcomer_change(
         full_name=full_name,
         role_title=role,
         hours_per_week=hours or DEFAULT_NEW_MEMBER_HOURS,
+        skills=project_skills_named(sentence.body, context.skills),
         worker_type="contractor" if contractor else "employee",
         hourly_rate_cents=context.contractor_rate_cents if contractor else None,
     )
