@@ -4,8 +4,8 @@
  *
  * Data: `GET …/wbs` (nodes with estimate confirmation, contract [B]), node create / patch / move,
  * `POST …/wbs/confirm-estimates`, and the `wbs_generate` / `wbs_validate` AI jobs. When the project
- * has no WBS yet, generation starts once automatically ("AI has pre-populated based on scope"); a
- * first validation also runs once so the issues card reflects the real tree.
+ * has no WBS yet, generation starts once automatically ("AI has pre-populated based on scope"), then
+ * one AI review; after edits only the free built-in checks re-run (`WbsValidationCard`).
  *
  * Each work package also names the skills it needs, picked from the project's skill list (`GET
  * …/skills`) and saved after the row's other fields (D6). A server without that field refuses it
@@ -106,7 +106,7 @@ export default function WBSBuilder() {
     if (previous && ACTIVE_JOB.has(previous) && generateStatus === 'succeeded') void wbsQuery.refetch()
   }, [generateStatus, wbsQuery])
 
-  // Validate once automatically so the issues card reflects the real tree.
+  // One AI review automatically when there is none yet; edits never re-run it (it costs tokens).
   const autoValidated = useRef(false)
   useEffect(() => {
     if (autoValidated.current || generating || !validateJob.isSuccess || nodes.length === 0) return
@@ -268,7 +268,7 @@ export default function WBSBuilder() {
         )}
         {wbsSkills.options.unsupported && <WbsSkillsOffBanner />}
 
-        <WbsValidationCard job={validateJob.data} starting={startValidate.isPending} />
+        <WbsValidationCard projectId={projectId} hasWbs={nodes.length > 0} job={validateJob.data} starting={startValidate.isPending} onRecheck={() => startValidate.mutate()} />
 
         <div className="card mt">
           <div className="row between" style={{ marginBottom: 8 }}>

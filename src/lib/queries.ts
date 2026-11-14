@@ -55,6 +55,7 @@ export const queryKeys = {
   latestIntakeRun: (projectId: string) => ['projects', projectId, 'intake', 'latest'] as const,
   scopeItems: (projectId: string) => ['projects', projectId, 'scope-items'] as const,
   wbs: (projectId: string) => ['projects', projectId, 'wbs'] as const,
+  wbsChecks: (projectId: string) => ['projects', projectId, 'wbs-checks'] as const,
   latestAiJob: (projectId: string, kind: AiJobKind) => ['projects', projectId, 'ai-jobs', kind] as const,
   constraints: (projectId: string) => ['projects', projectId, 'constraints'] as const,
   capacity: (projectId: string) => ['projects', projectId, 'capacity'] as const,
@@ -328,10 +329,14 @@ function projectPath(projectId: string, suffix: string): string {
   return `/api/v1/projects/${encodeURIComponent(projectId)}${suffix}`
 }
 
-/** WBS changes renumber codes, which dependency labels and skill coverage are built from. */
+/**
+ * WBS changes renumber codes, which dependency labels and skill coverage are built from, and they
+ * re-run the free built-in WBS checks (never the AI review, which costs tokens).
+ */
 function invalidatePlanning(queryClient: ReturnType<typeof useQueryClient>, projectId: string) {
   void queryClient.invalidateQueries({ queryKey: queryKeys.dependencies(projectId) })
   void queryClient.invalidateQueries({ queryKey: queryKeys.skillsCoverage(projectId) })
+  void queryClient.invalidateQueries({ queryKey: queryKeys.wbsChecks(projectId) })
 }
 
 export function useWbs(projectId: string) {

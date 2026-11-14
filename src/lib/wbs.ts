@@ -115,7 +115,7 @@ export function totalWeeks(nodes: WbsTreeNode[]): number {
 
 /**
  * Confirms AI estimates (`nodeIds` omitted = all of them) and stores the returned tree, so the
- * chips and the gate update at once.
+ * chips and the gate update at once; the free built-in checks re-run.
  */
 export function useConfirmEstimates(projectId: string) {
   const queryClient = useQueryClient()
@@ -125,7 +125,10 @@ export function useConfirmEstimates(projectId: string) {
         method: 'POST',
         json: nodeIds ? { nodeIds } : {},
       }),
-    onSuccess: (tree) => queryClient.setQueryData(queryKeys.wbs(projectId), tree),
+    onSuccess: (tree) => {
+      queryClient.setQueryData(queryKeys.wbs(projectId), tree)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.wbsChecks(projectId) })
+    },
   })
 }
 
@@ -135,9 +138,10 @@ export function isSkillsFieldUnknown(error: unknown): boolean {
 }
 
 /**
- * Saves the skills a work package needs and stores the returned node. The step 6 inputs sheet and
- * the skills coverage depend on them, so both refresh. `unsupported` turns true (for this visit)
- * once the server refuses the field, so the builder can stop offering the picker.
+ * Saves the skills a work package needs and stores the returned node. The step 6 inputs sheet, the
+ * skills coverage and the built-in WBS checks (skill gaps) depend on them, so they refresh.
+ * `unsupported` turns true (for this visit) once the server refuses the field, so the builder can
+ * stop offering the picker.
  */
 function useSaveWbsSkills(projectId: string) {
   const queryClient = useQueryClient()
@@ -149,6 +153,7 @@ function useSaveWbsSkills(projectId: string) {
       queryClient.setQueryData<WbsTreeNode[]>(queryKeys.wbs(projectId), (previous) => previous?.map((node) => (node.id === saved.id ? saved : node)))
       void queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'optimization'] })
       void queryClient.invalidateQueries({ queryKey: queryKeys.skillsCoverage(projectId) })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.wbsChecks(projectId) })
     },
     onError: (error) => {
       if (isSkillsFieldUnknown(error)) setUnsupported(true)

@@ -317,10 +317,26 @@ export interface AiJob {
 
 export type WbsIssueType = 'missing' | 'duplicate' | 'warning'
 
+/** A WBS finding. `source` (validate jobs only): 'rules' = the built-in checks, 'ai' = the AI review; older jobs have none. */
+export interface WbsIssue {
+  type: WbsIssueType
+  text: string
+  source?: 'rules' | 'ai'
+}
+
+/** The `wbs_validate` job's result: the built-in checks as they were then, plus the AI review's own items. */
 export interface WbsValidation {
   structureValid: boolean
   levels: number
-  issues: { type: WbsIssueType; text: string }[]
+  issues: WbsIssue[]
+}
+
+/** `GET …/wbs/checks`: the free built-in checks run now on the current WBS, team and constraints (no AI). */
+export interface WbsChecks {
+  issues: WbsIssue[]
+  checkedAt: string
+  /** When the WBS nodes last changed; null when there are none. */
+  wbsChangedAt: string | null
 }
 
 /* ───────────────────────────── Constraints / resources ───────────────────────────── */

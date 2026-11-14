@@ -1,62 +1,161 @@
 /**
- * AI validation card of the WBS Builder (mockup views/wbs.js `#wbs-issues`): the result of the
- * `wbs_validate` AI job — deterministic structure checks always, plus Claude's semantic checks when
- * the server has a key. Issues are suggestions only; nothing is added to the WBS until the PM adds
- * it. Hidden until a validation has been requested.
+ * AI validation card of the WBS Builder (mockup views/wbs.js `#wbs-issues`), in two parts:
+ * - Built-in checks (`GET …/wbs/checks`): structure, durations, owners, deadline and skill gaps on
+ *   the WBS as it is now. They are free, so they re-run after every edit (`lib/wbsChecks.ts`).
+ * - AI review (the last `wbs_validate` job): the missing / duplicate work and other items the AI
+ *   found, under the time it ran. It costs tokens, so it re-runs only when the PM asks; once the
+ *   WBS changed since, a note says so and offers "Re-check (uses AI)".
+ * Issues are suggestions only; nothing is added to the WBS until the PM adds it. Hidden while the
+ * project has no WBS (the builder's empty state explains that).
  */
-import type { AiJob, WbsIssueType, WbsValidation } from '@/lib/types'
+import type { ReactNode } from 'react'
+import { errorMessage } from '@/lib/api'
+import type { AiJob, WbsIssue, WbsIssueType } from '@/lib/types'
+import { reviewIsStale, reviewIssues, reviewTime, useWbsChecks } from '@/lib/wbsChecks'
 
 const ISSUE_STYLE: Record<WbsIssueType, { label: string; background: string }> = {
   missing: { label: 'Missing', background: '#F5E3C8' },
   duplicate: { label: 'Duplicate', background: '#F5E3C8' },
   warning: { label: 'Warning', background: '#F3D9D5' },
 }
+const ACTIVE_JOB = new Set(['queued', 'running'])
 
-/** Running, failed or finished validation; renders nothing before the first run. */
-export default function WbsValidationCard({ job, starting }: { job: AiJob | null | undefined; starting: boolean }) {
-  const running = starting || job?.status === 'queued' || job?.status === 'running'
-  if (!job && !starting) return null
+function SubHeading({ children }: { children: ReactNode }) {
+  return (
+    <h4 className="small" style={{ margin: '12px 0 0', fontWeight: 600, color: 'var(--secfg)' }}>
+      {children}
+    </h4>
+  )
+}
 
-  if (running) {
+function IssueRows({ issues }: { issues: WbsIssue[] }) {
+  return issues.map((issue, index) => (
+    <div key={`${issue.type}-${index}-${issue.text}`} className="issue" style={{ background: ISSUE_STYLE[issue.type].background }}>
+      <b style={{ minWidth: 72 }}>{ISSUE_STYLE[issue.type].label}</b>
+      <span>{issue.text}</span>
+    </div>
+  ))
+}
+
+function Note({ children, tone = 'muted' }: { children: ReactNode; tone?: 'muted' | 'ok' | 'bad' }) {
+  const color = tone === 'ok' ? 'var(--green)' : tone === 'bad' ? 'var(--red)' : 'var(--mfg)'
+  return (
+    <p className="small" style={{ margin: '6px 0 0', color }}>
+      {children}
+    </p>
+  )
+}
+
+/** The built-in checks as of now: loading, error with a retry, "No structural issues", or the list. */
+function LiveChecks({ checks }: { checks: ReturnType<typeof useWbsChecks> }) {
+  const live = checks.isError ? undefined : checks.data
+  let body: ReactNode
+  if (checks.isError) {
+    body = (
+      <Note tone="bad">
+        <span role="alert">The built-in checks couldn&rsquo;t run: {errorMessage(checks.error)}</span>{' '}
+        <button className="linkbtn" type="button" onClick={() => void checks.refetch()}>
+          Try again
+        </button>
+      </Note>
+    )
+  } else if (!live) {
+    body = <Note>Running the built-in checks…</Note>
+  } else if (live.issues.length === 0) {
+    body = <Note tone="ok">&#10003; No structural issues</Note>
+  } else {
+    body = <IssueRows issues={live.issues} />
+  }
+  return (
+    <section aria-label="Built-in checks" aria-live="polite" aria-busy={checks.isFetching || undefined}>
+      <SubHeading>Built-in checks · {checks.isFetching ? 'updating…' : checks.isError ? 'not available' : 'up to date'}</SubHeading>
+      {body}
+    </section>
+  )
+}
+
+/** The last AI review: none yet, running, failed, or its own items with its time and the stale note. */
+function AiReview({ job, starting, liveAvailable, wbsChangedAt, onRecheck }: {
+  job: AiJob | null | undefined
+  starting: boolean
+  liveAvailable: boolean
+  wbsChangedAt: string | null | undefined
+  onRecheck: () => void
+}) {
+  const recheck = (
+    <button className="btn sec sm" type="button" onClick={onRecheck} disabled={starting}>
+      Re-check (uses AI)
+    </button>
+  )
+  if (starting || ACTIVE_JOB.has(job?.status ?? '')) {
     return (
-      <div className="card" id="wbs-issues" role="status">
-        <h3>AI validation</h3>
-        <p className="small muted" style={{ margin: 0 }}>
-          Checking structure, coverage and staffing…
+      <section aria-label="AI review">
+        <SubHeading>AI review</SubHeading>
+        <p className="small muted" role="status" style={{ margin: '6px 0 0' }}>
+          Checking for missing and duplicate work with AI…
         </p>
-      </div>
+      </section>
     )
   }
-  if (job?.status !== 'succeeded') {
+  if (!job) {
     return (
-      <div className="card" id="wbs-issues" role="alert">
-        <h3>AI validation</h3>
-        <p className="small" style={{ margin: 0, color: 'var(--red)' }}>
-          {job?.error ?? 'The validation did not finish. Run AI Validate again.'}
-        </p>
-      </div>
+      <section aria-label="AI review">
+        <SubHeading>AI review</SubHeading>
+        <Note>Not run yet. AI Validate looks for missing and duplicate work (uses AI).</Note>
+      </section>
     )
   }
+  if (job.status !== 'succeeded') {
+    return (
+      <section aria-label="AI review">
+        <SubHeading>AI review</SubHeading>
+        <div className="row between" style={{ marginTop: 6 }}>
+          <span className="small" role="alert" style={{ color: 'var(--red)' }}>
+            {job.error ?? 'The AI review did not finish.'}
+          </span>
+          {recheck}
+        </div>
+      </section>
+    )
+  }
+  const issues = reviewIssues(job, liveAvailable)
+  return (
+    <section aria-label="AI review">
+      <SubHeading>AI review · checked at {reviewTime(job.finishedAt)}</SubHeading>
+      {reviewIsStale(job, wbsChangedAt) && (
+        <div className="issue" id="wbs-review-stale" style={{ background: '#FBF0DD', color: '#5C3D0E', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>The WBS changed since this AI review.</span>
+          {recheck}
+        </div>
+      )}
+      {issues.length > 0 ? <IssueRows issues={issues} /> : <Note>The AI review found nothing else to fix.</Note>}
+    </section>
+  )
+}
 
-  const result = job.result as WbsValidation | null
-  const issues = result?.issues ?? []
+/** The card: live built-in checks, then the last AI review. Renders nothing while there is no WBS. */
+export default function WbsValidationCard({ projectId, hasWbs, job, starting, onRecheck }: {
+  projectId: string
+  /** The project has WBS nodes: the checks run and the card shows. */
+  hasWbs: boolean
+  /** The latest `wbs_validate` job (null: none yet; undefined: loading). */
+  job: AiJob | null | undefined
+  /** An AI review is being requested. */
+  starting: boolean
+  /** Runs the AI review again (costs tokens). */
+  onRecheck: () => void
+}) {
+  const checks = useWbsChecks(projectId, hasWbs)
+  if (!hasWbs) return null
+
+  const live = checks.isError ? undefined : checks.data
+  const total = live ? live.issues.length + reviewIssues(job, true).length : null
   return (
     <div className="card" id="wbs-issues">
-      <h3>
-        AI validation: {issues.length === 0 ? 'no issues' : `${issues.length} issue${issues.length > 1 ? 's' : ''}`}
-        {result && (
-          <span className="small muted" style={{ fontWeight: 400 }}>
-            {result.structureValid ? `Structure is valid (${result.levels} levels)` : `Structure needs attention (${result.levels} levels)`}
-          </span>
-        )}
-      </h3>
-      {issues.map((issue, index) => (
-        <div key={`${issue.type}-${index}`} className="issue" style={{ background: ISSUE_STYLE[issue.type].background }}>
-          <b style={{ minWidth: 72 }}>{ISSUE_STYLE[issue.type].label}</b>
-          <span>{issue.text}</span>
-        </div>
-      ))}
-      <p className="small muted" style={{ margin: '8px 0 0' }}>
+      <h3 style={{ marginBottom: 0 }}>AI validation{total === null ? '' : total === 0 ? ': no issues' : `: ${total} issue${total > 1 ? 's' : ''}`}</h3>
+      <LiveChecks checks={checks} />
+      <AiReview job={job} starting={starting} liveAvailable={!checks.isError} wbsChangedAt={live?.wbsChangedAt} onRecheck={onRecheck} />
+      <p className="small muted" style={{ margin: '10px 0 0' }}>
         Suggestions only. Nothing is added to the WBS until you add it.
       </p>
     </div>
