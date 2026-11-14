@@ -416,14 +416,14 @@ async def test_validate_with_claude_adds_its_issues_or_says_it_did_not_run() -> 
     await _run(store, FakeLLM(review))
     ((result, model, _, _),) = store.finished
     assert model == "claude-sonnet-5-5"
-    assert result["issues"] == [{"type": "missing", "text": "No UAT work package."}]
+    assert result["issues"] == [{"type": "missing", "text": "No UAT work package.", "source": "ai"}]
     assert result["structureValid"] is False
 
     store = FakeStore(AiJobKind.WBS_VALIDATE, _validation_input())
     await _run(store, FakeLLM(RuntimeError("secret internals")))
     ((result, model, _, _),) = store.finished
     assert model == "rules"
-    assert result["issues"] == [{"type": "warning", "text": REVIEW_UNAVAILABLE}]
+    assert result["issues"] == [{"type": "warning", "text": REVIEW_UNAVAILABLE, "source": "ai"}]
 
 
 async def test_recover_stale_and_no_database() -> None:

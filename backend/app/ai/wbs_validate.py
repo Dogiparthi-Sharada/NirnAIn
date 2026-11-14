@@ -1,5 +1,16 @@
 """WBS validation: deterministic structure checks (always) plus an optional
-Claude review. Pure functions; the worker does the I/O."""
+Claude review. Pure functions; the worker and `GET …/wbs/checks` do the I/O.
+
+The deterministic checks (`check_structure`) are free and run live on every
+WBS change; only the Claude review costs tokens. Rules they apply:
+
+* Deadline (round-2 decision D4): planning starts today, so when the start
+  date has passed (or isn't set) only the working days from today to the
+  deadline count, as in the optimizer.
+* Skill gaps: checked against the project team when it has members, else
+  against every active employee (`repositories/wbs_checks.py` builds the pool,
+  the optimizer plans with the same one); the message says which.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +28,7 @@ from app.ai.wbs_generate import ScopeEntry, select_scope
 from app.domain.common import DependencyType
 
 IssueType = Literal["missing", "duplicate", "warning"]
+IssueSource = Literal["rules", "ai"]
 
 MAX_LISTED = 3
 MAX_REVIEW_ISSUES = 6
@@ -61,6 +73,7 @@ class ValidationInput:
     held_skills: frozenset[str] = frozenset()  # casefolded skill names the pool has
     has_team: bool = False
     scope: tuple[ScopeEntry, ...] = ()
+    today: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +155,35 @@ def critical_path_days(
     return max((start[n] + duration[n] for n in duration), default=0)
 
 
+def planning_start(inp: ValidationInput) -> date | None:
+    """First day work can still happen: the start date, or today once it has passed (D4)."""
+    days = [day for day in (inp.start_date, inp.today) if day is not None]
+    return max(days, default=None)
+
+
+def _deadline_issue(inp: ValidationInput, packages: Sequence[NodeInfo]) -> Issue | None:
+    """The critical path against the working days left between the planning start and the
+    deadline (None when it fits, or when the dates or the packages aren't there yet)."""
+    first = planning_start(inp)
+    if first is None or inp.deadline is None or not packages:
+        return None
+    length = critical_path_days(packages, inp.dependencies)
+    window = working_days(first, inp.deadline, inp.working_days_per_week)
+    if length is None or length <= window:
+        return None
+    if inp.deadline < first:
+        return Issue(
+            "warning",
+            f"The critical path takes {length} working days, but the deadline "
+            f"{inp.deadline} has already passed.",
+        )
+    return Issue(
+        "warning",
+        f"The critical path takes {length} working days, but only {window} are "
+        f"available between {first} and {inp.deadline}.",
+    )
+
+
 def check_structure(inp: ValidationInput) -> list[Issue]:  # noqa: PLR0912
     """Checks that need no AI: tree shape, names, durations, owners, deadline, skills."""
     if not inp.nodes:
@@ -179,39 +221,40 @@ def check_structure(inp: ValidationInput) -> list[Issue]:  # noqa: PLR0912
         [p for p in packages if p.owner_employee_id is None], "has no owner.", "have no owner"
     )
 
-    if inp.start_date and inp.deadline and packages:
-        length = critical_path_days(packages, inp.dependencies)
-        window = working_days(inp.start_date, inp.deadline, inp.working_days_per_week)
-        if length is not None and length > window:
-            issues.append(
-                Issue(
-                    "warning",
-                    f"The critical path takes {length} working days, but only {window} are "
-                    f"available between {inp.start_date} and {inp.deadline}.",
-                )
-            )
+    deadline = _deadline_issue(inp, packages)
+    if deadline is not None:
+        issues.append(deadline)
 
-    who = "team member" if inp.has_team else "active employee"
+    pool = "nobody on the project team has" if inp.has_team else "no active employee has"
     seen: set[str] = set()
     for skill in inp.required_skills:
         key = _norm(skill)
         if key in seen or key in inp.held_skills:
             continue
         seen.add(key)
-        issues.append(Issue("warning", f"{skill} skill gap: no {who} has it."))
+        issues.append(Issue("warning", f"Skill gap: {pool} {skill}."))
     return issues
 
 
 def validation_result(inp: ValidationInput, extra: Sequence[Issue] = ()) -> dict[str, Any]:
-    issues = check_structure(inp)
-    known = {_norm(i.text) for i in issues}
-    issues += [i for i in extra if _norm(i.text) not in known]
-    roots = [n for n in inp.nodes if n.parent_id is None]
-    valid = len(roots) == 1 and not any(i.type in ("missing", "duplicate") for i in issues)
+    """The validate job's result: the built-in checks, then the review's other issues.
+
+    Each issue carries its `source` ('rules' or 'ai'), so the builder can show the rules
+    live from `GET …/wbs/checks` and keep only the review's own items from the job.
+    """
+    rules = check_structure(inp)
+    known = {_norm(issue.text) for issue in rules}
+    review = [issue for issue in extra if _norm(issue.text) not in known]
+    roots = [node for node in inp.nodes if node.parent_id is None]
+    valid = len(roots) == 1 and not any(
+        issue.type in ("missing", "duplicate") for issue in rules + review
+    )
+    tagged: list[tuple[Issue, IssueSource]] = [(issue, "rules") for issue in rules]
+    tagged += [(issue, "ai") for issue in review]
     return {
         "structureValid": valid,
-        "levels": max((n.level for n in inp.nodes), default=0),
-        "issues": [i.as_json() for i in issues],
+        "levels": max((node.level for node in inp.nodes), default=0),
+        "issues": [{**issue.as_json(), "source": source} for issue, source in tagged],
     }
 
 

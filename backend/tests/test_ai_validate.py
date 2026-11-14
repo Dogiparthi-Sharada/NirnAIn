@@ -35,7 +35,11 @@ def tree(*packages: tuple[str, int | None, bool], deliverables: int = 1) -> list
 
 
 def run(nodes: list[NodeInfo], **kw: object) -> dict[str, object]:
-    return validation_result(ValidationInput("CRM", tuple(nodes), **kw))  # type: ignore[arg-type]
+    """The job result of the rules alone, without the `source` tags (all 'rules' here)."""
+    result = validation_result(ValidationInput("CRM", tuple(nodes), **kw))  # type: ignore[arg-type]
+    issues: list[dict[str, str]] = result["issues"]
+    assert {issue.pop("source") for issue in issues} <= {"rules"}
+    return result
 
 
 def test_sound_tree_is_valid_with_no_issues() -> None:
@@ -100,6 +104,60 @@ def test_critical_path_longer_than_the_window_warns() -> None:
     assert ok["issues"] == []  # without the link the longest package fits
 
 
+def test_critical_path_window_starts_today_once_the_start_has_passed() -> None:
+    nodes = tree(("A", 10, True), ("B", 10, True))
+    deps = (DependencyInfo(nodes[2].id, nodes[3].id),)
+    # Started Mon 2026-11-02; today is Sat 2026-11-14: Mon 11-16 .. Mon 11-30 = 11 days left.
+    late = run(
+        nodes,
+        dependencies=deps,
+        start_date=date(2026, 11, 2),
+        deadline=date(2026, 11, 30),
+        today=date(2026, 11, 14),
+    )
+    assert late["issues"] == [
+        {
+            "type": "warning",
+            "text": "The critical path takes 20 working days, but only 11 are available "
+            "between 2026-11-14 and 2026-11-30.",
+        }
+    ]
+    # The same dates checked on the start day: 21 working days, so it fits.
+    on_time = run(
+        nodes,
+        dependencies=deps,
+        start_date=date(2026, 11, 2),
+        deadline=date(2026, 11, 30),
+        today=date(2026, 11, 2),
+    )
+    assert on_time["issues"] == []
+    # A future start still counts from the start; no start at all counts from today.
+    future = run(
+        nodes,
+        dependencies=deps,
+        start_date=date(2026, 11, 16),
+        deadline=date(2026, 11, 27),
+        today=date(2026, 11, 2),
+    )
+    assert "between 2026-11-16 and 2026-11-27" in str(future["issues"])
+    unset = run(nodes, dependencies=deps, deadline=date(2026, 11, 27), today=date(2026, 11, 16))
+    assert "only 10 are available between 2026-11-16 and 2026-11-27" in str(unset["issues"])
+    passed = run(
+        nodes,
+        dependencies=deps,
+        start_date=date(2026, 11, 2),
+        deadline=date(2026, 11, 13),
+        today=date(2026, 11, 16),
+    )
+    assert passed["issues"] == [
+        {
+            "type": "warning",
+            "text": "The critical path takes 20 working days, but the deadline 2026-11-13 "
+            "has already passed.",
+        }
+    ]
+
+
 def test_critical_path_dependency_types_and_cycles() -> None:
     a, b = (NodeInfo(uuid.uuid4(), None, 3, c, c, 10) for c in ("a", "b"))
     assert critical_path_days([a, b], [DependencyInfo(a.id, b.id, DependencyType.SS, 2)]) == 12
@@ -125,12 +183,10 @@ def test_skill_gap_names_the_pool() -> None:
         has_team=True,
     )
     assert result["issues"] == [
-        {"type": "warning", "text": "SAP Integration skill gap: no team member has it."}
+        {"type": "warning", "text": "Skill gap: nobody on the project team has SAP Integration."}
     ]
     org = run(nodes, required_skills=("QA",))
-    assert org["issues"] == [
-        {"type": "warning", "text": "QA skill gap: no active employee has it."}
-    ]
+    assert org["issues"] == [{"type": "warning", "text": "Skill gap: no active employee has QA."}]
 
 
 def test_review_issues_are_clamped_and_deduplicated() -> None:
@@ -147,9 +203,12 @@ def test_review_issues_are_clamped_and_deduplicated() -> None:
             WbsReview(issues=[ReviewIssue(type="warning", text="1.1.1 A has no duration.")])
         ),
     ]
-    result = run(nodes, scope=())
     combined = validation_result(ValidationInput("CRM", tuple(nodes)), extra)
-    assert len(combined["issues"]) == len(result["issues"]) + 1  # type: ignore[arg-type]
+    # The review's copy of a rule finding is dropped; each issue says where it came from.
+    assert combined["issues"] == [
+        {"type": "warning", "text": "1.1.1 A has no duration.", "source": "rules"},
+        {"type": "missing", "text": "Add UAT 0", "source": "ai"},
+    ]
 
 
 def test_validation_prompt_escapes_user_text() -> None:
