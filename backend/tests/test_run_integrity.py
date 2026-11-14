@@ -2,7 +2,7 @@
 
 What: a work package without a usable duration blocks the run and is named on the inputs
 sheet (WBS-003, WBS-004) instead of silently missing from an "optimal" plan; a run starts
-only from the inputs the PM reviewed (CON-019).
+only from the inputs the PM reviewed (CON-019), and never twice at once (NFR-005).
 Why: QA's pack 2 found plans that left out mandatory work with nothing said.
 How it fits: the API runs against the in-memory `FakeRuns` of test_optimization_api; the
 repository query is compiled against the recording connection of test_repositories.
@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 from app.api import deps
 from app.core.security import CurrentPrincipal
 from app.optimization.model import Task
+from app.repositories.optimization import OptimizationRepository
 from app.repositories.work_packages import packages_without_duration
 from tests.conftest import Store
 from tests.test_optimization_api import (
@@ -130,6 +131,34 @@ def test_a_run_starts_only_from_the_inputs_the_pm_reviewed(
     assert started.json()["options"]["reviewedHash"] == current
     malformed = opt_client.post(_url(project_id), json={"reviewedHash": "abc"}, headers=auth(user))
     assert malformed.status_code == 422
+
+
+def test_a_second_start_while_one_is_starting_is_refused(
+    opt_client: TestClient, store: Store, run_store: RunStore, runner: FakeRunner, auth: Auth
+) -> None:
+    """NFR-005: a double-click's second request is refused, not queued as a second run."""
+    user, _, project_id = _project(opt_client, store, auth)
+    _ready(run_store, project_id)
+    run_store.starting.add(uuid.UUID(project_id))
+
+    second = opt_client.post(_url(project_id), headers=auth(user))
+
+    assert (second.status_code, second.json()["detail"]) == (
+        409,
+        "An optimization is already running for this project.",
+    )
+    assert (runner.submitted, run_store.runs) == ([], {})
+
+
+async def test_run_creation_claims_a_transaction_lock_on_the_project() -> None:
+    project_id = uuid.uuid4()
+    connection = Conn(Rows([{"claimed": False}]))
+
+    claimed = await OptimizationRepository(connection).lock_run_creation(project_id)  # type: ignore[arg-type]
+
+    assert claimed is False
+    assert "pg_try_advisory_xact_lock(hashtextextended(" in connection.sql[0]
+    assert f"optimization_runs:{project_id}" in connection.params[0].values()
 
 
 def _node(

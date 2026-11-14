@@ -17,7 +17,7 @@
  * applied yet that was solved from other inputs (`hash !== run.options.inputsHash`) can't be applied
  * (the server refuses it too): Apply is disabled with the reason, next to "Run again".
  */
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { policyRisks } from '@/lib/constraintPolicy'
 import {
@@ -59,6 +59,9 @@ export default function OptimizationResults() {
   const constraintsQuery = useConstraints(projectId)
   const skills = useProjectSkillList(projectId)
   const startRun = useStartOptimization(projectId)
+  // Set in the click itself: `startRun.isPending` (which disables the buttons) only arrives with
+  // the next render, after a double-click's second click (NFR-005).
+  const startingRef = useRef(false)
   const [toast, showToast] = useToast()
   // "Run again" re-opens the sheet; "View the last plan" dismisses the inputs-changed sheet.
   const [sheetRequested, setSheetRequested] = useState(false)
@@ -82,10 +85,15 @@ export default function OptimizationResults() {
 
   /** Starts a run (with a remedy when re-solving an infeasible plan); success closes the sheet. */
   function start(request: RunRequest = {}) {
+    if (startingRef.current) return
+    startingRef.current = true
     startRun.mutate(request, {
       onSuccess: () => {
         setSheetRequested(false)
         setStalePlanAccepted(false)
+      },
+      onSettled: () => {
+        startingRef.current = false
       },
     })
   }

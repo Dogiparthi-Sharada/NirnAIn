@@ -186,6 +186,8 @@ async def create_run(
     if not await runs.can_write(project_id):
         raise ForbiddenError("You do not have permission to optimize this project")
 
+    if not await runs.lock_run_creation(project_id):  # another request is starting one
+        raise ConflictError(ACTIVE_RUN_DETAIL)
     stale_after_s = request.app.state.settings.optimizer_stale_after_s
     active = await runs.active_run(project_id, stale_after_s)
     if active is not None:

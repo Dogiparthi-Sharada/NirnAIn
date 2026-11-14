@@ -43,6 +43,7 @@ class RunStore:
     # Change requests: id -> {"project_id", "status", "proposed_run_id"}.
     changes: dict[uuid.UUID, dict[str, Any]] = field(default_factory=dict)
     race: bool = False  # simulate a concurrent insert hitting the unique index
+    starting: set[uuid.UUID] = field(default_factory=set)  # projects another request is starting
     # Work packages without a usable duration ('code name'), per project.
     without_duration: dict[uuid.UUID, list[str]] = field(default_factory=dict)
 
@@ -63,6 +64,9 @@ class FakeRuns:
 
     async def can_write(self, project_id: uuid.UUID) -> bool:
         return self._role(project_id) not in (None, OrgRole.VIEWER)
+
+    async def lock_run_creation(self, project_id: uuid.UUID) -> bool:
+        return project_id not in self.r.starting
 
     async def active_run(self, project_id: uuid.UUID, stale_after_s: int) -> ActiveRun | None:
         cutoff = datetime.now(UTC) - timedelta(seconds=stale_after_s)

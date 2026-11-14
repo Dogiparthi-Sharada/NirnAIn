@@ -128,6 +128,18 @@ class OptimizationRepository:
         stmt = sa.select(sa.func.private.can_write_project(project_id))
         return bool((await self._conn.execute(stmt)).scalar())
 
+    async def lock_run_creation(self, project_id: uuid.UUID) -> bool:
+        """Claim the right to start the project's next run until this transaction ends.
+
+        Business rule (NFR-005): one run at a time, race-proof. Run creation checks for an
+        active run, loads the inputs, then inserts; a second request (a double-click) that
+        checked before the first committed could insert after the first run had already
+        finished. With the claim it is refused at once instead (False: someone holds it).
+        """
+        key = sa.func.hashtextextended(f"optimization_runs:{project_id}", 0)
+        claimed = await self._conn.execute(sa.select(sa.func.pg_try_advisory_xact_lock(key)))
+        return bool(claimed.scalar())
+
     async def active_run(self, project_id: uuid.UUID, stale_after_s: int) -> ActiveRun | None:
         stmt = (
             sa.select(r.c.id, _older_than(stale_after_s).label("stale"))
