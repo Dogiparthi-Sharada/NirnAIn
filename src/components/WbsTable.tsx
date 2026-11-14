@@ -4,12 +4,14 @@
  *
  * Each work package shows its weeks and an estimate chip — "AI estimate" with a Confirm button
  * until the PM confirms it, "✓ Confirmed", or "Yours" for estimates the PM entered (see
- * `lib/wbs.ts`). Rows can be edited inline (name, weeks, owner) and reordered within their parent
- * by dragging or Alt+↑/↓; the screen performs the API calls.
+ * `lib/wbs.ts`). Rows can be edited inline (name, weeks, owner; see `WbsEditCells`, which checks
+ * the values first) and reordered within their parent by dragging or Alt+↑/↓; the screen performs
+ * the API calls.
  */
 import { useState, type DragEvent, type KeyboardEvent } from 'react'
-import { DAYS_PER_WEEK, displayCode, estimateState, formatWeeks, type EstimateState, type WbsTreeNode } from '@/lib/wbs'
+import { displayCode, estimateState, formatWeeks, type EstimateState, type WbsTreeNode } from '@/lib/wbs'
 import type { WbsNodePatch } from '@/lib/types'
+import WbsEditCells from './WbsEditCells'
 
 const CHIPS: Record<EstimateState, [className: string, label: string]> = {
   ai: ['st-inferred', 'AI estimate'],
@@ -21,12 +23,6 @@ const CHIPS: Record<EstimateState, [className: string, label: string]> = {
 /** Id of a work package's Confirm button (or Edit button when it has no estimate); gate links focus it. */
 export function estimateControlId(nodeId: string): string {
   return `wbs-ok-${nodeId}`
-}
-
-interface Draft {
-  name: string
-  weeks: string
-  ownerId: string
 }
 
 /** Rows of the WBS with inline editing, estimate confirmation and reordering. */
@@ -63,40 +59,11 @@ export default function WbsTable({
   selectedId: string | null
 }) {
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [draft, setDraft] = useState<Draft>({ name: '', weeks: '', ownerId: '' })
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
 
   const byId = new Map(nodes.map((node) => [node.id, node]))
   const visible = nodes.filter((node) => node.level < 3 || !node.parentId || !collapsed.has(node.parentId))
-
-  function startEdit(node: WbsTreeNode) {
-    setEditingId(node.id)
-    setDraft({
-      name: node.name,
-      weeks: node.durationDays == null ? '' : String(node.durationDays / DAYS_PER_WEEK),
-      ownerId: node.ownerEmployeeId ?? '',
-    })
-  }
-
-  function saveEdit(node: WbsTreeNode) {
-    const name = draft.name.trim()
-    if (!name) return
-    const patch: WbsNodePatch = { name }
-    if (node.level === 3) {
-      const weeks = Number.parseFloat(draft.weeks)
-      patch.durationDays = Number.isFinite(weeks) && weeks >= 0 ? Math.round(weeks * DAYS_PER_WEEK) : null
-      patch.ownerEmployeeId = draft.ownerId || null
-    }
-    onSave(node, patch)
-    setEditingId(null)
-  }
-
-  function editKeys(event: KeyboardEvent, node: WbsTreeNode) {
-    event.stopPropagation()
-    if (event.key === 'Enter') saveEdit(node)
-    if (event.key === 'Escape') setEditingId(null)
-  }
 
   /** Keyboard alternative to dragging: Alt+↑/↓ moves a row within its parent. */
   function rowKeys(event: KeyboardEvent<HTMLTableRowElement>, node: WbsTreeNode) {
@@ -187,97 +154,44 @@ export default function WbsTable({
                 )}
                 {displayCode(node)}
               </td>
-              <td>
-                {editing ? (
-                  <input
-                    className="in sm"
-                    style={{ width: '100%' }}
-                    value={draft.name}
-                    onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-                    onKeyDown={(event) => editKeys(event, node)}
-                    onClick={(event) => event.stopPropagation()}
-                    aria-label="Name"
-                    maxLength={300}
-                    autoFocus
-                  />
-                ) : (
-                  node.name
-                )}
-              </td>
-              <td>
-                {node.level === 3 &&
-                  (editing ? (
-                    <input
-                      className="in sm"
-                      style={{ width: 80 }}
-                      value={draft.weeks}
-                      onChange={(event) => setDraft({ ...draft, weeks: event.target.value })}
-                      onKeyDown={(event) => editKeys(event, node)}
-                      aria-label="Duration in weeks"
-                      inputMode="decimal"
-                      placeholder="weeks"
-                    />
-                  ) : (
-                    <span className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
-                      {state !== 'missing' && <span className="mono">{formatWeeks(node.durationDays)}</span>}
-                      <span className={`chip ${chipClass}`}>{chipLabel}</span>
-                      {state === 'ai' && (
-                        <button
-                          className="btn sec sm"
-                          id={estimateControlId(node.id)}
-                          type="button"
-                          disabled={confirming.has(node.id)}
-                          aria-label={`Confirm ${formatWeeks(node.durationDays)} for ${node.name}`}
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            onConfirm(node.id)
-                          }}
-                        >
-                          {confirming.has(node.id) ? 'Confirming…' : 'Confirm'}
-                        </button>
-                      )}
-                    </span>
-                  ))}
-              </td>
-              <td className="small">
-                {node.level === 3 &&
-                  (editing ? (
-                    <select
-                      className="in sm"
-                      style={{ width: '100%' }}
-                      value={draft.ownerId}
-                      onChange={(event) => setDraft({ ...draft, ownerId: event.target.value })}
-                      aria-label="Owner"
-                    >
-                      <option value="">Unassigned</option>
-                      {owners.map((owner) => (
-                        <option key={owner.id} value={owner.id}>
-                          {owner.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    (node.ownerName ?? <span className="muted">Unassigned</span>)
-                  ))}
-              </td>
-              <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                {editing ? (
-                  <>
-                    <button className="btn sm" type="button" onClick={(event) => {
-                        event.stopPropagation()
-                        saveEdit(node)
-                      }}>
-                      Save
-                    </button>{' '}
-                    <button className="btn sec sm" type="button" onClick={(event) => {
-                        event.stopPropagation()
-                        setEditingId(null)
-                      }}>
-                      Cancel
-                    </button>
-                  </>
-                ) : (
-                  <>
+              {editing ? (
+                <WbsEditCells
+                  node={node}
+                  owners={owners}
+                  onSave={(patch) => {
+                    onSave(node, patch)
+                    setEditingId(null)
+                  }}
+                  onCancel={() => setEditingId(null)}
+                />
+              ) : (
+                <>
+                  <td>{node.name}</td>
+                  <td>
+                    {node.level === 3 && (
+                      <span className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
+                        {state !== 'missing' && <span className="mono">{formatWeeks(node.durationDays)}</span>}
+                        <span className={`chip ${chipClass}`}>{chipLabel}</span>
+                        {state === 'ai' && (
+                          <button
+                            className="btn sec sm"
+                            id={estimateControlId(node.id)}
+                            type="button"
+                            disabled={confirming.has(node.id)}
+                            aria-label={`Confirm ${formatWeeks(node.durationDays)} for ${node.name}`}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              onConfirm(node.id)
+                            }}
+                          >
+                            {confirming.has(node.id) ? 'Confirming…' : 'Confirm'}
+                          </button>
+                        )}
+                      </span>
+                    )}
+                  </td>
+                  <td className="small">{node.level === 3 && (node.ownerName ?? <span className="muted">Unassigned</span>)}</td>
+                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <button
                       className="linkbtn"
                       type="button"
@@ -285,7 +199,7 @@ export default function WbsTable({
                       aria-label={`Edit ${node.name}`}
                       onClick={(event) => {
                         event.stopPropagation()
-                        startEdit(node)
+                        setEditingId(node.id)
                       }}
                     >
                       Edit
@@ -298,17 +212,17 @@ export default function WbsTable({
                           type="button"
                           aria-label={node.level === 1 ? 'Add a deliverable' : `Add a work package to ${node.name}`}
                           onClick={(event) => {
-                        event.stopPropagation()
-                        onAddChild(node)
-                      }}
+                            event.stopPropagation()
+                            onAddChild(node)
+                          }}
                         >
                           {node.level === 1 ? '+ Deliverable' : '+ Package'}
                         </button>
                       </>
                     )}
-                  </>
-                )}
-              </td>
+                  </td>
+                </>
+              )}
             </tr>
           )
         })}

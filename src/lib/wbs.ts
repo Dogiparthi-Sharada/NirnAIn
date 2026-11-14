@@ -39,6 +39,33 @@ export function weeksLabel(days: number): string {
   return `${weeks} week${weeks === 1 ? '' : 's'}`
 }
 
+/** The longest duration the server accepts: 3,650 working days, i.e. 730 weeks. */
+export const MAX_DURATION_DAYS = 3650
+
+/** Weeks typed for a work package: the working days to save, or why they can't be saved. */
+export type WeeksInput = { days: number | null; rounded: boolean; problem: null } | { days: null; rounded: false; problem: string }
+
+/**
+ * Reads the weeks typed in a work package's Duration field. Blank = no estimate yet. Negative or
+ * non-numeric text (including "2,5": we don't guess which separator was meant) is refused with a
+ * reason. Durations are whole working days on the wire, so a fraction is rounded to the nearest
+ * day and `rounded` says so, letting the editor show it ("1.5 w = 8 days").
+ */
+export function parseWeeks(text: string): WeeksInput {
+  const cleaned = text.trim()
+  if (cleaned === '') return { days: null, rounded: false, problem: null }
+  if (cleaned.startsWith('-')) return { days: null, rounded: false, problem: 'Weeks can\u2019t be negative.' }
+  if (!/^(\d+(\.\d*)?|\.\d+)$/.test(cleaned)) {
+    return { days: null, rounded: false, problem: 'Enter the weeks as a number, for example 2 or 1.5.' }
+  }
+  const exactDays = Number(cleaned) * DAYS_PER_WEEK
+  const days = Math.round(exactDays)
+  if (days > MAX_DURATION_DAYS) {
+    return { days: null, rounded: false, problem: `A work package can last at most ${MAX_DURATION_DAYS / DAYS_PER_WEEK} weeks. Check for extra digits.` }
+  }
+  return { days, rounded: Math.abs(days - exactDays) > 1e-9, problem: null }
+}
+
 /** The root shows as "1.0" like the design; other nodes use the server-derived codes. */
 export function displayCode(node: WbsNode): string {
   return node.level === 1 ? '1.0' : node.code
