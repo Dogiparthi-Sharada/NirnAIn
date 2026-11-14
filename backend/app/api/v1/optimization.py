@@ -15,7 +15,7 @@ in force (its baseline) unless the body names another `baselineRunId`.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Request, Response, status
 
@@ -26,7 +26,7 @@ from app.jobs.optimizer import RESTART_ERROR
 from app.optimization.input_sheet import Blocker, Sheet, blocking_detail, build_sheet
 from app.optimization.inputs import inputs_hash
 from app.optimization.model import PlanningInput
-from app.optimization.overrides import apply_overrides, with_baseline
+from app.optimization.overrides import apply_overrides, with_baseline, with_plan_in_force
 from app.optimization.remedies import apply_remedy
 from app.repositories.optimization import ActiveRunExistsError, ProjectContext
 
@@ -54,6 +54,18 @@ async def _project(runs: OptimizationRuns, project_id: uuid.UUID) -> ProjectCont
     return project
 
 
+async def _plan_in_force(
+    runs: OptimizationRuns, project_id: uuid.UUID, run_id: uuid.UUID
+) -> tuple[dict[str, tuple[date, date]], date | None]:
+    """An earlier run's plan: each work package's first and last day, and its completion."""
+    run = await runs.get(project_id, run_id)
+    if run is None or run.result is None:
+        return {}, None
+    dates = {item.wbs_node_id: (item.start, item.end) for item in run.result.schedule}
+    summary = run.result.summary
+    return dates, summary.completion_date if summary is not None else None
+
+
 async def _sheet(runs: OptimizationRuns, project: ProjectContext) -> tuple[PlanningInput, Sheet]:
     inp = await runs.load_input(project, datetime.now(UTC).date())
     return inp, build_sheet(await runs.input_facts(project, inp))
@@ -79,7 +91,9 @@ async def _from_baseline(
     owners = await runs.baseline_owners(project_id, baseline_run_id)
     if owners is None:
         raise NotFoundError("Baseline run not found")
-    return with_baseline(planning_input, owners)
+    # D2: the baseline's dates are the plan in force, so its completion is the date to keep.
+    with_owners = with_baseline(planning_input, owners)
+    return with_plan_in_force(with_owners, *await _plan_in_force(runs, project_id, baseline_run_id))
 
 
 @router.get(

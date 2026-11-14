@@ -167,6 +167,7 @@ async def test_load_input_builds_planning_input() -> None:
             "parent_id": parent,
             "level": level,
             "name": f"Node {code}",
+            "description": None,
             "duration_days": None,
             "effort_hours": None,
             "owner_employee_id": None,
@@ -194,6 +195,7 @@ async def test_load_input_builds_planning_input() -> None:
             ]
         ),
         Rows([{"wbs_node_id": wp1, "skill_id": sap, "name": "SAP", "min_proficiency": 3}]),
+        Rows([{"skill_id": sap, "name": "SAP", "required": True}]),  # the project's list
         Rows(
             [
                 {
@@ -243,7 +245,8 @@ async def test_load_input_builds_planning_input() -> None:
     assert t1.skills[0].skill_name == "SAP"
     assert [e.name for e in inp.employees] == ["Mark", "Lisa"]
     assert [employee.weekly_capacity_hours for employee in inp.employees] == [40.0, 16.0]
-    assert "project_team_members" in conn.sql[2]  # the project's team, not the whole org
+    assert "project_skills" in conn.sql[2]
+    assert "project_team_members" in conn.sql[3]  # the project's team, not the whole org
     assert inp.deliverables == {"1.1": "Node 1.1", "1.2": "Node 1.2"}
     assert inp.constraints.allow_contractors is False  # nothing answered yet
     assert inp.employees[0].skills == {str(sap): 4}

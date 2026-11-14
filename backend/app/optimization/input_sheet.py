@@ -3,9 +3,10 @@
 Pure: `build_sheet(facts)` returns one row per input in the order the
 screen shows them, each with its source, plus the blockers that keep the
 run from starting. Sources: stated (the notes say it), confirmed (a person
-confirmed it), needs_you (missing: blocks the run), default, assumed (the
-PM answered "Don't know") and yours (entered by a person). Inferred values
-are never used.
+confirmed it), needs_you (missing: blocks the run, or a warning such as a
+Required skill no work package uses), default, assumed (the PM answered
+"Don't know") and yours (entered by a person). Inferred values are never
+used.
 """
 
 from __future__ import annotations
@@ -81,10 +82,6 @@ def _effort(days: int, per_week: int) -> str:
     if days < per_week:
         return fmt.plural(days, "day")
     return fmt.plural(round(days / per_week), "week")
-
-
-def _people(count: int) -> str:
-    return "1 person" if count == 1 else f"{count} people"
 
 
 def _policy(mode: str) -> str:
@@ -178,22 +175,23 @@ def _team(facts: InputFacts) -> Line:
     return Row("team", "Team", value, "default", "Organization"), None
 
 
-def _rates(facts: InputFacts) -> Line:
-    """Who is planned at their own rate and who at the default: an assumption the PM can fix."""
-    label = "Hourly rates"
-    where = "Step 5" if facts.team_from_project else "Organization"
-    default = f"the ${DEFAULT_HOURLY_RATE_CENTS / 100:,.0f}/h default rate"
-    if not facts.team:
-        value = f"Nobody yet; anyone without a rate is planned at {default}"
-        return Row("rates", label, value, "default", where), None
-    defaulted = list(facts.default_rate_team)
-    own = len(facts.team) - len(defaulted)
-    if not defaulted:
-        return Row("rates", label, f"{_people(own)} at their own rate", "yours", where), None
-    value = f"{_people(len(defaulted))} at {default}"
+def _employee_cost(facts: InputFacts) -> Line:
+    """Employees are costed at their company rate; without one, at the standard rate (D1)."""
+    label, where = "Employee cost", "Company record"
+    if not facts.employees:
+        return Row("employeeCost", label, "No employees on the team", "default", where), None
+    standard = len(facts.standard_rate_employees)
+    own = len(facts.employees) - standard
+    if not standard:
+        value = f"{fmt.plural(own, 'employee')} at their company rate"
+        return Row("employeeCost", label, value, "confirmed", where), None
+    value = (
+        f"{fmt.plural(standard, 'employee')} at the standard "
+        f"${DEFAULT_HOURLY_RATE_CENTS / 100:,.0f}/h (no company rate on record)"
+    )
     if own:
-        value += f" ({_names(defaulted)}) · {own} at their own rate"
-    return Row("rates", label, value, "default", where), None
+        value += f" · {own} at their company rate"
+    return Row("employeeCost", label, value, "default", where), None
 
 
 def _skills(facts: InputFacts) -> Line:
@@ -204,6 +202,20 @@ def _skills(facts: InputFacts) -> Line:
     cover = f"nobody has {', '.join(gaps)} yet" if gaps else "all covered"
     value = f"{required} · {cover} · {_policy(facts.skill_mode)}"
     return Row("skills", "Required skills", value, "confirmed", "Step 5"), None
+
+
+def _unlinked_skills(facts: InputFacts) -> list[Row]:
+    """A warning per Required skill no work package uses: the solver can't plan for it."""
+    return [
+        Row(
+            f"skillUnlinked:{name}",
+            name,
+            f"{name} is required but no work package uses it. Tag the packages on step 4.",
+            "needs_you",
+            "Step 4",
+        )
+        for name in facts.unlinked_skills
+    ]
 
 
 def _contingency(facts: InputFacts) -> Line:
@@ -237,7 +249,7 @@ SECTIONS = (
     _deadline,
     _specialists,
     _team,
-    _rates,
+    _employee_cost,
     _skills,
     _contingency,
     _working_days,
@@ -254,6 +266,8 @@ def build_sheet(facts: InputFacts) -> Sheet:
         rows.append(row)
         if blocker is not None:
             blockers.append(blocker)
+        if section is _skills:
+            rows += _unlinked_skills(facts)
     return Sheet(rows=rows, blockers=blockers)
 
 

@@ -87,7 +87,7 @@ All endpoints are under `/api/v1` except health. JSON uses camelCase. Errors are
 | GET | `/api/v1/notifications` | `unread=true/false`, `limit`, `cursor` |
 | POST | `/api/v1/notifications/{id}/read` | Idempotent. Returns the notification. |
 | GET | `/api/v1/projects/{projectId}/optimization/inputs` | Confirmation sheet: `{rows: [{key, label, value, source, from}], ready, blocking, missing, hash, appliedHash}` (`appliedHash`: the inputs hash of the plan in force, or null) |
-| POST | `/api/v1/projects/{projectId}/optimization/runs` | Optional body `{remedy?, overrides?: {budgetTotalCents?, mustFinishBy?, durationDays?, hoursPerWeek?}, changeRequestId?, baselineRunId?}` (stored as `options`, plus `inputsHash` = the inputs sheet's `hash` for the saved inputs). Without `baselineRunId`, a run while a plan is in force starts from that plan (its owners are the current owners). Inputs stay editable after a plan is applied. 202 + `OptimizationRun` (`queued`), solved in the background. 403 not a writer, 404 project / change request / baseline run not visible, 409 a run is already queued/running or the change was decided, 422 inputs not ready (`missing`: `workPackages`, `estimates`, `deadline`, `specialist`, `team`). |
+| POST | `/api/v1/projects/{projectId}/optimization/runs` | Optional body `{remedy?: 'specialist'\|'overtime'\|'move_deadline', overrides?: {budgetTotalCents?, mustFinishBy?, durationDays?, hoursPerWeek?}, changeRequestId?, baselineRunId?}` (stored as `options`, plus `inputsHash` = the inputs sheet's `hash` for the saved inputs). Without `baselineRunId`, a run while a plan is in force starts from that plan (its owners are the current owners). Inputs stay editable after a plan is applied. 202 + `OptimizationRun` (`queued`), solved in the background. 403 not a writer, 404 project / change request / baseline run not visible, 409 a run is already queued/running or the change was decided, 422 inputs not ready (`missing`: `workPackages`, `estimates`, `deadline`, `specialist`, `team`). |
 | GET | `/api/v1/projects/{projectId}/optimization/runs/latest` | Latest run, or 404 when there are none |
 | GET | `/api/v1/projects/{projectId}/optimization/runs/{runId}` | One run |
 
@@ -110,16 +110,36 @@ DB unreachable / pool exhausted / statement timeout → 503.
 `model.py` (input/output + the frozen `input_snapshot` format), `baseline.py`
 (forward-pass "before" plan), `solver.py` (model, status mapping, infeasibility
 explanation via assumption literals; the module docstring documents the formulation
-and its simplifications), `explain.py` + `run_summary.py` (the UI `result` payload and
-DB rows), `overrides.py` (per-run what-ifs), `remedies.py` (priced relaxed re-solves
-for infeasible runs, `result.remedies`) and `inputs.py` + `input_sheet.py` (the
-confirmation sheet).
+and its simplifications), `resources.py` (the priced team and contractor profiles),
+`workload.py` (work modes, overtime and capacity per person), `explain.py` +
+`run_summary.py` (the UI `result` payload and DB rows), `overrides.py` (per-run
+what-ifs), `remedies.py` (priced ways to keep the date, `result.remedies`) and
+`inputs.py` + `input_sheet.py` (the confirmation sheet).
+
+Every solved run reports `result.summary.targetDate` (the completion date of the plan
+in force for a re-plan with `baselineRunId`, else the must-finish-by date) and
+`slipDays` (working days after it, 0 when on time). When the plan slips or the run is
+infeasible, `result.remedies[]` lists `{id, title, detail, costCents, completionDate}`,
+each re-solved: `specialist` (a contractor for skill gaps and any late work, at the
+contractor rate or $175/h), `overtime` (the people on the late work up to 25% over
+their hours, 1.5x for employees) and `move_deadline` (accept the new date, 0 extra).
+Options are offered only when they finish earlier; `costCents` is the extra cost
+against this plan (the whole relaxed plan's cost for an infeasible run). "Can flex"
+capacity never exceeds 125% of contracted hours.
 
 Inputs (`app/repositories/planning_input.py`): capacity comes from the project team at
 the hours they give this project (all active org employees when the project has no
 team); the deadline is soft only when the PM answered "soft"; outside specialists only
-when the PM answered "yes" (contractor rate, else $175/h). Unconfirmed AI estimates and
-unanswered questions that matter block the run (422).
+when the PM answered "yes" (contractor rate, else $175/h), for the work packages needing
+skills nobody on the team has. The project's Required skills reach the work packages
+tagged with them (`PATCH /wbs/nodes/{nodeId}` `{skills: [name]}`, needed at level 3),
+else those whose name or description mention every word of the skill
+(`skill_links.py`); a Required skill no package uses is a `needs_you` warning on the
+inputs sheet. Unconfirmed AI estimates and unanswered questions that matter block the
+run (422). A person's skill level sets their pace on a work package: each level above
+its minimum is 10% faster (at most 30%), each level below ("Can flex" skills only) 25%
+slower; the hours, and so the duration and cost, scale with it, on top of a
+part-timer's stretch (`speed.py`).
 
 `POST .../optimization/runs` loads the plan under the caller's RLS session, freezes it
 into `input_snapshot` and commits. A background task then solves it in-process

@@ -6,8 +6,9 @@ CPU-bound) and its outcome written on a service connection, which bypasses
 RLS: this is a trusted system job, and `planned_assignments` /
 `recommendations` have no user write policies.
 
-Infeasible runs also get priced remedies ("What it would take"): relaxed
-copies of the input re-solved on the same worker thread budget.
+Infeasible runs, and plans that finish after their target date, also get
+priced remedies (ways to keep the date, round-2 D2): relaxed copies of the
+input re-solved on the same worker thread budget.
 
 Railway restarts the process on every deploy, so runs can be orphaned:
 `recover_stale` (on startup) and the API (before answering 409) mark runs
@@ -27,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.config import Settings
 from app.optimization.explain import Report, build_report
-from app.optimization.model import PlanningInput, SnapshotError
+from app.optimization.model import PlanningInput, SnapshotError, SolveOutcome
 from app.optimization.remedies import price_remedies
 from app.optimization.solver import SolveControl, SolveOptions, solve
 from app.repositories.optimization import OptimizationJobStore
@@ -48,6 +49,12 @@ def engine_store(engine: AsyncEngine) -> StoreFactory:
             yield OptimizationJobStore(conn)
 
     return factory
+
+
+def _slips(report: Report) -> bool:
+    """Whether the plan finishes after its target date (`summary.slipDays`)."""
+    summary = (report.result or {}).get("summary") or {}
+    return bool(summary.get("slipDays"))
 
 
 class OptimizationRunner:
@@ -97,8 +104,8 @@ class OptimizationRunner:
             )
             outcome = await asyncio.to_thread(solve, inp, self._options, control)
             report = build_report(inp, outcome)
-            if outcome.status == "infeasible":
-                report = await self._with_remedies(inp, report, control, extra)
+            if outcome.status == "infeasible" or _slips(report):
+                report = await self._with_remedies(inp, outcome, report, control, extra)
             async with self._store() as store:
                 await store.finish(run_id, report)
             logger.info(
@@ -120,20 +127,23 @@ class OptimizationRunner:
     async def _with_remedies(
         self,
         inp: PlanningInput,
+        outcome: SolveOutcome,
         report: Report,
         control: SolveControl,
         extra: dict[str, str],
     ) -> Report:
-        """Add "What it would take" (priced relaxed re-solves) to an infeasible report.
+        """Add the priced remedies to an infeasible or late report (`result.remedies`).
 
-        Best effort: if pricing fails the run still reports its conflicts.
+        Best effort: if pricing fails the run still reports its plan or conflicts.
         """
+        current = outcome if outcome.plan is not None else None
         try:
-            remedies = await asyncio.to_thread(price_remedies, inp, self._options, control)
+            remedies = await asyncio.to_thread(price_remedies, inp, self._options, control, current)
         except Exception:
             logger.exception("pricing remedies failed", extra=extra)
             return report
-        return replace(report, result={"remedies": [remedy.to_json() for remedy in remedies]})
+        result = {**(report.result or {}), "remedies": [remedy.to_json() for remedy in remedies]}
+        return replace(report, result=result)
 
     async def _fail(self, run_id: uuid.UUID, error: str) -> None:
         assert self._store is not None  # noqa: S101

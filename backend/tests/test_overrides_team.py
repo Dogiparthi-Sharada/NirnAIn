@@ -25,9 +25,9 @@ from app.optimization.model import (
     PlanningInput,
     SkillRequirement,
     Task,
-    build_resources,
 )
 from app.optimization.overrides import NEW_MEMBER_PROFICIENCY, apply_overrides
+from app.optimization.resources import build_resources
 from app.optimization.solver import SolveOptions, solve
 
 MONDAY = date(2026, 10, 5)
@@ -98,6 +98,25 @@ def test_newcomer_joins_with_matched_skills_and_the_team_rate() -> None:
     # Someone already in the input isn't added twice.
     again = apply_overrides(changed, {"addMembers": [_dana()]})
     assert [employee.id for employee in again.employees] == ["mark", "sam", NEWCOMER_ID]
+
+
+def test_newcomer_worker_type_decides_contractor_and_keeps_skills() -> None:
+    legacy = {key: value for key, value in _dana().items() if key != "isContractor"}
+    contractor = apply_overrides(_input(), {"addMembers": [{**legacy, "workerType": "contractor"}]})
+    employee = apply_overrides(_input(), {"addMembers": [{**legacy, "workerType": "employee"}]})
+    dana, staff = contractor.employees[-1], employee.employees[-1]
+    assert (dana.is_contractor, staff.is_contractor) == (True, False)
+    assert dict(dana.skills) == {REVIEW.skill_id: NEW_MEMBER_PROFICIENCY}
+    # A contractor's overtime is billed at their rate, an employee's at 1.5x.
+    resources = {
+        resource.id: resource.overtime_rate_cents for resource in build_resources(contractor)
+    }
+    assert resources[NEWCOMER_ID] == DEFAULT_HOURLY_RATE_CENTS
+    # `workerType` wins over the older `isContractor` flag when both are sent.
+    both = apply_overrides(
+        _input(), {"addMembers": [{**legacy, "workerType": "employee", "isContractor": True}]}
+    )
+    assert both.employees[-1].is_contractor is False
 
 
 def test_solver_reassigns_the_leavers_work_to_the_newcomer() -> None:

@@ -36,6 +36,7 @@ class TeamStore:
     wbs_skills: dict[uuid.UUID, list[uuid.UUID]] = field(default_factory=dict)  # project
     booked: dict[uuid.UUID, float] = field(default_factory=dict)
     weeks: list[Sequence[date]] = field(default_factory=list)
+    contractor_rates: dict[uuid.UUID, int] = field(default_factory=dict)  # confirmed, by project
 
 
 class FakeTeam:
@@ -69,6 +70,11 @@ class FakeTeam:
                 full_name=self.t.employees[employee_id]["full_name"],
                 role_title=row["role_title"],
                 hours_per_week=row["hours_per_week"],
+                worker_type=(
+                    "contractor"
+                    if self.t.employees[employee_id].get("is_contractor")
+                    else "employee"
+                ),
                 hourly_rate_cents=self.t.employees[employee_id].get("hourly_rate_cents"),
                 booked_hours=self.t.booked.get(employee_id, 0),
                 skills=self._skill_names(employee_id),
@@ -96,7 +102,9 @@ class FakeTeam:
         full_name: str,
         role_title: str,
         hours_per_week: int,
-        hourly_rate_cents: int | None,
+        *,
+        is_contractor: bool = False,
+        hourly_rate_cents: int | None = None,
     ) -> uuid.UUID:
         employee_id = uuid.uuid4()
         self.t.employees[employee_id] = {
@@ -104,9 +112,20 @@ class FakeTeam:
             "full_name": full_name,
             "role_title": role_title,
             "weekly_capacity_hours": hours_per_week,
+            "is_contractor": is_contractor,
             "hourly_rate_cents": hourly_rate_cents,
         }
         return employee_id
+
+    async def employee_rate(self, employee_id: uuid.UUID) -> int | None:
+        rate: int | None = self.t.employees[employee_id].get("hourly_rate_cents")
+        return rate
+
+    async def set_worker_type(self, employee_id: uuid.UUID, is_contractor: bool) -> None:
+        self.t.employees[employee_id]["is_contractor"] = is_contractor
+
+    async def confirmed_contractor_rate(self, project_id: uuid.UUID) -> int | None:
+        return self.t.contractor_rates.get(project_id)
 
     async def set_hourly_rate(self, employee_id: uuid.UUID, hourly_rate_cents: int | None) -> None:
         self.t.employees[employee_id]["hourly_rate_cents"] = hourly_rate_cents
@@ -255,6 +274,7 @@ def test_team_crud(
         "fullName": "Mark Chen",
         "roleTitle": "Data Engineer",
         "hoursPerWeek": 30,
+        "workerType": "employee",
         "hourlyRateCents": None,
         "bookedHours": 12.5,
         "skills": ["Spark"],
@@ -306,41 +326,65 @@ def test_team_crud(
     assert team_client.get(url, headers=auth(outsider)).status_code == 404
 
 
-def test_team_hourly_rates(
+def test_team_worker_types_and_rates(
     team_client: TestClient, store: Store, team_store: TeamStore, auth: Auth
 ) -> None:
     user, org, pid = _project(team_client, store, auth)
     headers = auth(user)
     url = f"/api/v1/projects/{pid}/team"
-    response = team_client.post(url, json={**SARA, "hourlyRateCents": 9_500}, headers=headers)
-    assert response.status_code == 201, response.text
-    sara = response.json()["employeeId"]
-    assert response.json()["hourlyRateCents"] == 9_500
-    assert team_store.employees[uuid.UUID(sara)]["hourly_rate_cents"] == 9_500
-    for bad in (-1, 100_000_001, 12.5, "lots"):
-        response = team_client.post(
-            url, json={**SARA, "fullName": "Ana", "hourlyRateCents": bad}, headers=headers
-        )
-        assert response.status_code == 422, bad
 
-    # Reusing an organization employee keeps their rate unless the body gives one.
+    def post(body: dict[str, Any]) -> Any:
+        return team_client.post(url, json=body, headers=headers)
+
+    # Employees are costed at their company record's rate: none is typed here.
+    refused = post({**SARA, "hourlyRateCents": 9_500})
+    assert (refused.status_code, refused.json()["detail"]) == (
+        422,
+        "Employee rates come from the company record.",
+    )
+    sara = post(SARA).json()
+    assert (sara["workerType"], sara["hourlyRateCents"]) == ("employee", None)
+
+    # A contractor needs a rate, unless the project has a confirmed contractor rate.
+    dana = {**SARA, "fullName": "Dana Lee", "workerType": "contractor"}
+    refused = post(dana)
+    assert (refused.status_code, refused.json()["detail"]) == (
+        422,
+        "Enter the contractor's hourly rate.",
+    )
+    for bad in (-1, 100_000_001, 12.5, "lots"):
+        assert post({**dana, "hourlyRateCents": bad}).status_code == 422, bad
+    team_store.contractor_rates[uuid.UUID(pid)] = 18_500
+    added = post(dana)
+    assert added.status_code == 201, added.text
+    assert (added.json()["workerType"], added.json()["hourlyRateCents"]) == ("contractor", 18_500)
+    dana_id = added.json()["employeeId"]
+    assert team_store.employees[uuid.UUID(dana_id)]["is_contractor"] is True
+
+    def patch(employee_id: str, body: dict[str, Any]) -> Any:
+        return team_client.patch(f"{url}/{employee_id}", json=body, headers=headers)
+
+    assert patch(dana_id, {"hourlyRateCents": 12_000}).json()["hourlyRateCents"] == 12_000
+    assert patch(dana_id, {"hoursPerWeek": 20}).json()["hourlyRateCents"] == 12_000
+    # As an employee the rate on record becomes their company rate; it can't be typed.
+    hired = patch(dana_id, {"workerType": "employee"}).json()
+    assert (hired["workerType"], hired["hourlyRateCents"]) == ("employee", 12_000)
+    assert patch(dana_id, {"hourlyRateCents": 9_000}).status_code == 422
+    # Sara becomes a contractor at the project's confirmed rate; her rate can't be cleared.
+    converted = patch(sara["employeeId"], {"workerType": "contractor"}).json()
+    assert (converted["workerType"], converted["hourlyRateCents"]) == ("contractor", 18_500)
+    del team_store.contractor_rates[uuid.UUID(pid)]
+    cleared = patch(sara["employeeId"], {"hourlyRateCents": None})
+    assert (cleared.status_code, cleared.json()["detail"]) == (
+        422,
+        "Enter the contractor's hourly rate.",
+    )
+
+    # Reusing an organization employee keeps the rate on their record.
     known = uuid.uuid4()
     team_store.employees[known] = {"org_id": org, "full_name": "Leo", "hourly_rate_cents": 8_000}
-    response = team_client.post(url, json={**SARA, "fullName": "Leo"}, headers=headers)
-    assert response.json()["hourlyRateCents"] == 8_000
-    member = f"{url}/{sara}"
-    response = team_client.patch(member, json={"hourlyRateCents": 12_000}, headers=headers)
-    assert (response.status_code, response.json()["hourlyRateCents"]) == (200, 12_000)
-    response = team_client.patch(member, json={"hoursPerWeek": 20}, headers=headers)
-    assert response.json()["hourlyRateCents"] == 12_000  # untouched when not sent
-    response = team_client.patch(member, json={"hourlyRateCents": None}, headers=headers)
-    assert (response.status_code, response.json()["hourlyRateCents"]) == (
-        200,
-        None,
-    )  # back to the default
-    assert (
-        team_client.patch(member, json={"hourlyRateCents": -5}, headers=headers).status_code == 422
-    )
+    leo = post({**SARA, "fullName": "Leo"}).json()
+    assert (leo["workerType"], leo["hourlyRateCents"]) == ("employee", 8_000)
 
 
 def test_skills_crud(
@@ -413,7 +457,8 @@ async def test_repo_members_average_booked_hours() -> None:
         "total": 30,
     }
     conn = Conn(
-        Rows([{**row, "hourly_rate_cents": 9_000}]), Rows([{"employee_id": emp, "name": "Python"}])
+        Rows([{**row, "is_contractor": False, "hourly_rate_cents": 9_000}]),
+        Rows([{"employee_id": emp, "name": "Python"}]),
     )
     weeks = planning_weeks(date(2026, 11, 16), date(2026, 12, 31), date(2026, 11, 13))
     [member] = await TeamRepository(conn).members(project, weeks)  # type: ignore[arg-type]

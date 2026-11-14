@@ -65,11 +65,15 @@ class InputFacts:
     specialist_rate_confirmed: bool = False
     team: Sequence[str] = ()
     team_from_project: bool = False
-    # People without an hourly rate, planned at the default rate.
-    default_rate_team: Sequence[str] = ()
+    # Team members who are employees (not contractors), and those of them with no
+    # company rate on record, costed at the standard rate.
+    employees: Sequence[str] = ()
+    standard_rate_employees: Sequence[str] = ()
     capacity_mode: str = "soft"
     skills: Sequence[SkillFact] = ()
     task_skill_gaps: Sequence[str] = ()
+    # Names (casefolded) of the skills some work package needs (`skill_links.py`).
+    linked_skills: frozenset[str] = frozenset()
     skill_mode: str = "hard"
     contingency_pct: float = 0.0
     working_days_per_week: int = 5
@@ -80,6 +84,15 @@ class InputFacts:
         """Required skills nobody on the team has (project list first, then work packages)."""
         gaps = [skill.name for skill in self.skills if skill.required and not skill.covered]
         return gaps + [name for name in self.task_skill_gaps if name not in gaps]
+
+    @property
+    def unlinked_skills(self) -> list[str]:
+        """Required skills on the project's list that no work package uses (D6)."""
+        return [
+            skill.name
+            for skill in self.skills
+            if skill.required and skill.name.casefold() not in self.linked_skills
+        ]
 
 
 def _task_skill_gaps(inp: PlanningInput) -> list[str]:
@@ -107,11 +120,17 @@ def facts_from_input(inp: PlanningInput, **database_facts: Any) -> InputFacts:
         must_finish_by=constraints.must_finish_by,
         contractor_rate_cents=constraints.contractor_rate_cents,
         team=[employee.name for employee in inp.employees],
-        default_rate_team=[
-            employee.name for employee in inp.employees if employee.hourly_rate_cents is None
+        employees=[employee.name for employee in inp.employees if not employee.is_contractor],
+        standard_rate_employees=[
+            employee.name
+            for employee in inp.employees
+            if not employee.is_contractor and employee.hourly_rate_cents is None
         ],
         capacity_mode=constraints.capacity_mode,
         task_skill_gaps=_task_skill_gaps(inp),
+        linked_skills=frozenset(
+            requirement.skill_name.casefold() for task in inp.tasks for requirement in task.skills
+        ),
         skill_mode=constraints.skill_mode,
         working_days_per_week=constraints.working_days_per_week,
         milestones=[
@@ -133,12 +152,14 @@ def quote_states_amount(quote: str, cents: int) -> bool:
 
 
 def inputs_hash(inp: PlanningInput) -> str:
-    """SHA-256 of what the solver will use (other projects' bookings excluded).
+    """SHA-256 of what the solver will use (other projects' bookings and today excluded).
 
-    Hours, rates and skills of every person are part of it, so editing any of
-    them invalidates a confirmed sheet.
+    Hours, type, rates and skills of every person are part of it, so editing
+    any of them invalidates a confirmed sheet.
     """
     snapshot = inp.to_snapshot()
     snapshot.pop("allocations", None)
+    # The day it is computed isn't an input: the hash must not change overnight.
+    snapshot.pop("today", None)
     canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode()).hexdigest()

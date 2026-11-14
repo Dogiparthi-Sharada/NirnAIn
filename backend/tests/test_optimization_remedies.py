@@ -6,7 +6,7 @@ from datetime import date
 
 from app.optimization.model import Constraints, Employee, Milestone, PlanningInput, Task
 from app.optimization.overrides import apply_overrides, with_baseline
-from app.optimization.remedies import apply_remedy, price_remedies, uncovered_tasks, variants
+from app.optimization.remedies import apply_remedy, price_remedies, variants
 from app.optimization.solver import SolveOptions, solve
 from tests.test_optimization_solver import SAP, make_input, with_constraints
 
@@ -29,25 +29,25 @@ def _sap_gap_input() -> PlanningInput:
     )
 
 
-def test_missing_skill_offers_a_priced_specialist() -> None:
+def test_missing_skill_offers_a_priced_contractor() -> None:
     inp = _sap_gap_input()
     assert solve(inp, TINY).status == "infeasible"
-    assert [task.id for task in uncovered_tasks(inp)] == ["b"]
 
     remedies = price_remedies(inp, TINY)
 
     # Moving the deadline alone can't fix a missing skill, so it is not offered.
     assert [remedy.id for remedy in remedies] == ["specialist"]
-    specialist = remedies[0]
-    # 80 h of SAP work at the $175/h estimate; 40 h of design at $100/h.
-    assert specialist.title == "Contract one SAP specialist, est. $14K"
-    assert specialist.cost_cents == 80 * 17_500 + 40 * 10_000
-    assert specialist.completion_date == date(2026, 10, 23)
-    assert specialist.detail == (
-        "Go-live Oct 23, 2026 (on the Oct 23 deadline) · about $18,000 in total "
-        "(specialist rate estimated at $175/h)"
+    contractor = remedies[0]
+    # 80 h of SAP work at the $175/h estimate; 40 h of design at $100/h. An
+    # infeasible run has no plan to compare with: the whole relaxed plan's cost.
+    assert contractor.title == "Bring in a contractor"
+    assert contractor.cost_cents == 80 * 17_500 + 40 * 10_000
+    assert contractor.completion_date == date(2026, 10, 23)
+    assert contractor.detail == (
+        "A contractor takes 80 hours of the work at $175/h (estimate), covering SAP, "
+        "which nobody on the team has · go-live Oct 23, 2026 (on the Oct 23 target)"
     )
-    assert specialist.to_json()["completionDate"] == "2026-10-23"
+    assert contractor.to_json()["completionDate"] == "2026-10-23"
 
 
 def test_tight_hard_deadline_offers_moving_go_live() -> None:
@@ -59,14 +59,17 @@ def test_tight_hard_deadline_offers_moving_go_live() -> None:
     assert remedy.id == "move_deadline"
     assert remedy.title == "Move go-live to Oct 23 (+7 days)"
     assert remedy.completion_date == date(2026, 10, 23)
-    assert remedy.detail.startswith("Go-live Oct 23, 2026 · no outside specialist · about $")
+    assert remedy.detail == "Go-live Oct 23, 2026 · no contractor · about $12,000"
 
 
 def test_hard_milestone_is_relaxed_with_the_deadline() -> None:
     inp = make_input(
         milestones=(Milestone("m", "Design done", date(2026, 10, 6), "hard", ("a",)),),
     )
-    assert [remedy_id for remedy_id, _ in variants(inp)] == ["move_deadline"]
+    assert [remedy_id for remedy_id, _ in variants(inp, solved=False)] == [
+        "specialist",
+        "move_deadline",
+    ]
     (remedy,) = price_remedies(inp, TINY)
     assert remedy.title == "Let the phase milestones slip"
     assert remedy.detail.endswith("phase milestones may slip (soft)")
@@ -74,7 +77,8 @@ def test_hard_milestone_is_relaxed_with_the_deadline() -> None:
 
 def test_no_remedy_when_nothing_relaxable() -> None:
     inp = with_constraints(make_input(), budget_total_cents=1, budget_mode="hard")
-    assert variants(inp) == []
+    # A contractor is always tried, but costs more: still over the cap.
+    assert [remedy_id for remedy_id, _ in variants(inp, solved=False)] == ["specialist"]
     assert price_remedies(inp, TINY) == []
 
 
@@ -84,6 +88,9 @@ def test_run_with_remedy_applies_it() -> None:
     assert relaxed.constraints.allow_contractors is True
     assert relaxed.constraints.contractor_rate_cents == 17_500
     assert solve(relaxed, TINY).status in ("optimal", "feasible")
+    overtime = apply_remedy(with_constraints(inp, capacity_mode="hard"), "overtime")
+    assert overtime.constraints.capacity_mode == "soft"
+    assert overtime.constraints.target_penalty_per_day > 0  # it tries to keep the date
 
     with_milestone = make_input(milestones=(Milestone("m", "M", date(2026, 10, 6)),))
     moved = apply_remedy(with_milestone, "move_deadline")
@@ -113,7 +120,7 @@ def test_overrides_change_only_this_run() -> None:
     assert changed.constraints.must_finish_by == date(2026, 12, 18)
     design, build = changed.tasks
     assert (design.duration_days, design.effort_hours) == (10, 40.0)  # effort scales
-    assert build.duration_days == 10  # zero keeps the WBS value
+    assert (build.duration_days, build.done, build.hours) == (10, True, 0.0)  # 0 left = done
     assert [employee.weekly_capacity_hours for employee in changed.employees] == [40.0, 16.0]
     assert inp.constraints.budget_total_cents is None  # the original is untouched
     assert apply_overrides(inp, None) is inp

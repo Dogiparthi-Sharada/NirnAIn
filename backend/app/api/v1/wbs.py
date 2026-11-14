@@ -98,17 +98,28 @@ async def confirm_estimates(
     return await wbs.tree(project_id)
 
 
-@router.patch("/wbs/nodes/{nodeId}", response_model=WbsNode, summary="Update a WBS node")
+async def _org_id(wbs: Wbs, project_id: uuid.UUID) -> uuid.UUID:
+    project = await wbs.project(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    return project.org_id
+
+
+@router.patch(
+    "/wbs/nodes/{nodeId}",
+    response_model=WbsNode,
+    summary="Update a WBS node (skills: the names it needs, replacing the current ones)",
+)
 async def update_node(node_id: NodeId, body: WbsNodeUpdate, wbs: Wbs) -> WbsNode:
     ref = await _writable_node(wbs, node_id)
     changes = body.changes()
     if changes.get("owner_employee_id") is not None:
-        project = await wbs.project(ref.project_id)
-        if project is None:
-            raise NotFoundError("Project not found")
-        await _ensure_owner(wbs, project.org_id, changes["owner_employee_id"])
-    if not await wbs.update(node_id, changes):
+        org_id = await _org_id(wbs, ref.project_id)
+        await _ensure_owner(wbs, org_id, changes["owner_employee_id"])
+    if changes and not await wbs.update(node_id, changes):
         raise ForbiddenError("You do not have permission to edit this WBS")
+    if body.skills is not None:
+        await wbs.set_skills(await _org_id(wbs, ref.project_id), node_id, body.skills)
     node = await wbs.get(node_id)
     if node is None:
         raise NotFoundError("WBS node not found")

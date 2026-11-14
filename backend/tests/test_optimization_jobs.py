@@ -98,6 +98,24 @@ async def test_infeasible_run_gets_priced_remedies() -> None:
     RunResult.model_validate(report.result)
 
 
+async def test_late_run_keeps_its_plan_and_gets_ways_to_keep_the_date() -> None:
+    store = FakeJobStore()
+    late = with_constraints(make_input(), must_finish_by=date(2026, 10, 16), deadline_mode="soft")
+    store.snapshot = late.to_snapshot()
+    runner = OptimizationRunner(store, settings())  # type: ignore[arg-type]
+    await runner.submit(uuid.uuid4())
+    await _drain(runner)
+    ((_, report),) = store.finished
+    assert report.status == "optimal"
+    assert report.result is not None
+    assert report.result["summary"]["slipDays"] == 5
+    # The FS chain can't be shortened by a contractor or overtime: accept the date.
+    assert [remedy["id"] for remedy in report.result["remedies"]] == ["move_deadline"]
+    assert report.result["remedies"][0]["costCents"] == 0
+    assert report.result["schedule"]  # the plan is kept
+    RunResult.model_validate(report.result)
+
+
 async def test_remedy_pricing_failure_keeps_the_conflicts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

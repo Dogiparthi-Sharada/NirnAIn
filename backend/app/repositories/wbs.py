@@ -8,10 +8,12 @@ from dataclasses import dataclass
 from typing import Any
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.domain.common import ItemOrigin
 from app.domain.wbs import WbsNode, WbsSkill, estimate_state
+from app.optimization.skill_links import LINKED_PROFICIENCY
 from app.repositories import access
 from app.repositories.access import ProjectRef
 from app.repositories.tables import (
@@ -180,6 +182,60 @@ class WbsRepository:
             values["estimate_confirmed_by"] = sa.func.auth.uid() if entered else None
         stmt = sa.update(wbs_nodes).where(wbs_nodes.c.id == node_id).values(**values)
         return (await self._conn.execute(stmt)).rowcount > 0
+
+    async def set_skills(self, org_id: uuid.UUID, node_id: uuid.UUID, names: list[str]) -> None:
+        """Replace the skills the node needs, by name (the organization's skills; new
+        names are added to it). New ones are needed at proficiency 3, kept ones keep
+        their level."""
+        skill_ids = await self._skill_ids(org_id, names)
+        required = task_skill_requirements
+        stale = sa.delete(required).where(required.c.wbs_node_id == node_id)
+        if skill_ids:
+            stale = stale.where(required.c.skill_id.not_in(skill_ids))
+        await self._conn.execute(stale)
+        if not skill_ids:
+            return
+        await self._conn.execute(
+            pg_insert(required)
+            .values(
+                [
+                    {
+                        "wbs_node_id": node_id,
+                        "skill_id": skill_id,
+                        "min_proficiency": LINKED_PROFICIENCY,
+                    }
+                    for skill_id in skill_ids
+                ]
+            )
+            .on_conflict_do_nothing(index_elements=[required.c.wbs_node_id, required.c.skill_id])
+        )
+
+    async def _skill_ids(self, org_id: uuid.UUID, names: list[str]) -> list[uuid.UUID]:
+        """Ids of the organization's skills with these names (case-insensitive), adding
+        the missing ones; only then is the managers-only insert needed."""
+        wanted = list(dict.fromkeys(name.lower() for name in names))
+        known = await self._known_skills(org_id, wanted)
+        missing = [name for name in names if name.lower() not in known]
+        if missing:
+            await self._conn.execute(
+                pg_insert(skills)
+                .values([{"id": uuid.uuid4(), "org_id": org_id, "name": name} for name in missing])
+                .on_conflict_do_nothing(index_elements=[skills.c.org_id, skills.c.name])
+            )
+            known = await self._known_skills(org_id, wanted)
+        return [known[name] for name in wanted if name in known]
+
+    async def _known_skills(self, org_id: uuid.UUID, lowered: list[str]) -> dict[str, uuid.UUID]:
+        if not lowered:
+            return {}
+        rows = (
+            await self._conn.execute(
+                sa.select(skills.c.id, skills.c.name).where(
+                    skills.c.org_id == org_id, sa.func.lower(skills.c.name).in_(lowered)
+                )
+            )
+        ).all()
+        return {str(row.name).lower(): row.id for row in rows}
 
     async def confirm_estimates(
         self, project_id: uuid.UUID, node_ids: list[uuid.UUID] | None

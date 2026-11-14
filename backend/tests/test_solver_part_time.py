@@ -38,7 +38,7 @@ def _leo(hours: float = 40) -> Employee:
         "Leo Martins",
         weekly_capacity_hours=hours,
         hourly_rate_cents=9_000,
-        skills={"data": 4},
+        skills={"data": 3},  # at the minimum: the WBS pace (D5)
     )
 
 
@@ -124,8 +124,17 @@ def _ten_hour_week(deadline: date, capacity_mode: str) -> PlanningInput:
     )
 
 
-@pytest.mark.parametrize("capacity_mode", ["hard", "soft"])
-def test_ten_hour_week_is_feasible_far_out_and_priced_when_tight(capacity_mode: str) -> None:
+@pytest.mark.parametrize(
+    ("capacity_mode", "moved_to", "title"),
+    [
+        ("hard", date(2026, 10, 30), "Move go-live to Oct 30 (+14 days)"),
+        # Can flex: Sam may work 25% over (12.5 h/week), so 16 days instead of 20.
+        ("soft", date(2026, 10, 26), "Move go-live to Oct 26 (+10 days)"),
+    ],
+)
+def test_ten_hour_week_is_feasible_far_out_and_priced_when_tight(
+    capacity_mode: str, moved_to: date, title: str
+) -> None:
     far = solve(_ten_hour_week(date(2026, 12, 31), capacity_mode), FAST)
     assert far.status == "optimal"
     assert far.plan is not None
@@ -142,10 +151,8 @@ def test_ten_hour_week_is_feasible_far_out_and_priced_when_tight(capacity_mode: 
         "Sam Okafor can't take on the work they're needed for within 10h/week. "
         "At those hours 1.1 Build takes 20 working days instead of 5."
     )
-    (remedy,) = price_remedies(tight, FAST)
-    assert remedy.id == "move_deadline"
-    assert remedy.completion_date == date(2026, 10, 30)
-    assert remedy.title == "Move go-live to Oct 30 (+14 days)"
+    remedy = {remedy.id: remedy for remedy in price_remedies(tight, FAST)}["move_deadline"]
+    assert (remedy.completion_date, remedy.title) == (moved_to, title)
 
 
 def test_soft_capacity_reassigns_instead_of_overbooking() -> None:

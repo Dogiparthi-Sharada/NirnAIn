@@ -8,6 +8,7 @@ from typing import Annotated, Any
 from pydantic import Field, StringConstraints, model_validator
 
 from app.domain.common import CamelModel, InputModel, ItemOrigin
+from app.domain.team import SkillNames
 
 NodeName = Annotated[str, StringConstraints(min_length=1, max_length=300)]
 NodeDescription = Annotated[str, StringConstraints(max_length=5000)]
@@ -73,23 +74,30 @@ class WbsNodeCreate(InputModel):
 
 
 class WbsNodeUpdate(InputModel):
-    """Partial update: only fields present in the body are changed."""
+    """Partial update: only fields present in the body are changed.
+
+    `skills` (names) replaces the skills the work package needs; new ones are
+    needed at proficiency 3, kept ones keep theirs (round-2 decision D6).
+    """
 
     name: NodeName | None = None
     duration_days: DurationDays | None = None
     owner_employee_id: uuid.UUID | None = None
     description: NodeDescription | None = None
+    skills: SkillNames | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> WbsNodeUpdate:
         if not self.model_fields_set:
             raise ValueError("Provide at least one field to update")
-        if "name" in self.model_fields_set and self.name is None:
-            raise ValueError("Fields cannot be null: name")
+        for field_name in ("name", "skills"):
+            if field_name in self.model_fields_set and getattr(self, field_name) is None:
+                raise ValueError(f"Fields cannot be null: {field_name}")
         return self
 
     def changes(self) -> dict[str, Any]:
-        data = self.model_dump(exclude_unset=True, by_alias=False)
+        """The node's own columns to update (skills are stored separately)."""
+        data = self.model_dump(exclude_unset=True, exclude={"skills"}, by_alias=False)
         if data.get("description") == "":
             data["description"] = None
         return data

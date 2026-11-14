@@ -33,6 +33,7 @@ def _ready_facts(**changes: Any) -> InputFacts:
         team=["Mark Chen", "Lisa Park"],
         team_from_project=True,
         skills=[SkillFact("SAP Integration", True, False), SkillFact("Python", False, True)],
+        linked_skills=frozenset({"sap integration"}),
         milestones=[
             MilestoneFact("Phase 1", date(2025, 4, 15), "soft"),
             MilestoneFact("Phase 2", date(2025, 7, 31), "soft"),
@@ -53,7 +54,7 @@ def test_ready_sheet_rows_and_sources() -> None:
         "deadline",
         "specialists",
         "team",
-        "rates",
+        "employeeCost",
         "skills",
         "contingency",
         "workingDays",
@@ -77,10 +78,34 @@ def test_ready_sheet_rows_and_sources() -> None:
     )
     assert rows["specialists"][:2] == ("Allowed · $175/h (estimated)", "confirmed")
     assert rows["team"] == ("Mark Chen, Lisa Park · capacity can flex", "confirmed", "Step 5")
-    assert rows["rates"] == ("2 people at their own rate", "yours", "Step 5")
+    assert rows["employeeCost"] == ("No employees on the team", "default", "Company record")
     assert rows["skills"][0] == "1 · nobody has SAP Integration yet · must hold"
     assert rows["contingency"][:2] == ("0%", "default")
     assert rows["milestones"] == ("Apr 15 and Jul 31 · soft", "yours", "Step 5")
+
+
+def test_a_required_skill_no_package_uses_is_a_warning_not_a_blocker() -> None:
+    inp = make_input(tasks=(Task("a", "1.1.1", "SAP setup", 5, skills=(SAP,)),))
+    okta = SkillFact("Okta SSO", True, False)
+    facts = facts_from_input(
+        inp, skills=[SkillFact("sap", True, True), okta, SkillFact("Figma", False, False)]
+    )
+    assert facts.unlinked_skills == ["Okta SSO"]  # SAP is used; Figma is optional
+    sheet = build_sheet(dataclasses.replace(_ready_facts(), **_skills_of(facts)))
+    assert sheet.ready
+    rows = {row.key: row for row in sheet.rows}
+    warning = rows["skillUnlinked:Okta SSO"]
+    assert (warning.label, warning.value, warning.source, warning.from_) == (
+        "Okta SSO",
+        "Okta SSO is required but no work package uses it. Tag the packages on step 4.",
+        "needs_you",
+        "Step 4",
+    )
+    assert list(rows).index("skillUnlinked:Okta SSO") == list(rows).index("skills") + 1
+
+
+def _skills_of(facts: InputFacts) -> dict[str, Any]:
+    return {"skills": facts.skills, "linked_skills": facts.linked_skills}
 
 
 def test_unconfirmed_estimates_block_the_run() -> None:
@@ -131,30 +156,41 @@ def test_facts_from_input_and_org_fallback_team() -> None:
     assert rows["specialists"].source == "needs_you"
 
 
-def test_people_without_a_rate_are_shown_at_the_default() -> None:
-    team = ["Priya Raman", "Leo Martins", "Ana Souza"]
-    rows = {
-        row.key: row for row in build_sheet(_ready_facts(team=team, default_rate_team=team)).rows
-    }
-    assert (rows["rates"].label, rows["rates"].value, rows["rates"].source) == (
-        "Hourly rates",
-        "3 people at the $85/h default rate",
-        "default",
+def test_employees_without_a_company_rate_are_shown_at_the_standard_rate() -> None:
+    team = ["Priya Raman", "Leo Martins", "Ana Souza", "Dana Lee"]
+    staff = team[:3]
+    facts = _ready_facts(team=team, employees=staff, standard_rate_employees=staff)
+    rows = {row.key: row for row in build_sheet(facts).rows}
+    assert (rows["employeeCost"].label, rows["employeeCost"].value) == (
+        "Employee cost",
+        "3 employees at the standard $85/h (no company rate on record)",
     )
-    some = _ready_facts(team=team, default_rate_team=["Ana Souza"], team_from_project=False)
-    rates = next(row for row in build_sheet(some).rows if row.key == "rates")
-    assert rates.value == "1 person at the $85/h default rate (Ana Souza) · 2 at their own rate"
-    assert (rates.source, rates.from_) == ("default", "Organization")
-    nobody = next(row for row in build_sheet(_ready_facts(team=[])).rows if row.key == "rates")
-    assert nobody.value == "Nobody yet; anyone without a rate is planned at the $85/h default rate"
+    assert (rows["employeeCost"].source, rows["employeeCost"].from_) == (
+        "default",
+        "Company record",
+    )
+    some = _ready_facts(team=team, employees=staff, standard_rate_employees=["Ana Souza"])
+    row = next(row for row in build_sheet(some).rows if row.key == "employeeCost")
+    assert (
+        row.value
+        == "1 employee at the standard $85/h (no company rate on record) · 2 at their company rate"
+    )
+    rated = _ready_facts(team=team, employees=staff)
+    row = next(row for row in build_sheet(rated).rows if row.key == "employeeCost")
+    assert (row.value, row.source) == ("3 employees at their company rate", "confirmed")
 
     inp = make_input(
         employees=(
             Employee("e1", "Mark Chen", hourly_rate_cents=10_000),
             Employee("e2", "Ana Souza"),
+            Employee("e3", "Dana Lee", hourly_rate_cents=15_000, is_contractor=True),
         )
     )
-    assert facts_from_input(inp).default_rate_team == ["Ana Souza"]
+    facts = facts_from_input(inp)
+    assert (facts.employees, facts.standard_rate_employees) == (
+        ["Mark Chen", "Ana Souza"],
+        ["Ana Souza"],
+    )
 
 
 def test_quote_must_name_the_amount() -> None:

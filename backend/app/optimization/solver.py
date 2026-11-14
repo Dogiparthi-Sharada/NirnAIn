@@ -2,34 +2,43 @@
 
 Formulation (day granularity; plan.md §6.1 has the MILP intent it follows).
 `problem.py` pre-computes the numbers, `builder.py` adds the variables and
-constraints below, `conflicts.py` words the infeasibility explanations.
+constraints below (each person's modes and capacity in `workload.py`),
+`conflicts.py` words the infeasibility explanations.
 
-* Time: working-day indices 0..H, H = Σ (longest candidate duration of each
-  task) + Σ |lags| + the span of existing allocations + one week, which
-  always admits a serial schedule.
+* Time: working-day indices from the project start, 0..H, H = R + Σ
+  (longest candidate duration of each task) + Σ |lags| + the span of
+  existing allocations + one week, which always admits a serial schedule.
+  R is today's index (`baseline.planning_start`): unfinished work starts at
+  s_t >= R. Finished work (0 days left) is not modelled; it keeps the dates
+  of the plan in force and its links are already met.
 * Assignment: one boolean x[t,r] per candidate resource, exactly one true.
 * Duration follows the person (multi-mode, `load.task_mode`): candidate
-  (t,r) has its own duration d[t,r] and daily load q[t,r]. Someone who can
-  give the task's daily demand (effort / WBS duration) works at the WBS
-  duration; a part-timer who can't takes ceil(effort / their daily hours)
-  working days, at most their daily hours per day. Contractor profiles keep
-  the WBS duration. Task t has a start s_t shared by its candidates and an
-  end e_t, with x[t,r] => e_t = s_t + d[t,r]. Each employee candidate
-  carries an optional interval [s_t, s_t + d[t,r]) present iff x[t,r]. So
-  cutting someone's hours stretches their tasks and lengthens the plan, and
-  giving hours back shortens it.
+  (t,r) has its own duration d[t,r] and daily load q[t,r]. Their skill
+  level sets their pace (`speed.py`, D5): each level above the task's
+  minimum is 10% faster (at most 30%), each level below 25% slower; the
+  effort and the full-time duration scale with it, and so does the cost.
+  Someone who can give the daily demand (effort / that duration) works at
+  that duration; a part-timer who can't takes ceil(effort / their daily
+  hours) working days, at most their daily hours per day. Contractor
+  profiles keep the WBS duration. Task t has a start s_t shared by its candidates and an
+  end e_t, set by the chosen candidate's mode. Each employee mode carries an
+  optional interval from s_t. So cutting someone's hours stretches their
+  tasks and lengthens the plan, and giving hours back shortens it.
 * Capacity: per employee, a cumulative constraint over those intervals with
   their daily loads, plus fixed intervals for hours already allocated to
   other projects, against daily capacity = weekly hours / working days.
   Stretched tasks fit exactly, so only overlapping work can exceed it.
-  Hard mode forbids that. Soft mode lets each chosen task move part of its
-  daily load, o[t,r], into overtime and pays `capacity_penalty` per hour of
-  overtime on every day the task runs (o[t,r] · d[t,r]): the over-allocated
-  hours, overestimated only when tasks partly overlap. Overbooking is then
-  chosen only when it saves more than stretching, waiting or reassigning.
-  Bookings elsewhere make a task wait rather than stretch. Contractor
-  profiles have no capacity limit: they stand for as many specialists as
-  needed.
+  "Must hold" (hard) forbids that. "Can flex" (soft) lets each mode move
+  part of its daily load, o, into overtime and pays `capacity_penalty`
+  plus the overtime premium (`costing.py`: 1.5x an employee's rate,
+  nothing extra for a contractor) per hour of overtime on every day it runs
+  (o · d): the over-allocated hours, overestimated only when tasks partly
+  overlap. A part-timer may also take a "flex" mode, stretched at 25% over
+  their hours. The full load never exceeds 125% of capacity (round-2 D2).
+  Overtime is then chosen only when it saves more than stretching, waiting
+  or reassigning. Bookings elsewhere make a task wait rather than stretch.
+  Contractor profiles have no capacity limit: they stand for as many
+  people as needed.
 * Skills: in hard mode only qualified resources are candidates; in soft mode
   everyone is, at a penalty per missing proficiency level.
 * Dependencies FS/SS/FF/SF with lag in working days, on the real starts and
@@ -39,21 +48,28 @@ constraints below, `conflicts.py` words the infeasibility explanations.
   times `deadline_penalty_per_day`. A milestone on a summary node covers its
   leaf tasks; milestones without a WBS node are informational.
 * Budget: labor cost = Σ x[t,r] · hours_t · rate_r (the effort, so a
-  stretched task costs the same). `budget_total_cents` and `labor_cap_cents`
-  both cap it (infra cost isn't modelled). Hard -> a constraint, soft ->
+  stretched task costs the same). Employees are costed at their company
+  rate, else the standard $85/h; team contractors at their own rate, else
+  the project's contractor rate (`resources.planned_rate_cents`). The overtime
+  premium is in the objective and the reported cost, not in this cap.
+  `budget_total_cents` and `labor_cap_cents` both cap it (infra cost isn't
+  modelled). Hard -> a constraint, soft ->
   `budget_penalty` per $1,000 over.
 * Objective, in cents: labor cost + $200 per working day of makespan + soft
   penalties + $500 per task moved off its current owner (keeps
   recommendations few and explainable, plan.md §6.1) + $10 per working day a
-  task starts after its baseline start (stops non-critical tasks drifting).
+  task starts after its baseline start (stops non-critical tasks drifting)
+  + `target_penalty_per_day` per working day after the target date (only
+  in the runs of remedies that try to keep it, `remedies.py`).
 
 Infeasibility: the model is rebuilt without objective, with every hard
 constraint group behind an assumption literal. A person's capacity group
-holds both their capacity limit (hard mode) and the stretching of their
-tasks, so relaxing it lets them work at the WBS durations: a part-timer who
-makes a date impossible is named. `sufficient_assumptions_for_infeasibility()`
-gives a core, which is shrunk by deletion (drop a group, re-solve, keep it
-dropped if still infeasible) within the time budget. The reported list is
+holds their capacity limit (Must hold), the 125% cap (Can flex) and the
+stretching of their tasks, so relaxing it lets them work at the WBS
+durations: a part-timer who makes a date impossible is named.
+`sufficient_assumptions_for_infeasibility()` gives a core, which is shrunk
+by deletion (drop a group, re-solve, keep it dropped if still infeasible)
+within the time budget. The reported list is
 then usually minimal: each entry is needed for the conflict. If the budget
 runs out it may contain extra groups.
 """
@@ -238,7 +254,7 @@ def solve(
     mapped = map_status(_run(builder.model, solver, control))
 
     if mapped in ("optimal", "feasible"):
-        plan: dict[str, ScheduledTask] = {}
+        plan: dict[str, ScheduledTask] = dict(problem.done)
         for task_id, choices in variables.assign.items():
             chosen = next(
                 resource_id

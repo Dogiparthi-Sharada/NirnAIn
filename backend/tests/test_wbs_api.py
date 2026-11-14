@@ -27,6 +27,7 @@ Auth = Callable[[uuid.UUID], dict[str, str]]
 class WbsStore:
     nodes: dict[uuid.UUID, dict[str, Any]] = field(default_factory=dict)
     employees: dict[uuid.UUID, tuple[uuid.UUID, str, bool]] = field(default_factory=dict)
+    skills: dict[uuid.UUID, list[str]] = field(default_factory=dict)  # node id -> skill names
     seq: int = 0
 
 
@@ -98,7 +99,14 @@ class FakeWbs:
                             **{k: v for k, v in n.items() if k not in hidden},
                             "code": code,
                             "owner_name": owner[1] if owner else None,
-                            "skills": [],
+                            "skills": [
+                                {
+                                    "skill_id": uuid.uuid5(uuid.NAMESPACE_OID, name.lower()),
+                                    "name": name,
+                                    "min_proficiency": 3,
+                                }
+                                for name in self.w.skills.get(node_id, [])
+                            ],
                             "estimate_confirmed": confirmed,
                             "estimate_source": source,
                         }
@@ -160,6 +168,9 @@ class FakeWbs:
             entered = changes["duration_days"] is not None
             self.w.nodes[node_id]["estimate_confirmed_at"] = datetime.now(UTC) if entered else None
         return True
+
+    async def set_skills(self, org_id: uuid.UUID, node_id: uuid.UUID, names: list[str]) -> None:
+        self.w.skills[node_id] = list(dict.fromkeys(names))
 
     async def set_order(self, ordered_ids: list[uuid.UUID]) -> None:
         for i, node_id in enumerate(ordered_ids):
@@ -353,6 +364,26 @@ def test_update_node(wbs_client: TestClient, store: Store, wbs_store: WbsStore, 
     assert wbs_client.patch(url, json={"durationDays": -1}, headers=h).status_code == 422
     missing = f"/api/v1/wbs/nodes/{uuid.uuid4()}"
     assert wbs_client.patch(missing, json={"name": "X"}, headers=h).status_code == 404
+
+
+def test_update_node_skills(wbs_client: TestClient, store: Store, auth: Auth) -> None:
+    user, _, pid = _project(wbs_client, store, auth)
+    h = auth(user)
+    root = _add(wbs_client, pid, h, name="CRM")
+    node = _add(wbs_client, pid, h, parentId=root["id"], name="Staff sign-in", durationDays=5)
+    url = f"/api/v1/wbs/nodes/{node['id']}"
+
+    r = wbs_client.patch(url, json={"skills": ["Okta SSO", "Security Review"]}, headers=h)
+    assert r.status_code == 200, r.text
+    assert [(skill["name"], skill["minProficiency"]) for skill in r.json()["skills"]] == [
+        ("Okta SSO", 3),
+        ("Security Review", 3),
+    ]
+    assert r.json()["durationDays"] == 5  # the node's own fields are untouched
+    r = wbs_client.patch(url, json={"name": "Sign-in", "skills": []}, headers=h)
+    assert (r.json()["name"], r.json()["skills"]) == ("Sign-in", [])
+    assert wbs_client.patch(url, json={"skills": None}, headers=h).status_code == 422
+    assert wbs_client.patch(url, json={"skills": [""]}, headers=h).status_code == 422
 
 
 def test_move_reorders_siblings(wbs_client: TestClient, store: Store, auth: Auth) -> None:
