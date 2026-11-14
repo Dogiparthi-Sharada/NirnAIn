@@ -1,4 +1,12 @@
-"""Moved test support."""
+"""Tests of the inputs sheet and of what a run is created from.
+
+Purpose: Prove a run is refused (422) while the sheet lists missing inputs, the sheet shows rows,
+blockers and the inputs hash, and a run freezes the body's overrides, remedy and baseline into its
+snapshot and options.
+How it fits: Exercises app/api/v1/optimization.py with the fakes of
+tests/optimization_api/conftest.py; layer: tests.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -48,6 +56,7 @@ def test_create_run_422_lists_missing_inputs(
     missing: list[str],
     detail: str,
 ) -> None:
+    """A run is refused with 422 listing every missing input, and nothing is submitted."""
     user, _, pid = create_project(opt_client, store, auth)
     run_store.inputs[uuid.UUID(pid)] = PlanningInput(
         pid,
@@ -56,9 +65,9 @@ def test_create_run_422_lists_missing_inputs(
         (Task("t1", "1.1", "A", 1),) if tasks else (),
         (Employee("e1", "A"),) if team else (),
     )
-    r = opt_client.post(runs_url(pid), headers=auth(user))
-    assert r.status_code == 422
-    body = r.json()
+    response = opt_client.post(runs_url(pid), headers=auth(user))
+    assert response.status_code == 422
+    body = response.json()
     assert body["missing"] == missing
     assert detail in body["detail"]
     assert body["detail"].endswith("before running the optimizer.")
@@ -69,6 +78,7 @@ def test_create_run_422_lists_missing_inputs(
 def test_unconfirmed_ai_estimates_are_422(
     opt_client: TestClient, store: Store, run_store: RunStore, runner: FakeRunner, auth: Auth
 ) -> None:
+    """Unconfirmed AI estimates block the run with "Confirm 2 AI estimates on step 4"."""
     user, _, pid = create_project(opt_client, store, auth)
     mark_ready(run_store, pid)
     run_store.facts[uuid.UUID(pid)] = {"unconfirmed_estimates": 2}
@@ -83,6 +93,7 @@ def test_unconfirmed_ai_estimates_are_422(
 def test_inputs_sheet(
     opt_client: TestClient, store: Store, run_store: RunStore, auth: Auth
 ) -> None:
+    """The sheet lists every input with its source, blockers, missing keys and the inputs hash."""
     user, org, pid = create_project(opt_client, store, auth)
     mark_ready(run_store, pid)
     run_store.facts[uuid.UUID(pid)] = {"unconfirmed_estimates": 1, "team_from_project": True}
@@ -116,6 +127,7 @@ def test_inputs_sheet(
 def test_run_body_is_applied_and_stored_as_options(
     opt_client: TestClient, store: Store, run_store: RunStore, runner: FakeRunner, auth: Auth
 ) -> None:
+    """The body's overrides change the frozen input and are stored as the run's options."""
     user, _, pid = create_project(opt_client, store, auth)
     mark_ready(run_store, pid)
     task_id, employee_id = uuid.uuid4(), uuid.uuid4()
@@ -168,6 +180,7 @@ def test_run_body_is_applied_and_stored_as_options(
 def test_done_work_package_replans_from_the_plan_in_force(
     opt_client: TestClient, store: Store, run_store: RunStore, auth: Auth
 ) -> None:
+    """Finished work keeps its applied dates and a re-plan keeps the plan in force's completion."""
     # QA: Done -> Re-plan answered 422 because durationDays had to be at least 1.
     user, _, pid = create_project(opt_client, store, auth)
     mark_ready(run_store, pid)
@@ -227,6 +240,7 @@ def test_done_work_package_replans_from_the_plan_in_force(
 def test_run_records_the_inputs_sheet_hash_and_solver_settings(
     opt_client: TestClient, store: Store, run_store: RunStore, auth: Auth, settings: Settings
 ) -> None:
+    """A run records the sheet's inputs hash and the solver settings it is solved with."""
     user, _, pid = create_project(opt_client, store, auth)
     mark_ready(run_store, pid)
     inputs = opt_client.get(f"/api/v1/projects/{pid}/optimization/inputs", headers=auth(user))
@@ -256,12 +270,14 @@ def test_run_records_the_inputs_sheet_hash_and_solver_settings(
 def test_run_body_references_are_checked(
     opt_client: TestClient, store: Store, run_store: RunStore, runner: FakeRunner, auth: Auth
 ) -> None:
+    """Unknown change requests and baselines are 404 and a decided change is 409."""
     user, _, pid = create_project(opt_client, store, auth)
     mark_ready(run_store, pid)
     decided = uuid.uuid4()
     run_store.changes[decided] = {"project_id": uuid.UUID(pid), "status": "approved"}
 
     def post(body: dict[str, Any]) -> Any:
+        """Post a run with the given body as the project's owner."""
         return opt_client.post(runs_url(pid), json=body, headers=auth(user))
 
     assert post({"changeRequestId": str(uuid.uuid4())}).status_code == 404
@@ -278,6 +294,7 @@ def test_run_body_references_are_checked(
 def test_specialist_remedy_answers_the_specialist_question(
     opt_client: TestClient, store: Store, run_store: RunStore, auth: Auth
 ) -> None:
+    """The specialist remedy lifts the unanswered specialist blocker and allows a contractor."""
     user, _, pid = create_project(opt_client, store, auth)
     mark_ready(run_store, pid)
     run_store.facts[uuid.UUID(pid)] = {"task_skill_gaps": ["SAP"]}
@@ -293,6 +310,7 @@ def test_specialist_remedy_answers_the_specialist_question(
 def test_combined_remedy_applies_every_relaxation(
     opt_client: TestClient, store: Store, run_store: RunStore, auth: Auth
 ) -> None:
+    """The combined remedy allows a contractor and makes the deadline and budget soft."""
     user, _, pid = create_project(opt_client, store, auth)
     mark_ready(run_store, pid)
     run_store.facts[uuid.UUID(pid)] = {"task_skill_gaps": ["SAP"]}

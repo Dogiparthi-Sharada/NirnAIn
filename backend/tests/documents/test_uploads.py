@@ -1,4 +1,11 @@
-"""Document uploads: text extraction, the upload/list/delete API and its SQL (no database)."""
+"""Tests of the document upload endpoints and the document repository.
+
+Purpose: Prove uploads are stored as text, listed newest first and deleted; unsupported, video and
+oversized files are refused early; viewers and outsiders are kept out; and parser errors never leak.
+How it fits: Exercises app/api/v1/documents.py with the fake repository and
+app/repositories/documents.py with a fake connection; layer: tests.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -37,6 +44,7 @@ from tests.support.tokens import Auth
 def test_upload_list_and_delete(
     documents_client: TestClient, store: Store, document_data: DocumentData, auth: Auth
 ) -> None:
+    """An upload is stored with its text details, listed newest first and deleted (then gone)."""
     user, _, project_id = create_project(documents_client, store, auth)
     brief = upload_file(
         documents_client, project_id, auth(user), "brief.pdf", pdf_with_text("Scope"), "x/y"
@@ -87,6 +95,7 @@ def test_upload_list_and_delete(
 def test_upload_rejects_unsupported_and_too_large_files(
     documents_client: TestClient, store: Store, auth: Auth, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Unsupported files and video get 415, audio is kept (201), a file over the limit 413."""
     user, _, project_id = create_project(documents_client, store, auth)
     sheet = upload_file(documents_client, project_id, auth(user), "plan.xlsx", b"PK", "x/y")
     assert (sheet["status"], sheet["detail"]) == (415, UNSUPPORTED_DETAIL)
@@ -110,6 +119,7 @@ def test_upload_rejects_unsupported_and_too_large_files(
 def test_oversized_uploads_are_refused_before_they_are_read(
     documents_client: TestClient, store: Store, auth: Auth, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A declared or streamed body over the limit is refused with 413 before it is read."""
     user, _, project_id = create_project(documents_client, store, auth)
     monkeypatch.setattr(documents_api, "MAX_UPLOAD_BYTES", 100)
     monkeypatch.setattr(documents_api, "FORM_OVERHEAD_BYTES", 200)
@@ -134,12 +144,14 @@ def test_oversized_uploads_are_refused_before_they_are_read(
 
 
 async def test_body_counter_stops_reading_at_the_limit() -> None:
+    """The capped receive passes messages through and raises 413 once the limit is passed."""
     messages: list[Message] = [
         {"type": "http.request", "body": b"x" * 60, "more_body": True} for _ in range(5)
     ]
     pulled: list[Message] = []
 
     async def receive() -> Message:
+        """Return the next scripted ASGI message, remembering what was pulled."""
         pulled.append(messages[len(pulled)])
         return pulled[-1]
 
@@ -153,6 +165,7 @@ async def test_body_counter_stops_reading_at_the_limit() -> None:
 def test_upload_and_delete_permissions(
     documents_client: TestClient, store: Store, auth: Auth
 ) -> None:
+    """Viewers can't upload or delete (403) and outsiders can't see the project (404)."""
     user, org, project_id = create_project(documents_client, store, auth)
     notes = upload_file(documents_client, project_id, auth(user), "a.txt", b"Notes", "text/plain")
     viewer = store.add_user("Vic Viewer")
@@ -175,7 +188,10 @@ def test_upload_and_delete_permissions(
 
 
 def test_extraction_errors_never_leak(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unexpected parser error becomes the fixed "couldn't read" failure."""
+
     def explode(data: bytes) -> str:
+        """Raise an error whose message must not reach the user."""
         raise RuntimeError("secret internals")
 
     monkeypatch.setattr(extraction_module, "_pdf_text", explode)
@@ -185,6 +201,7 @@ def test_extraction_errors_never_leak(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # --------------------------------------------------------------------------- repository SQL
 def _document_row(**overrides: object) -> dict[str, object]:
+    """Return a stored document row with the given overrides."""
     row: dict[str, object] = {
         "id": uuid.uuid4(),
         "project_id": uuid.uuid4(),
@@ -203,6 +220,7 @@ def _document_row(**overrides: object) -> dict[str, object]:
 
 
 async def test_repository_stores_uploads_and_hides_pasted_notes() -> None:
+    """The repository stores an upload's text; lists and deletes only uploads, never notes."""
     conn = Conn(Rows([]), Rows([_document_row()]))
     repository = DocumentRepository(conn)  # type: ignore[arg-type]
     extraction = Extraction(JobStatus.SUCCEEDED, "Scope")

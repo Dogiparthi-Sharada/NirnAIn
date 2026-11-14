@@ -1,16 +1,16 @@
 """Applying a run on step 6 (round 3, R1: never apply an outdated plan).
 
-What: `POST …/optimization/runs/{runId}/apply` refuses with 409 a run whose recorded
-`inputsHash` no longer matches the project's saved inputs, and applies it while they match.
-Why: QA's CHANGE-005 solved a plan, cut a person's skills, then applied the old result and it
-became the plan in force against the current rules. How it fits: reuses the in-memory fakes
-of tests/test_optimization_api.py, plus a plan repository that records what was applied.
+Purpose: QA's CHANGE-005 applied an old result after a person's skills were cut; now a run whose
+recorded `inputsHash` no longer matches the saved inputs (or has none) is refused with 409, and a
+current one is applied.
+How it fits: Exercises app/api/v1/plan.py with the fakes of tests/optimization_api/conftest.py plus
+a plan repository that records what was applied; layer: tests.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, date, datetime
 
@@ -19,10 +19,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import deps
-from app.core.security import CurrentPrincipal
 from app.optimization.model import Employee, PlanningInput, Task
-from tests.support.optimization_runs import FakeRuns, RunStore
-from tests.support.runners import FakeRunner
+from tests.support.optimization_runs import RunStore
 from tests.support.store import Store
 from tests.support.tokens import Auth
 
@@ -33,42 +31,33 @@ class FakePlans:
     """`public.apply_optimization_run`: the run becomes the next plan version."""
 
     def __init__(self, run_store: RunStore) -> None:
+        """Record applies into the run store."""
         self.run_store = run_store
         self.applied: list[uuid.UUID] = []
 
     async def apply(self, run_id: uuid.UUID) -> None:
+        """Mark the run applied as Plan v1 and remember it."""
         self.run_store.runs[run_id].update(version=1, applied_at=datetime.now(UTC))
         self.applied.append(run_id)
 
 
 @pytest.fixture
-def run_store() -> RunStore:
-    return RunStore()
-
-
-@pytest.fixture
 def plans(run_store: RunStore) -> FakePlans:
+    """Provide a plan repository that records applied runs."""
     return FakePlans(run_store)
 
 
 @pytest.fixture
-def apply_client(
-    app: FastAPI, store: Store, run_store: RunStore, plans: FakePlans
-) -> Iterator[TestClient]:
-    def runs(principal: CurrentPrincipal) -> FakeRuns:
-        return FakeRuns(store, run_store, principal.user_id)
-
-    app.dependency_overrides[deps.get_optimization_repo] = runs
-    app.dependency_overrides[deps.get_optimization_runner] = FakeRunner
+def apply_client(app: FastAPI, opt_client: TestClient, plans: FakePlans) -> TestClient:
+    """Provide the optimization client with a plan repository that records what was applied."""
     app.dependency_overrides[deps.get_plan_repo] = lambda: plans
-    with TestClient(app, raise_server_exceptions=False) as client:
-        yield client
+    return opt_client
 
 
 def _solved_run(
     client: TestClient, store: Store, auth: Auth, run_store: RunStore
 ) -> tuple[uuid.UUID, str, dict[str, str]]:
-    """(project, solved run id, owner headers): Mark designs at 40 h a week."""
+    """Return a project with a solved run (its inputs hash recorded) and the owner's headers."""
     user = store.add_user("Jane Doe")
     org = store.add_org(user, "Acme")
     headers = auth(user)
@@ -91,6 +80,7 @@ def _solved_run(
 def test_a_run_solved_before_an_input_change_is_not_applied(
     apply_client: TestClient, store: Store, run_store: RunStore, plans: FakePlans, auth: Auth
 ) -> None:
+    """A run solved before an input change is refused with 409; once current, it is applied."""
     project, run_id, headers = _solved_run(apply_client, store, auth, run_store)
     apply_url = f"/api/v1/projects/{project}/optimization/runs/{run_id}/apply"
     solved_on = run_store.inputs[project]
@@ -112,6 +102,7 @@ def test_a_run_solved_before_an_input_change_is_not_applied(
 def test_a_run_without_an_inputs_hash_is_not_applied(
     apply_client: TestClient, store: Store, run_store: RunStore, plans: FakePlans, auth: Auth
 ) -> None:
+    """A run without a recorded inputs hash can't prove it is current and is refused with 409."""
     project, run_id, headers = _solved_run(apply_client, store, auth, run_store)
     run_store.runs[uuid.UUID(run_id)]["options"] = {}
     response = apply_client.post(

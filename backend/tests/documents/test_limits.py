@@ -1,10 +1,9 @@
-"""Uploads longer than the extraction limit say so (INTAKE-020).
+"""Tests of how much of a long document intake keeps.
 
-What: a text, PDF or Word file with more text than `MAX_CHARS` keeps its first part, is
-flagged `truncated`, and the upload response says "Only the first N characters were read".
-Why: QA's pack 2 found a 300,000-character transcript cut at 200,000 without a word, so a
-decision after the limit never reached review.
-How it fits: the upload runs against the in-memory documents of test_documents.
+Purpose: Prove a long upload keeps only its first part and says so ("Only the first … characters
+were read"), and that unread PDF pages and cut text files count as truncated (INTAKE-020).
+How it fits: Exercises app/api/v1/documents.py and app/ai/documents.py; layer: tests.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -30,6 +29,7 @@ from tests.support.tokens import Auth
 def test_a_long_upload_says_only_its_first_part_was_read(
     documents_client: TestClient, store: Store, auth: Auth
 ) -> None:
+    """A long upload keeps its first part and says so; a short one has no note."""
     user, _, project_id = create_project(documents_client, store, auth)
     transcript = ("Status update. " * 20_000).encode()  # 300,000 characters
 
@@ -53,6 +53,7 @@ def test_a_long_upload_says_only_its_first_part_was_read(
 def test_unread_pdf_pages_and_long_text_files_count_as_truncated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Unread PDF pages and a text file over the read limit are marked truncated."""
     writer = PdfWriter()
     for text in ("First page", "Second page"):
         writer.add_page(PdfReader(io.BytesIO(pdf_with_text(text))).pages[0])

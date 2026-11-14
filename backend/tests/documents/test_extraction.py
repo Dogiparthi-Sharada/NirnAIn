@@ -1,4 +1,10 @@
-"""Moved test support."""
+"""Tests of reading text out of uploaded documents.
+
+Purpose: Prove the kind comes from the extension then the MIME type, video is recognised, titles
+lose their paths, PDF / Word / captions / plain text are read, and failures get fixed messages.
+How it fits: Exercises app/ai/documents.py and app/ai/transcripts.py directly; layer: tests.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -25,6 +31,7 @@ from tests.support.documents import (
 
 # --------------------------------------------------------------------------- extraction
 def test_detect_kind_by_extension_then_mime_type() -> None:
+    """The document kind comes from the file extension, falling back to the MIME type."""
     assert detect_kind("Brief.PDF", "application/octet-stream") == DocumentKind.PDF
     assert detect_kind("notes.docx", None) == DocumentKind.DOCX
     for name in ("call.vtt", "call.srt", "notes.txt", "notes.md"):
@@ -37,6 +44,7 @@ def test_detect_kind_by_extension_then_mime_type() -> None:
 
 
 def test_video_is_recognised_by_extension_or_mime_type() -> None:
+    """Video files are recognised by extension or by a video/* MIME type."""
     for name in ("call.mp4", "call.MOV", "a.m4v", "a.avi", "a.mkv", "a.wmv"):
         assert is_video(name, None)
     assert is_video("recording.webm", "video/webm")
@@ -48,12 +56,14 @@ def test_video_is_recognised_by_extension_or_mime_type() -> None:
 
 
 def test_file_title_strips_paths() -> None:
+    """Titles drop Windows and POSIX paths, default for blank names and stop at 300 characters."""
     assert file_title("C:\\Users\\jane\\brief.pdf") == "brief.pdf"
     assert file_title("  ") == "Untitled document"
     assert len(file_title("x" * 400 + ".pdf")) == 300
 
 
 def test_pdf_and_docx_text() -> None:
+    """PDF text and Word paragraphs with table cells are extracted."""
     pdf = extract_text(DocumentKind.PDF, pdf_with_text("Budget approved at 375K"))
     assert pdf == Extraction(JobStatus.SUCCEEDED, "Budget approved at 375K")
     word = extract_text(DocumentKind.DOCX, docx_bytes())
@@ -62,6 +72,7 @@ def test_pdf_and_docx_text() -> None:
 
 
 def test_scanned_corrupt_and_audio_files_fail_with_fixed_messages() -> None:
+    """Scanned, corrupt and audio files fail with fixed, user-facing messages."""
     assert extract_text(DocumentKind.PDF, pdf_with_text("")) == Extraction.failed(NO_TEXT_ERROR)
     corrupt = extract_text(DocumentKind.PDF, b"%PDF-1.4 secret internals")
     assert corrupt == Extraction.failed(UNREADABLE_ERROR)
@@ -71,6 +82,7 @@ def test_scanned_corrupt_and_audio_files_fail_with_fixed_messages() -> None:
 
 
 def test_webvtt_and_srt_keep_only_the_words() -> None:
+    """WebVTT and SRT captions keep only the spoken words, with speaker labels."""
     vtt = (
         "WEBVTT\nKind: captions\n\nNOTE recorded by Zoom\nsecond note line\n\n"
         "intro\n00:00:01.000 --> 00:00:04.000 align:start\n<v Jane Doe>Budget is <b>$375K</b>.\n\n"
@@ -82,6 +94,7 @@ def test_webvtt_and_srt_keep_only_the_words() -> None:
 
 
 def test_plain_text_is_kept_verbatim_and_capped() -> None:
+    """Plain text is kept as written (line breaks normalised, NUL replaced) and capped in length."""
     notes = "OBJECTIVES:\n- Ship <fast>\r\n\n\n\n- Cut cost\x00"
     result = extract_text(DocumentKind.TRANSCRIPT, notes.encode() + b"\xff")
     assert result.text == "OBJECTIVES:\n- Ship <fast>\n\n- Cut cost\ufffd"

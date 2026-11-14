@@ -1,10 +1,10 @@
-"""No uploaded or user-written content in the server log (SEC-006).
+"""Tests that failed extractions never put file content into the logs (SEC-006).
 
-What: a file that can't be read is logged with its document id, size, kind and the parser's
-exception class only; pypdf's own warnings (which quote the file) are silenced; a failed AI
-draft logs the error class only.
-Why: QA's pack 2 found a corrupt PDF's text, fake secrets included, in a WARNING traceback.
-How it fits: the upload runs against the in-memory documents of test_documents.
+Purpose: Prove a corrupt upload is logged with its id, size, kind and error class only, and that a
+failed AI draft logs only the exception class.
+How it fits: Captures the logs of app/api/v1/documents.py, app/ai/documents.py and
+app/drafts/reader.py; layer: tests.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ def _logged(caplog: pytest.LogCaptureFixture) -> str:
 def test_a_corrupt_upload_is_logged_without_its_content(
     documents_client: TestClient, store: Store, auth: Auth, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """A corrupt upload's warning names document, size, kind and error class, never content."""
     caplog.set_level(logging.DEBUG)
     user, _, project_id = create_project(documents_client, store, auth)
 
@@ -60,6 +61,7 @@ def test_a_corrupt_upload_is_logged_without_its_content(
 
 
 def test_the_parser_failure_is_kept_as_a_class_name_only() -> None:
+    """A parser failure is kept as the exception class name, without its message."""
     result = extract_text(DocumentKind.PDF, CORRUPT_PDF)
     assert (result.error, result.text) == (UNREADABLE_ERROR, None)
     assert result.failure is not None
@@ -69,6 +71,7 @@ def test_the_parser_failure_is_kept_as_a_class_name_only() -> None:
 async def test_a_failed_ai_draft_logs_the_error_class_only(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """A failed Claude draft falls back to the rules and logs only the error class."""
     caplog.set_level(logging.DEBUG)
     reader = DraftReader(FakeDraftLLM(ValueError(f"could not parse: {SECRET}")), 5)
 
