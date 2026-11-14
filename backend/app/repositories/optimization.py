@@ -35,6 +35,7 @@ from app.repositories.tables import (
 __all__ = [
     "ActiveRun",
     "ActiveRunExistsError",
+    "AppliedRun",
     "OptimizationJobStore",
     "OptimizationRepository",
     "ProjectContext",
@@ -52,6 +53,14 @@ class ActiveRunExistsError(Exception):
 class ActiveRun:
     id: uuid.UUID
     stale: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AppliedRun:
+    """The plan in force and the inputs hash it was solved from (null for older runs)."""
+
+    id: uuid.UUID
+    inputs_hash: str | None
 
 
 def _run_select() -> sa.Select[Any]:
@@ -204,6 +213,20 @@ class OptimizationRepository:
             )
         ).all()
         return {str(row.wbs_node_id): str(row.employee_id) for row in rows}
+
+    async def applied_run(self, project_id: uuid.UUID) -> AppliedRun | None:
+        """The plan in force: the run applied last (None while nothing is applied)."""
+        statement = (
+            sa.select(r.c.id, r.c.options)
+            .where(r.c.project_id == project_id, r.c.applied_at.is_not(None))
+            .order_by(r.c.applied_at.desc(), r.c.version.desc().nulls_last())
+            .limit(1)
+        )
+        row = (await self._conn.execute(statement)).first()
+        if row is None:
+            return None
+        inputs_hash = (row.options or {}).get("inputsHash")
+        return AppliedRun(row.id, str(inputs_hash) if inputs_hash else None)
 
     async def change_request_status(
         self, project_id: uuid.UUID, change_request_id: uuid.UUID

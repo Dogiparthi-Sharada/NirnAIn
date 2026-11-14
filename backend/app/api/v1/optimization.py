@@ -6,8 +6,10 @@ body's overrides, remedy and baseline applied) into a queued run that the
 in-process worker (`app/jobs/optimizer.py`) solves after the response. The
 run's `options` are the body as sent plus `inputsHash`: the hash the inputs
 sheet showed for the saved inputs, so the screen can tell when the latest
-plan is out of date. With `changeRequestId` this is also the re-plan of a
-change on step 7.
+plan is out of date (the sheet's `appliedHash` is that hash for the plan in
+force). With `changeRequestId` this is also the re-plan of a change on step 7.
+Inputs stay editable after a plan is applied; a run then starts from the plan
+in force (its baseline) unless the body names another `baselineRunId`.
 """
 
 from __future__ import annotations
@@ -37,6 +39,14 @@ DECIDED_CHANGE_STATUSES = ("approved", "rejected")
 LIFTED_BY_REMEDY = {"specialist": "specialist", "move_deadline": "deadline"}
 
 
+class AppliedInputs(OptimizationInputs):
+    """The confirmation sheet plus the inputs hash of the plan in force (round 2, D3):
+    step 6 says "Inputs changed since Plan vN" when `hash` differs from `appliedHash`.
+    Declared beside its endpoint so the optimizer's domain module stays as it is."""
+
+    applied_hash: str | None = None
+
+
 async def _project(runs: OptimizationRuns, project_id: uuid.UUID) -> ProjectContext:
     project = await runs.project(project_id)
     if project is None:
@@ -49,16 +59,41 @@ async def _sheet(runs: OptimizationRuns, project: ProjectContext) -> tuple[Plann
     return inp, build_sheet(await runs.input_facts(project, inp))
 
 
+async def _from_baseline(
+    runs: OptimizationRuns,
+    project_id: uuid.UUID,
+    planning_input: PlanningInput,
+    baseline_run_id: uuid.UUID | None,
+) -> PlanningInput:
+    """The input with the baseline's owners as current owners (404 for an unknown run).
+
+    Business rule (round 2, D3): without a `baselineRunId`, a run while a plan is in force
+    starts from that plan, so work packages and owners move as little as possible. The
+    run's stored body stays as sent.
+    """
+    if baseline_run_id is None:
+        applied = await runs.applied_run(project_id)
+        if applied is None:
+            return planning_input
+        baseline_run_id = applied.id
+    owners = await runs.baseline_owners(project_id, baseline_run_id)
+    if owners is None:
+        raise NotFoundError("Baseline run not found")
+    return with_baseline(planning_input, owners)
+
+
 @router.get(
     "/projects/{projectId}/optimization/inputs",
-    response_model=OptimizationInputs,
+    response_model=AppliedInputs,
     summary="Every input the solver will use, where it came from, and what blocks a run",
 )
-async def get_inputs(project_id: ProjectId, runs: OptimizationRuns) -> OptimizationInputs:
-    """The confirmation sheet shown before a run (`ready` false while `blocking` is non-empty)."""
+async def get_inputs(project_id: ProjectId, runs: OptimizationRuns) -> AppliedInputs:
+    """The confirmation sheet shown before a run (`ready` false while `blocking` is
+    non-empty), with `appliedHash`: the inputs hash of the plan in force, if any."""
     project = await _project(runs, project_id)
     inp, sheet = await _sheet(runs, project)
-    return OptimizationInputs(
+    applied = await runs.applied_run(project_id)
+    return AppliedInputs(
         rows=[
             InputRow(
                 key=row.key, label=row.label, value=row.value, source=row.source, from_=row.from_
@@ -69,6 +104,7 @@ async def get_inputs(project_id: ProjectId, runs: OptimizationRuns) -> Optimizat
         blocking=sheet.blocking,
         missing=sheet.missing,
         hash=inputs_hash(inp),
+        applied_hash=applied.inputs_hash if applied else None,
     )
 
 
@@ -118,11 +154,7 @@ async def create_run(
             raise NotFoundError("Change request not found")
         if change_status in DECIDED_CHANGE_STATUSES:
             raise ConflictError(DECIDED_CHANGE_DETAIL)
-    if body.baseline_run_id is not None:
-        owners = await runs.baseline_owners(project_id, body.baseline_run_id)
-        if owners is None:
-            raise NotFoundError("Baseline run not found")
-        inp = with_baseline(inp, owners)
+    inp = await _from_baseline(runs, project_id, inp, body.baseline_run_id)
 
     # The body exactly as sent (camelCase, ids and dates as strings): the run's setup.
     options = body.model_dump(mode="json", by_alias=True, exclude_none=True)

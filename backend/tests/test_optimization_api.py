@@ -19,7 +19,12 @@ from app.domain.optimization import OptimizationRun
 from app.jobs.optimizer import RESTART_ERROR
 from app.optimization.inputs import InputFacts, facts_from_input
 from app.optimization.model import Employee, PlanningInput, Task
-from app.repositories.optimization import ActiveRun, ActiveRunExistsError, ProjectContext
+from app.repositories.optimization import (
+    ActiveRun,
+    ActiveRunExistsError,
+    AppliedRun,
+    ProjectContext,
+)
 from tests.conftest import Store, rls_violation
 
 Auth = Callable[[uuid.UUID], dict[str, str]]
@@ -80,6 +85,17 @@ class FakeRuns:
         if run is None or run["project_id"] != project_id:
             return None
         return self.r.owners.get(run_id, {})
+
+    async def applied_run(self, project_id: uuid.UUID) -> AppliedRun | None:
+        applied = [
+            run
+            for run in self.r.runs.values()
+            if run["project_id"] == project_id and run.get("applied_at") is not None
+        ]
+        if not applied:
+            return None
+        run = max(applied, key=lambda entry: entry["applied_at"])
+        return AppliedRun(run["id"], (run.get("options") or {}).get("inputsHash"))
 
     async def change_request_status(
         self, project_id: uuid.UUID, change_request_id: uuid.UUID
@@ -425,7 +441,7 @@ def test_inputs_sheet(
     response = opt_client.get(f"/api/v1/projects/{pid}/optimization/inputs", headers=auth(user))
     assert response.status_code == 200, response.text
     body = response.json()
-    assert set(body) == {"rows", "ready", "blocking", "missing", "hash"}
+    assert set(body) == {"rows", "ready", "blocking", "missing", "hash", "appliedHash"}
     assert body["ready"] is False
     assert body["blocking"] == ["Confirm 1 AI estimate on step 4"]
     assert body["missing"] == ["estimates"]
