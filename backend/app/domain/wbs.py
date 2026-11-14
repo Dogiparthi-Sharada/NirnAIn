@@ -114,9 +114,10 @@ class WbsMove(InputModel):
 
 
 class WbsCheckIssue(CamelModel):
-    """One finding of the built-in checks, shaped like the validate job's issues."""
+    """One finding of the built-in checks, shaped like the validate job's issues. Type
+    'info' is a note for later steps (e.g. the skills step 5 will match), not an issue."""
 
-    type: Literal["missing", "duplicate", "warning"]
+    type: Literal["missing", "duplicate", "warning", "info"]
     text: str
 
 

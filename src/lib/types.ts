@@ -315,7 +315,8 @@ export interface AiJob {
   finishedAt: string | null
 }
 
-export type WbsIssueType = 'missing' | 'duplicate' | 'warning'
+/** 'info' is a note for a later step (e.g. the skills step 5 will match), never counted as an issue. */
+export type WbsIssueType = 'missing' | 'duplicate' | 'warning' | 'info'
 
 /** A WBS finding. `source` (validate jobs only): 'rules' = the built-in checks, 'ai' = the AI review; older jobs have none. */
 export interface WbsIssue {

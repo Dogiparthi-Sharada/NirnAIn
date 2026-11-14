@@ -12,6 +12,9 @@
  *   card says so and offers a re-check.
  * - A finding is never shown twice: while the live checks are available, the review's copies of the
  *   built-in checks are dropped.
+ * - Step 4 doesn't warn about step 5 (the team comes later): owners are optional and skills are only
+ *   named until there is a team. Such lines are 'info' and never counted; the owner and skill
+ *   warnings older jobs stored are not shown at all.
  */
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from './api'
@@ -31,6 +34,13 @@ const UNTAGGED_RULE_MESSAGES = [
   / skill gap: no (team member|active employee) has it\.$/,
 ]
 
+/** Warnings older jobs gave about step 5 matters (owners, skills against everyone): no longer step-4 issues. */
+const RETIRED_RULE_MESSAGES = [
+  / has no owner\.$/,
+  /^\d+ work packages have no owner \(/,
+  / skill gap: no (team member|active employee) has it\.$/,
+]
+
 const clockFormatter = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
 const dayClockFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 
@@ -45,6 +55,11 @@ export function useWbsChecks(projectId: string, enabled: boolean) {
   })
 }
 
+/** True for a real step-4 issue (counted in the card's header); 'info' lines are notes. */
+export function isCountedIssue(issue: WbsIssue): boolean {
+  return issue.type !== 'info'
+}
+
 /** True for a finding of the built-in checks (rather than the AI review's own). */
 export function isRuleIssue(issue: WbsIssue): boolean {
   if (issue.source) return issue.source === 'rules'
@@ -53,11 +68,12 @@ export function isRuleIssue(issue: WbsIssue): boolean {
 
 /**
  * The AI review's items to list: only its own when the live checks are available (they show the
- * rest as of now), else everything it found, under its time.
+ * rest as of now), else everything it found, under its time; never the retired step-5 warnings.
  */
 export function reviewIssues(job: AiJob | null | undefined, liveAvailable: boolean): WbsIssue[] {
   if (job?.status !== 'succeeded') return []
-  const issues = (job.result as WbsValidation | null)?.issues ?? []
+  const stored = (job.result as WbsValidation | null)?.issues ?? []
+  const issues = stored.filter((issue) => !RETIRED_RULE_MESSAGES.some((pattern) => pattern.test(issue.text)))
   return liveAvailable ? issues.filter((issue) => !isRuleIssue(issue)) : issues
 }
 

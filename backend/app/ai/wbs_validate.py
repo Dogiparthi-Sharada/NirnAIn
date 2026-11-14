@@ -7,9 +7,13 @@ WBS change; only the Claude review costs tokens. Rules they apply:
 * Deadline (round-2 decision D4): planning starts today, so when the start
   date has passed (or isn't set) only the working days from today to the
   deadline count, as in the optimizer.
-* Skill gaps: checked against the project team when it has members, else
-  against every active employee (`repositories/wbs_checks.py` builds the pool,
-  the optimizer plans with the same one); the message says which.
+* Step 4 doesn't warn about step 5 (the team comes after the WBS): owners are
+  optional (the optimizer assigns people; applying a plan writes the owners),
+  so a missing owner is no issue. Once the project has a team, an owner who
+  isn't on it is an info line.
+* Skills: without a project team, one info line names the skills the WBS
+  needs (they are matched to people on step 5). With a team, each skill
+  nobody on it has is a warning. Info lines are never counted as issues.
 """
 
 from __future__ import annotations
@@ -27,10 +31,12 @@ from app.ai.prompting import DATA_RULE, as_data, data_block, one_line
 from app.ai.wbs_generate import ScopeEntry, select_scope
 from app.domain.common import DependencyType
 
-IssueType = Literal["missing", "duplicate", "warning"]
+ReviewIssueType = Literal["missing", "duplicate", "warning"]
+IssueType = Literal["missing", "duplicate", "warning", "info"]
 IssueSource = Literal["rules", "ai"]
 
 MAX_LISTED = 3
+MAX_SKILLS_NAMED = 8
 MAX_REVIEW_ISSUES = 6
 ISSUE_LIMIT = 240
 EMPTY_WBS = "The WBS is empty. Generate it or add deliverables first."
@@ -70,10 +76,14 @@ class ValidationInput:
     deadline: date | None = None
     working_days_per_week: int = 5
     required_skills: tuple[str, ...] = ()
-    held_skills: frozenset[str] = frozenset()  # casefolded skill names the pool has
-    has_team: bool = False
+    held_skills: frozenset[str] = frozenset()  # casefolded skill names the project team has
+    team_ids: frozenset[uuid.UUID] = frozenset()  # the project team (step 5); empty until set
     scope: tuple[ScopeEntry, ...] = ()
     today: date | None = None
+
+    @property
+    def has_team(self) -> bool:
+        return bool(self.team_ids)
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,12 +100,14 @@ def _norm(name: str) -> str:
     return " ".join(name.split()).casefold()
 
 
-def _listed(nodes: Sequence[NodeInfo], one: str, many: str) -> list[Issue]:
-    """One warning per node, or a single summary once there are more than MAX_LISTED."""
+def _listed(
+    nodes: Sequence[NodeInfo], one: str, many: str, kind: IssueType = "warning"
+) -> list[Issue]:
+    """One line per node, or a single summary once there are more than MAX_LISTED."""
     if len(nodes) <= MAX_LISTED:
-        return [Issue("warning", f"{n.label} {one}") for n in nodes]
-    codes = ", ".join(n.code for n in nodes[:MAX_LISTED])
-    return [Issue("warning", f"{len(nodes)} work packages {many} ({codes}, …).")]
+        return [Issue(kind, f"{node.label} {one}") for node in nodes]
+    codes = ", ".join(node.code for node in nodes[:MAX_LISTED])
+    return [Issue(kind, f"{len(nodes)} work packages {many} ({codes}, …).")]
 
 
 def working_days(start: date, end: date, per_week: int = 5) -> int:
@@ -184,8 +196,37 @@ def _deadline_issue(inp: ValidationInput, packages: Sequence[NodeInfo]) -> Issue
     )
 
 
-def check_structure(inp: ValidationInput) -> list[Issue]:  # noqa: PLR0912
-    """Checks that need no AI: tree shape, names, durations, owners, deadline, skills."""
+def _skill_issues(inp: ValidationInput) -> list[Issue]:
+    """Without a team, one info line naming the skills the WBS needs (matched on step 5);
+    with one, a warning per skill nobody on the project team has."""
+    needed: dict[str, str] = {}
+    for skill in inp.required_skills:
+        needed.setdefault(_norm(skill), skill)
+    if not inp.has_team:
+        if not needed:
+            return []
+        names = ", ".join(list(needed.values())[:MAX_SKILLS_NAMED])
+        more = len(needed) - MAX_SKILLS_NAMED
+        listed = f"{names} and {more} more" if more > 0 else names
+        return [
+            Issue(
+                "info",
+                f"Skills this WBS needs: {listed}. You'll match them to people on step 5.",
+            )
+        ]
+    return [
+        Issue(
+            "warning",
+            f"Nobody on the project team has {skill}: add someone on step 5 or allow a specialist.",
+        )
+        for key, skill in needed.items()
+        if key not in inp.held_skills
+    ]
+
+
+def check_structure(inp: ValidationInput) -> list[Issue]:
+    """Checks that need no AI: tree shape, names, durations and the deadline; owners and
+    skills only as far as step 4 can tell before the team is set (see the module rules)."""
     if not inp.nodes:
         return [Issue("missing", EMPTY_WBS)]
     issues: list[Issue] = []
@@ -217,23 +258,23 @@ def check_structure(inp: ValidationInput) -> list[Issue]:  # noqa: PLR0912
     issues += _listed(
         [p for p in packages if p.duration_days is None], "has no duration.", "have no duration"
     )
-    issues += _listed(
-        [p for p in packages if p.owner_employee_id is None], "has no owner.", "have no owner"
-    )
+    if inp.has_team:
+        issues += _listed(
+            [
+                package
+                for package in packages
+                if package.owner_employee_id is not None
+                and package.owner_employee_id not in inp.team_ids
+            ],
+            "is owned by someone who isn't on the project team.",
+            "are owned by people who aren't on the project team",
+            "info",
+        )
 
     deadline = _deadline_issue(inp, packages)
     if deadline is not None:
         issues.append(deadline)
-
-    pool = "nobody on the project team has" if inp.has_team else "no active employee has"
-    seen: set[str] = set()
-    for skill in inp.required_skills:
-        key = _norm(skill)
-        if key in seen or key in inp.held_skills:
-            continue
-        seen.add(key)
-        issues.append(Issue("warning", f"Skill gap: {pool} {skill}."))
-    return issues
+    return issues + _skill_issues(inp)
 
 
 def validation_result(inp: ValidationInput, extra: Sequence[Issue] = ()) -> dict[str, Any]:
@@ -260,7 +301,7 @@ def validation_result(inp: ValidationInput, extra: Sequence[Issue] = ()) -> dict
 
 # --------------------------------------------------------------------------- Claude
 class ReviewIssue(BaseModel):
-    type: IssueType
+    type: ReviewIssueType
     text: str = Field(description="One concise sentence, at most 160 characters")
 
 
@@ -276,7 +317,8 @@ VALIDATE_SYSTEM = (
     "deployment, handover), work packages that overlap or duplicate each other (type "
     "duplicate), and accepted scope items the WBS does not cover (type missing). Use type "
     "warning for anything else. Refer to WBS items by their code. Don't repeat structural "
-    "problems such as missing durations or owners, and don't invent facts the data doesn't "
+    "problems such as missing durations, don't comment on owners, staffing or skills (people "
+    "are matched to the work on a later step), and don't invent facts the data doesn't "
     "support. Return an empty list when the WBS is sound."
 )
 

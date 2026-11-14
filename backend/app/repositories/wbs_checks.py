@@ -1,5 +1,5 @@
 """What the WBS checks (`app.ai.wbs_validate.check_structure`) read: the WBS, its links,
-the dates, the required skills and the skills of the people who would do the work.
+the dates, the required skills and the project team with its skills.
 
 Shared by the free `GET …/wbs/checks` (caller's RLS session) and the `wbs_validate` AI
 job (service connection, which bypasses RLS), so both check the same data the same way.
@@ -7,8 +7,8 @@ Every query names the project explicitly. Rules applied while reading:
 
 * Dates: the constraint set's start and deadline, else the project's own (as the
   optimizer); the caller's `today` moves a past start forward (D4).
-* Skill pool: the project team (step 5) when it has members, else every active employee
-  of the organization: the people the optimizer plans with (`planning_input.py`).
+* People: only the project team (step 5). Until it is set, step 4 names the skills the
+  WBS needs instead of checking them against the whole organization.
 """
 
 from __future__ import annotations
@@ -95,14 +95,11 @@ async def _required_skills(conn: AsyncConnection, project_id: uuid.UUID) -> tupl
     return tuple(str(name) for name in names)
 
 
-async def skill_pool(
-    conn: AsyncConnection, project_id: uuid.UUID, org_id: uuid.UUID
-) -> tuple[frozenset[str], bool]:
-    """(Skills the people who would do the work hold, casefolded; whether that is the team).
-
-    Rule: the project team when it has members, else every active employee of the org, as
-    the optimizer plans; a skill counts at any proficiency above 0.
-    """
+async def project_team(
+    conn: AsyncConnection, project_id: uuid.UUID
+) -> tuple[frozenset[uuid.UUID], frozenset[str]]:
+    """(The project team's employee ids, the skills they hold, casefolded); both empty until
+    step 5 sets a team. A skill counts at any proficiency above 0."""
     member = project_team_members
     people: Sequence[Any] = (
         (
@@ -113,21 +110,8 @@ async def skill_pool(
         .scalars()
         .all()
     )
-    has_team = bool(people)
-    if not has_team:
-        people = (
-            (
-                await conn.execute(
-                    sa.select(employees.c.id).where(
-                        employees.c.org_id == org_id, employees.c.active.is_(True)
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
     if not people:
-        return frozenset(), has_team
+        return frozenset(), frozenset()
     held, skill = employee_skills, skills
     stmt = (
         sa.select(skill.c.name)
@@ -136,7 +120,7 @@ async def skill_pool(
         .distinct()
     )
     names: Sequence[Any] = (await conn.execute(stmt)).scalars().all()
-    return frozenset(_skill_key(str(name)) for name in names), has_team
+    return frozenset(people), frozenset(_skill_key(str(name)) for name in names)
 
 
 async def read_validation_input(
@@ -150,7 +134,6 @@ async def read_validation_input(
     row = (
         await conn.execute(
             sa.select(
-                project.c.org_id,
                 project.c.name,
                 sa.func.coalesce(limits.c.start_date, project.c.start_date).label("start_date"),
                 sa.func.coalesce(limits.c.must_finish_by, project.c.target_end_date).label(
@@ -164,7 +147,7 @@ async def read_validation_input(
     ).first()
     if row is None:
         return None
-    held, has_team = await skill_pool(conn, project_id, row.org_id)
+    team_ids, held = await project_team(conn, project_id)
     return ValidationInput(
         project_name=row.name,
         nodes=await _nodes(conn, project_id),
@@ -174,7 +157,7 @@ async def read_validation_input(
         working_days_per_week=int(row.per_week),
         required_skills=await _required_skills(conn, project_id),
         held_skills=held,
-        has_team=has_team,
+        team_ids=team_ids,
         today=today,
     )
 

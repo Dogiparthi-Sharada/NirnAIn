@@ -72,16 +72,23 @@ def test_duplicates_are_per_parent_case_insensitive() -> None:
     assert run([root, d1, p1, d2, p2])["issues"] == []
 
 
-def test_missing_durations_and_owners_are_listed_then_summarized() -> None:
+def test_missing_durations_are_listed_then_summarized_and_owners_are_optional() -> None:
     few = run(tree(("A", None, True), ("B", 5, False)))
     assert few["structureValid"] is True
-    assert few["issues"] == [
-        {"type": "warning", "text": "1.1.1 A has no duration."},
-        {"type": "warning", "text": "1.1.2 B has no owner."},
-    ]
-    many = run(tree(*[(f"P{i}", 5, False) for i in range(5)]))
+    assert few["issues"] == [{"type": "warning", "text": "1.1.1 A has no duration."}]
+    many = run(tree(*[(f"P{i}", None, False) for i in range(5)]))
     assert many["issues"] == [
-        {"type": "warning", "text": "5 work packages have no owner (1.1.1, 1.1.2, 1.1.3, …)."}
+        {"type": "warning", "text": "5 work packages have no duration (1.1.1, 1.1.2, 1.1.3, …)."}
+    ]
+
+
+def test_owner_outside_the_project_team_is_only_an_info_line() -> None:
+    nodes = tree(("A", 5, True), ("B", 5, False))
+    assert run(nodes, team_ids=frozenset({OWNER}))["issues"] == []
+    elsewhere = run(nodes, team_ids=frozenset({uuid.uuid4()}))
+    assert elsewhere["structureValid"] is True
+    assert elsewhere["issues"] == [
+        {"type": "info", "text": "1.1.1 A is owned by someone who isn't on the project team."}
     ]
 
 
@@ -174,19 +181,36 @@ def test_working_days() -> None:
     assert working_days(date(2026, 11, 22), date(2026, 11, 16)) == 0
 
 
-def test_skill_gap_names_the_pool() -> None:
+def test_skills_without_a_team_are_one_info_line() -> None:
+    nodes = tree(("Build", 5, True))
+    result = run(nodes, required_skills=("AI Integration", "RBAC", "rbac"))
+    assert result["issues"] == [
+        {
+            "type": "info",
+            "text": "Skills this WBS needs: AI Integration, RBAC. "
+            "You'll match them to people on step 5.",
+        }
+    ]
+    many = run(nodes, required_skills=tuple(f"S{index}" for index in range(10)))
+    assert "S7 and 2 more. You'll match" in str(many["issues"])
+    assert run(nodes)["issues"] == []
+
+
+def test_skill_gaps_are_checked_against_the_project_team() -> None:
     nodes = tree(("Build", 5, True))
     result = run(
         nodes,
-        required_skills=("SAP Integration", "sap integration", "Python"),
+        required_skills=("RBAC", "rbac", "Python"),
         held_skills=frozenset({"python"}),
-        has_team=True,
+        team_ids=frozenset({OWNER}),
     )
     assert result["issues"] == [
-        {"type": "warning", "text": "Skill gap: nobody on the project team has SAP Integration."}
+        {
+            "type": "warning",
+            "text": "Nobody on the project team has RBAC: add someone on step 5 or allow "
+            "a specialist.",
+        }
     ]
-    org = run(nodes, required_skills=("QA",))
-    assert org["issues"] == [{"type": "warning", "text": "Skill gap: no active employee has QA."}]
 
 
 def test_review_issues_are_clamped_and_deduplicated() -> None:

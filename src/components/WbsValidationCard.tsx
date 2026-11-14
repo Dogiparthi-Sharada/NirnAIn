@@ -5,18 +5,20 @@
  * - AI review (the last `wbs_validate` job): the missing / duplicate work and other items the AI
  *   found, under the time it ran. It costs tokens, so it re-runs only when the PM asks; once the
  *   WBS changed since, a note says so and offers "Re-check (uses AI)".
- * Issues are suggestions only; nothing is added to the WBS until the PM adds it. Hidden while the
- * project has no WBS (the builder's empty state explains that).
+ * Info lines (e.g. "Skills this WBS needs: …" before the team is set on step 5) use the neutral info
+ * style and are not counted in the header. Issues are suggestions only; nothing is added to the WBS
+ * until the PM adds it. Hidden while the project has no WBS (the builder's empty state explains that).
  */
 import type { ReactNode } from 'react'
 import { errorMessage } from '@/lib/api'
 import type { AiJob, WbsIssue, WbsIssueType } from '@/lib/types'
-import { reviewIsStale, reviewIssues, reviewTime, useWbsChecks } from '@/lib/wbsChecks'
+import { isCountedIssue, reviewIsStale, reviewIssues, reviewTime, useWbsChecks } from '@/lib/wbsChecks'
 
 const ISSUE_STYLE: Record<WbsIssueType, { label: string; background: string }> = {
   missing: { label: 'Missing', background: '#F5E3C8' },
   duplicate: { label: 'Duplicate', background: '#F5E3C8' },
   warning: { label: 'Warning', background: '#F3D9D5' },
+  info: { label: 'Info', background: '#EAF0E2' },
 }
 const ACTIVE_JOB = new Set(['queued', 'running'])
 
@@ -46,7 +48,7 @@ function Note({ children, tone = 'muted' }: { children: ReactNode; tone?: 'muted
   )
 }
 
-/** The built-in checks as of now: loading, error with a retry, "No structural issues", or the list. */
+/** The built-in checks as of now: loading, error with a retry, or the issues ("No structural issues" when none), then the info lines. */
 function LiveChecks({ checks }: { checks: ReturnType<typeof useWbsChecks> }) {
   const live = checks.isError ? undefined : checks.data
   let body: ReactNode
@@ -61,10 +63,14 @@ function LiveChecks({ checks }: { checks: ReturnType<typeof useWbsChecks> }) {
     )
   } else if (!live) {
     body = <Note>Running the built-in checks…</Note>
-  } else if (live.issues.length === 0) {
-    body = <Note tone="ok">&#10003; No structural issues</Note>
   } else {
-    body = <IssueRows issues={live.issues} />
+    const counted = live.issues.filter(isCountedIssue)
+    body = (
+      <>
+        {counted.length === 0 ? <Note tone="ok">&#10003; No structural issues</Note> : <IssueRows issues={counted} />}
+        <IssueRows issues={live.issues.filter((issue) => !isCountedIssue(issue))} />
+      </>
+    )
   }
   return (
     <section aria-label="Built-in checks" aria-live="polite" aria-busy={checks.isFetching || undefined}>
@@ -149,7 +155,7 @@ export default function WbsValidationCard({ projectId, hasWbs, job, starting, on
   if (!hasWbs) return null
 
   const live = checks.isError ? undefined : checks.data
-  const total = live ? live.issues.length + reviewIssues(job, true).length : null
+  const total = live ? [...live.issues, ...reviewIssues(job, true)].filter(isCountedIssue).length : null
   return (
     <div className="card" id="wbs-issues">
       <h3 style={{ marginBottom: 0 }}>AI validation{total === null ? '' : total === 0 ? ': no issues' : `: ${total} issue${total > 1 ? 's' : ''}`}</h3>

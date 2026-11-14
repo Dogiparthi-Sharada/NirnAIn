@@ -77,20 +77,19 @@ def test_checks_follow_the_current_wbs(
 
     root = _add(checks_client, pid, headers, name="CRM")
     deliverable = _add(checks_client, pid, headers, parentId=root["id"], name="Build")
-    package = _add(
-        checks_client, pid, headers, parentId=deliverable["id"], name="API", durationDays=5
-    )
+    package = _add(checks_client, pid, headers, parentId=deliverable["id"], name="API")
     body = checks_client.get(url, headers=headers).json()
-    assert body["issues"] == [{"type": "warning", "text": "1.1.1 API has no owner."}]
+    assert body["issues"] == [{"type": "warning", "text": "1.1.1 API has no duration."}]
     assert body["wbsChangedAt"] == "2026-11-14T21:05:00Z"
     assert datetime.fromisoformat(body["checkedAt"]).date() == datetime.now(UTC).date()
 
-    # Assigning the owner clears the finding on the next call: no job to re-run.
+    # Entering the estimate clears the finding on the next call: no job to re-run. An
+    # owner is optional on step 4 (no team yet): assigning one changes nothing.
     employee = uuid.uuid4()
     checks_store.employees[employee] = (org, "Mark Chen", True)
     patched = checks_client.patch(
         f"/api/v1/wbs/nodes/{package['id']}",
-        json={"ownerEmployeeId": str(employee)},
+        json={"durationDays": 5, "ownerEmployeeId": str(employee)},
         headers=headers,
     )
     assert patched.status_code == 200, patched.text
@@ -155,16 +154,14 @@ class Scripted:
         )
 
 
-PROJECT = "SELECT public.projects.org_id"
+PROJECT = "SELECT public.projects.name"
 TEAM = "SELECT public.project_team_members.employee_id"
-ORG_PEOPLE = "SELECT public.employees.id"
 HELD = "SELECT DISTINCT public.skills.name"
 REQUIRED = "SELECT public.skills.name"
 
 
 def _project_row() -> dict[str, Any]:
     return {
-        "org_id": uuid.uuid4(),
         "name": "CRM",
         "start_date": date(2026, 11, 2),
         "deadline": date(2026, 11, 30),
@@ -185,7 +182,10 @@ async def test_input_uses_the_project_team_when_it_has_members() -> None:
     project_id = uuid.uuid4()
     inp = await read_validation_input(conn, project_id, date(2026, 11, 16))  # type: ignore[arg-type]
     assert inp is not None
-    assert (inp.has_team, inp.held_skills) == (True, frozenset({"python", "sap integration"}))
+    assert (inp.team_ids, inp.held_skills) == (
+        frozenset({member}),
+        frozenset({"python", "sap integration"}),
+    )
     assert (inp.today, inp.start_date, inp.deadline) == (
         date(2026, 11, 16),
         date(2026, 11, 2),
@@ -193,7 +193,6 @@ async def test_input_uses_the_project_team_when_it_has_members() -> None:
     )
     assert inp.required_skills == ("Python", "QA")
     assert inp.scope == ()  # only the AI review reads the scope
-    assert not any(sql.startswith(ORG_PEOPLE) for sql in conn.sql)
     held_sql, held_params = conn.query(HELD)
     assert [member] in held_params.values()
     assert "public.employee_skills.proficiency >" in held_sql
@@ -203,15 +202,13 @@ async def test_input_uses_the_project_team_when_it_has_members() -> None:
             assert project_id in params.values(), sql
 
 
-async def test_input_falls_back_to_active_employees_without_a_team() -> None:
-    row = _project_row()
-    conn = Scripted({PROJECT: [row], ORG_PEOPLE: [{"id": uuid.uuid4()}]})
+async def test_input_without_a_team_reads_no_people() -> None:
+    conn = Scripted({PROJECT: [_project_row()], REQUIRED: [{"name": "RBAC"}]})
     inp = await read_validation_input(conn, uuid.uuid4(), None)  # type: ignore[arg-type]
     assert inp is not None
-    assert inp.has_team is False
-    people_sql, people_params = conn.query(ORG_PEOPLE)
-    assert "public.employees.active IS true" in people_sql
-    assert row["org_id"] in people_params.values()
+    assert (inp.has_team, inp.held_skills, inp.required_skills) == (False, frozenset(), ("RBAC",))
+    # Step 4 never checks skills against the whole organization: no one's skills are read.
+    assert not any("employee_skills" in sql for sql in conn.sql)
 
 
 async def test_input_of_a_missing_project_and_the_change_time() -> None:
