@@ -163,6 +163,9 @@ class RunOverrides(InputModel):
 
     budget_total_cents: int | None = Field(default=None, ge=0, le=10**13)
     must_finish_by: date | None = None
+    # "Must hold" (hard) or "Can flex" (soft) for this run, e.g. stated in step-7 notes.
+    deadline_mode: Literal["hard", "soft"] | None = None
+    budget_mode: Literal["hard", "soft"] | None = None
     duration_days: dict[uuid.UUID, Days] | None = Field(default=None, max_length=2000)
     hours_per_week: dict[uuid.UUID, Hours] | None = Field(default=None, max_length=500)
     # People joining (with the employee record step 7 reserved for them) or leaving.

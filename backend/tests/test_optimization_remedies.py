@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from app.domain.optimization import RunOverrides
 from app.optimization.model import Constraints, Employee, Milestone, PlanningInput, Task
 from app.optimization.overrides import apply_overrides, with_baseline
 from app.optimization.remedies import apply_remedy, price_remedies, variants
@@ -125,6 +126,21 @@ def test_overrides_change_only_this_run() -> None:
     assert inp.constraints.budget_total_cents is None  # the original is untouched
     assert apply_overrides(inp, None) is inp
     assert apply_overrides(inp, {}) is inp
+
+
+def test_overrides_set_the_deadline_and_budget_modes() -> None:
+    inp = with_constraints(make_input(), deadline_mode="soft", budget_mode="hard")
+    changed = apply_overrides(inp, {"deadlineMode": "hard", "budgetMode": "soft"})
+    assert (changed.constraints.deadline_mode, changed.constraints.budget_mode) == (
+        "hard",
+        "soft",
+    )
+    kept = apply_overrides(inp, {"mustFinishBy": "2026-12-18"})
+    assert (kept.constraints.deadline_mode, kept.constraints.budget_mode) == ("soft", "hard")
+    body = RunOverrides.model_validate({"deadlineMode": "hard"})
+    assert body.model_dump(mode="json", by_alias=True, exclude_none=True) == {
+        "deadlineMode": "hard"
+    }
 
 
 def test_baseline_owners_replace_current_owners() -> None:
