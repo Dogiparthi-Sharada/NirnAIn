@@ -1,8 +1,8 @@
 /**
  * The Team & capacity card on step 5 (approved mockup views/constraints-team.js): who works on
  * this project, their role, whether they are an employee or a contractor and where their cost
- * comes from, the hours per week each can give it, and how much of that other projects already
- * book (utilization), with the capacity Must hold / Can flex switch.
+ * comes from, the hours per week each can give it, how much of that other projects already book
+ * (utilization) and their skills, with the capacity Must hold / Can flex switch.
  *
  * Cost rule: employees are costed at their company rate (else the standard $85/h); contractors at
  * their own rate (else the project's confirmed contractor rate). Both count toward the budget.
@@ -22,6 +22,7 @@ import {
   isWholeHours,
   ROLES,
   useAddTeamMember,
+  useProjectSkills,
   useRemoveTeamMember,
   useTeam,
   useUpdateTeamMember,
@@ -57,10 +58,11 @@ function memberChanges(member: ProjectTeamMember, input: TeamMemberInput): Parti
   if (workerType !== workerTypeOf(member)) changes.workerType = workerType
   const rateChanged = (input.hourlyRateCents ?? null) !== (member.hourlyRateCents ?? null)
   if (workerType === 'contractor' && (changes.workerType || rateChanged)) changes.hourlyRateCents = input.hourlyRateCents ?? null
+  if ([...input.skills].sort().join('\n') !== [...member.skills].sort().join('\n')) changes.skills = input.skills
   return changes
 }
 
-/** One person: name, role and cost, inline hours, utilization, Edit / Remove. */
+/** One person: name, role and cost, inline hours, utilization, skills, Edit / Remove. */
 function MemberRow({ member, projectContractorRateCents, onHours, onEdit, onRemove }: {
   member: ProjectTeamMember
   projectContractorRateCents: number | null
@@ -101,6 +103,7 @@ function MemberRow({ member, projectContractorRateCents, onHours, onEdit, onRemo
           </div>
         )}
       </td>
+      <td className="small">{member.skills.length > 0 ? member.skills.join(', ') : <span className="muted">None listed</span>}</td>
       <td className="row-acts">
         <button className="btn sec sm" type="button" data-medit={member.employeeId} onClick={onEdit} aria-label={`Edit ${member.fullName}`}>
           Edit
@@ -124,6 +127,7 @@ export function TeamEditor({ projectId, projectContractorRateCents, policy, risk
   onSavePolicy: (changes: ConstraintChanges) => void
 }) {
   const teamQuery = useTeam(projectId)
+  const skillsQuery = useProjectSkills(projectId)
   const addMember = useAddTeamMember(projectId)
   const updateMember = useUpdateTeamMember(projectId)
   const updateHours = useUpdateTeamMember(projectId)
@@ -193,7 +197,7 @@ export function TeamEditor({ projectId, projectContractorRateCents, policy, risk
   if (teamQuery.isPending) {
     body = (
       <tr>
-        <td colSpan={4} className="small muted" role="status">
+        <td colSpan={5} className="small muted" role="status">
           Loading the team&hellip;
         </td>
       </tr>
@@ -201,7 +205,7 @@ export function TeamEditor({ projectId, projectContractorRateCents, policy, risk
   } else if (teamQuery.isError) {
     body = (
       <tr>
-        <td colSpan={4} className="small" role="alert">
+        <td colSpan={5} className="small" role="alert">
           Couldn&rsquo;t load the team. {errorMessage(teamQuery.error)}{' '}
           <button className="btn sec sm" type="button" onClick={() => void teamQuery.refetch()}>
             Try again
@@ -212,7 +216,7 @@ export function TeamEditor({ projectId, projectContractorRateCents, policy, risk
   } else if (team.length === 0) {
     body = (
       <tr>
-        <td colSpan={4} className="small muted">
+        <td colSpan={5} className="small muted">
           No one on the team yet. Add the people who will work on this project.
         </td>
       </tr>
@@ -248,6 +252,7 @@ export function TeamEditor({ projectId, projectContractorRateCents, policy, risk
               <th>Person</th>
               <th>Hours / week</th>
               <th>Utilization</th>
+              <th>Skills</th>
               <th aria-label="Actions" />
             </tr>
           </thead>
@@ -259,6 +264,8 @@ export function TeamEditor({ projectId, projectContractorRateCents, policy, risk
           key={formFor}
           member={editing}
           team={team}
+          skills={skillsQuery.data ?? []}
+          skillsLoading={skillsQuery.isPending}
           projectContractorRateCents={projectContractorRateCents}
           saving={formSaving}
           serverError={formError}

@@ -1,7 +1,7 @@
 /**
  * Planning inputs for steps 3–5 (Scope Review, WBS Builder, Constraints): types and hooks for
- * the team, confirmed effort estimates, the answer to the deadline question, and the applied plan
- * versions. Skills are not part of planning: every team member can do every work package.
+ * the team, the project's skill list, confirmed effort estimates, the answers to the questions
+ * that change the plan, and the applied plan versions.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch, isApiError } from './api'
@@ -27,9 +27,11 @@ export interface EstimatedWbsNode extends WbsNode {
   estimateSource?: EstimateSource | null
 }
 
+export type SpecialistAnswer = 'yes' | 'no' | 'unknown'
 export type DeadlineAnswerValue = 'hard' | 'soft' | 'unknown'
 
 export interface ConstraintInputs extends ConstraintSet {
+  specialistAnswer?: SpecialistAnswer | null
   deadlineAnswer?: DeadlineAnswerValue | null
   specialistRateConfirmed?: boolean
   contractorRateCents?: number | null
@@ -57,6 +59,7 @@ export interface ProjectTeamMember {
   hourlyRateCents?: number | null
   /** Average weekly hours already committed to other projects in this plan's window. */
   bookedHours: number
+  skills: string[]
 }
 
 export interface TeamMemberInput {
@@ -67,9 +70,10 @@ export interface TeamMemberInput {
   workerType?: WorkerType
   /** Contractors only: an employee's rate comes from the company record and the server refuses one here. */
   hourlyRateCents?: number | null
+  skills: string[]
 }
 
-/** A skill on the project's old skill list; only read by step 7's add-person form until it drops skills (D8). */
+/** A skill on the project's list (step 5), Required or Optional. */
 export interface ProjectSkill {
   skillId: string
   name: string
@@ -170,6 +174,11 @@ export function costRateText(member: ProjectTeamMember, projectContractorRateCen
   return projectContractorRateCents != null ? `Contractor \u00B7 project rate ${perHourText(projectContractorRateCents)}` : 'Contractor \u00B7 rate needed'
 }
 
+/** Required skills nobody on the team has. */
+export function skillGaps(skills: ProjectSkill[]): string[] {
+  return skills.filter((skill) => skill.required && skill.holders.length === 0).map((skill) => skill.name)
+}
+
 /* ───────────────────────────── Hooks ───────────────────────────── */
 
 export const inputKeys = {
@@ -187,7 +196,9 @@ type QueryClient = ReturnType<typeof useQueryClient>
 /** Solver inputs changed: the confirmation sheet on step 6 and coverage views must refresh. */
 function inputsChanged(queryClient: QueryClient, projectId: string) {
   void queryClient.invalidateQueries({ queryKey: inputKeys.team(projectId) })
+  void queryClient.invalidateQueries({ queryKey: inputKeys.skills(projectId) })
   void queryClient.invalidateQueries({ queryKey: queryKeys.capacity(projectId) })
+  void queryClient.invalidateQueries({ queryKey: queryKeys.skillsCoverage(projectId) })
   void queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'optimization'] })
 }
 
@@ -290,11 +301,44 @@ export function useRemoveTeamMember(projectId: string) {
   })
 }
 
-/** The project's old skill list (see `ProjectSkill`); remove with step 7's last use of it. */
+/** The project's skill list with who on the team has each skill. */
 export function useProjectSkills(projectId: string) {
   return useQuery({
     queryKey: inputKeys.skills(projectId),
     queryFn: ({ signal }) => apiFetch<ProjectSkill[]>(projectPath(projectId, '/skills'), { signal }),
     enabled: Boolean(projectId),
+  })
+}
+
+/** Adds a skill to the project's list (names are unique, case-insensitive). */
+export function useAddSkill(projectId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (skill: { name: string; required: boolean }) =>
+      apiFetch<ProjectSkill>(projectPath(projectId, '/skills'), { method: 'POST', json: skill }),
+    onSuccess: () => inputsChanged(queryClient, projectId),
+  })
+}
+
+/** Renames a skill or switches it between Required and Optional. */
+export function useUpdateSkill(projectId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ skillId, patch }: { skillId: string; patch: { name?: string; required?: boolean } }) =>
+      apiFetch<ProjectSkill>(projectPath(projectId, `/skills/${encodeURIComponent(skillId)}`), {
+        method: 'PATCH',
+        json: patch,
+      }),
+    onSuccess: () => inputsChanged(queryClient, projectId),
+  })
+}
+
+/** Removes a skill from the project's list. */
+export function useRemoveSkill(projectId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (skillId: string) =>
+      apiFetch<void>(projectPath(projectId, `/skills/${encodeURIComponent(skillId)}`), { method: 'DELETE' }),
+    onSuccess: () => inputsChanged(queryClient, projectId),
   })
 }

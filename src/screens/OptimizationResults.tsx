@@ -21,6 +21,7 @@ import {
   policyInputsOf,
   shortHash,
   useOptimizationInputs,
+  useProjectSkillList,
   useStartOptimization,
   type ConstraintAnswers,
   type PlanRun,
@@ -50,6 +51,7 @@ export default function OptimizationResults() {
   const latest = useLatestRun(projectId)
   const inputs = useOptimizationInputs(projectId)
   const constraintsQuery = useConstraints(projectId)
+  const skills = useProjectSkillList(projectId)
   const startRun = useStartOptimization(projectId)
   const [toast, showToast] = useToast()
   // "Run again" re-opens the sheet; "View the last plan" dismisses the inputs-changed sheet.
@@ -60,7 +62,8 @@ export default function OptimizationResults() {
   const status = run?.status ?? null
   const solving = startRun.isPending || status === 'queued' || status === 'running'
   const constraints = constraintsQuery.data as ConstraintAnswers | undefined
-  const policy = constraints ? policyInputsOf(constraints, inputs.data) : null
+  // Wait for the skill list so the skill-gap warning doesn't pop in late; if it fails, skip that check.
+  const policy = constraints && !skills.isPending ? policyInputsOf(constraints, skills.data, inputs.data) : null
   const risks = policy ? policyRisks(policy) : []
   const runHash = comparableInputsHash(run)
   const checkingStaleness = Boolean(runHash && inputs.isPending)

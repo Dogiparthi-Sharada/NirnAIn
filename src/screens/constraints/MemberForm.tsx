@@ -1,8 +1,7 @@
 /**
  * The add / edit form under the team table on step 5 (approved mockup views/constraints-team.js
  * `openMemberForm` / `saveMember`): name, role, type (employee or contractor), hours per week on
- * this project and, for contractors only, the hourly rate. (Skills are not part of planning, so
- * the design's skill picks are left out.)
+ * this project, for contractors only the hourly rate, and skills.
  *
  * Cost rule: an employee's cost comes from their company record (else the standard $85/h), so the
  * form asks no rate for them; a contractor's rate is required, unless the project has a confirmed
@@ -10,7 +9,9 @@
  *
  * The form checks what it can before saving (a name, a role, no second person with the same name,
  * hours a whole number from 1 to 80, a contractor's rate in dollars) and lists every problem at
- * once; the server's answer (for example a 409 duplicate) is shown in the same box.
+ * once; the server's answer (for example a 409 duplicate) is shown in the same box. Skills are
+ * picked from the project's skill list; skills a person has outside that list are kept when they
+ * are edited.
  */
 import { useEffect, useRef, useState } from 'react'
 import { errorMessage } from '@/lib/api'
@@ -21,6 +22,7 @@ import {
   isWholeHours,
   perHourText,
   workerTypeOf,
+  type ProjectSkill,
   type ProjectTeamMember,
   type TeamMemberInput,
   type WorkerType,
@@ -29,9 +31,11 @@ import {
 const NEW_MEMBER_HOURS = '40'
 
 /** The add / edit form. `member` null = a new person. */
-export function MemberForm({ member, team, projectContractorRateCents, saving, serverError, onSave, onCancel }: {
+export function MemberForm({ member, team, skills, skillsLoading, projectContractorRateCents, saving, serverError, onSave, onCancel }: {
   member: ProjectTeamMember | null
   team: ProjectTeamMember[]
+  skills: ProjectSkill[]
+  skillsLoading: boolean
   /** The project's confirmed contractor rate, the default for a contractor without one; null = none. */
   projectContractorRateCents: number | null
   saving: boolean
@@ -45,6 +49,7 @@ export function MemberForm({ member, team, projectContractorRateCents, saving, s
   const [workerType, setWorkerType] = useState<WorkerType>(startingType)
   const [hours, setHours] = useState(member ? String(member.hoursPerWeek) : NEW_MEMBER_HOURS)
   const [rate, setRate] = useState(startingType === 'contractor' && member?.hourlyRateCents != null ? String(member.hourlyRateCents / 100) : '')
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(member?.skills ?? []))
   const [problems, setProblems] = useState<string[]>([])
   const nameRef = useRef<HTMLInputElement>(null)
 
@@ -53,6 +58,15 @@ export function MemberForm({ member, team, projectContractorRateCents, saving, s
   }, [])
 
   const contractor = workerType === 'contractor'
+
+  function togglePick(skillName: string) {
+    setPicked((previous) => {
+      const next = new Set(previous)
+      if (next.has(skillName)) next.delete(skillName)
+      else next.add(skillName)
+      return next
+    })
+  }
 
   function save() {
     const fullName = name.trim()
@@ -70,7 +84,15 @@ export function MemberForm({ member, team, projectContractorRateCents, saving, s
     else if (hourlyRateCents !== null && !isHourlyRate(hourlyRateCents)) found.push('Rate must be dollars per hour, for example 95.')
     setProblems(found)
     if (found.length > 0) return
-    onSave(contractor ? { fullName, roleTitle, hoursPerWeek, workerType, hourlyRateCents } : { fullName, roleTitle, hoursPerWeek, workerType })
+    const listed = new Set(skills.map((skill) => skill.name))
+    const keptOutsideList = (member?.skills ?? []).filter((skillName) => !listed.has(skillName))
+    const chosen = skills.map((skill) => skill.name).filter((skillName) => picked.has(skillName))
+    const memberSkills = [...chosen, ...keptOutsideList]
+    onSave(
+      contractor
+        ? { fullName, roleTitle, hoursPerWeek, workerType, hourlyRateCents, skills: memberSkills }
+        : { fullName, roleTitle, hoursPerWeek, workerType, skills: memberSkills },
+    )
   }
 
   const messages = serverError && problems.length === 0 ? [errorMessage(serverError)] : problems
@@ -146,6 +168,22 @@ export function MemberForm({ member, team, projectContractorRateCents, saving, s
             />
           </div>
         )}
+      </div>
+      <div className="field mt">
+        <label id="mf-skills-label">Skills</label>
+        <div className="skill-picks" role="group" aria-labelledby="mf-skills-label">
+          {skillsLoading ? (
+            <span className="small muted">Loading skills&hellip;</span>
+          ) : skills.length > 0 ? (
+            skills.map((skill) => (
+              <label className="pick" key={skill.skillId}>
+                <input type="checkbox" value={skill.name} checked={picked.has(skill.name)} onChange={() => togglePick(skill.name)} /> {skill.name}
+              </label>
+            ))
+          ) : (
+            <span className="small muted">Add skills below first.</span>
+          )}
+        </div>
       </div>
       <div className="row mt">
         <button className="btn sm" id="mf-save" type="button" onClick={save} disabled={saving} aria-busy={saving || undefined}>

@@ -5,11 +5,11 @@
  * - Saving: the constraint set is replaced as a whole by `PUT …/constraints`, so
  *   `useConstraintEditor` merges each small change into the cached set first (an optimistic
  *   update), letting quick clicks build on each other instead of overwriting one another.
- * - The question that changes the plan: the deadline answer IS the deadline's Must hold / Can flex
- *   setting. (Skills are not part of planning, so there is no specialist question.)
- * - The Run Optimization gate: `gateBlockers` merges what this screen knows (the answer, team, WBS)
- *   with the server's readiness check (`GET …/optimization/inputs`), so the button is never
- *   disabled but a blocked click can name every missing input.
+ * - The two questions that change the plan: the deadline answer IS the deadline's Must hold /
+ *   Can flex setting, and the specialist answer decides whether outside contractors may be used.
+ * - The Run Optimization gate: `gateBlockers` merges what this screen knows (answers, team, WBS)
+ *   with the server's readiness check (`GET …/optimization/inputs`, which also sees work-package
+ *   skill gaps), so the button is never disabled but a blocked click can name every missing input.
  * - Inputs stay editable after a plan version is applied: changes take effect when the PM re-runs
  *   step 6 and applies the result as the next version (step 7 records why a plan changed).
  */
@@ -19,7 +19,7 @@ import { apiFetch, errorMessage } from './api'
 import type { PolicyKey, PolicyMode } from './constraintPolicy'
 import { budgetProblem } from './createForm'
 import { formatDate } from './format'
-import { inputKeys, type ConstraintInputs, type DeadlineAnswerValue, type ProjectTeamMember } from './inputs'
+import { inputKeys, type ConstraintInputs, type DeadlineAnswerValue, type ProjectTeamMember, type SpecialistAnswer } from './inputs'
 import { queryKeys } from './queries'
 import { toast } from './toast'
 
@@ -115,6 +115,11 @@ export function deadlineChanges(answer: DeadlineAnswerValue): ConstraintChanges 
   return { deadlineAnswer: answer, deadlineMode: answer === 'soft' ? 'soft' : 'hard' }
 }
 
+/** Only a Yes lets the solver book outside contractors; "Don't know" is planned as No. */
+export function specialistChanges(answer: SpecialistAnswer): ConstraintChanges {
+  return { specialistAnswer: answer, allowContractors: answer === 'yes' }
+}
+
 /**
  * Must hold (hard) = the solver never breaks the limit; Can flex (soft) = it may bend, with a
  * penalty, if that is the only way.
@@ -122,10 +127,16 @@ export function deadlineChanges(answer: DeadlineAnswerValue): ConstraintChanges 
 export function policyChanges(key: PolicyKey, mode: PolicyMode): ConstraintChanges {
   if (key === 'deadline') return deadlineChanges(mode)
   if (key === 'budget') return { budgetMode: mode }
-  return { capacityMode: mode }
+  if (key === 'capacity') return { capacityMode: mode }
+  return { skillMode: mode }
 }
 
 /* ───────────────────────────── Questions ───────────────────────────── */
+
+/** "Can we bring in an outside SAP Integration specialist?" (generic when several skills are missing). */
+export function specialistQuestion(gaps: string[]): string {
+  return gaps.length === 1 ? `Can we bring in an outside ${gaps[0]} specialist?` : 'Can we bring in an outside specialist?'
+}
 
 /** "Is Sep 30, 2025 a hard deadline?" (the project's target end date when step 5 has no date). */
 export function deadlineQuestion(mustFinishBy: string | null): string {
@@ -150,7 +161,7 @@ export function checkedNotAsked(constraints: ConstraintInputs): string {
 
 /** One missing input that keeps the optimizer from running, as the banner and status line show it. */
 export interface GateBlocker {
-  /** The server's `missing` key where there is one: estimates, deadline, team… */
+  /** The server's `missing` key where there is one: estimates, specialist, deadline, team… */
   key: string
   /** Words for the status line: "To continue: answer the deadline question." */
   hint: string
@@ -166,18 +177,22 @@ export interface GateFacts {
   team: ProjectTeamMember[] | undefined
   workPackages: number | undefined
   openEstimates: number | undefined
+  /** Required skills on the project's list that nobody on the team has. */
+  skillGaps: string[]
   /** Keys and messages from `GET …/optimization/inputs` (`missing` / `blocking`). */
   serverMissing: string[]
   serverBlocking: string[]
 }
 
 /** Element ids the gate's links move focus to. */
+export const SPECIALIST_QUESTION_ID = 'q-specialist'
 export const DEADLINE_QUESTION_ID = 'q-deadline'
 export const ADD_MEMBER_ID = 'btn-add-member'
 
 /**
  * What still keeps the optimizer from running, in the design's order: confirmed effort, the
- * deadline question (once there is a date), and at least one person on the team.
+ * specialist question (asked while a required skill is uncovered), the deadline question (once
+ * there is a date), and at least one person on the team.
  */
 export function gateBlockers(facts: GateFacts): GateBlocker[] {
   const blockers: GateBlocker[] = []
@@ -194,6 +209,10 @@ export function gateBlockers(facts: GateFacts): GateBlocker[] {
   if (!constraints) {
     blockers.push({ key: 'constraints', hint: 'wait for the settings to load', label: 'The constraint settings have not loaded yet', target: null })
   } else {
+    if (constraints.specialistAnswer == null && (facts.skillGaps.length > 0 || serverSays('specialist'))) {
+      const question = specialistQuestion(facts.skillGaps)
+      blockers.push({ key: 'specialist', hint: 'answer the specialist question', label: `Answer \u201C${question}\u201D`, target: { selector: `#${SPECIALIST_QUESTION_ID} .opt` } })
+    }
     // Without a date here the server still plans to the project's target end date, so it may ask too.
     if (constraints.deadlineAnswer == null && (constraints.mustFinishBy || serverSays('deadline'))) {
       const question = deadlineQuestion(constraints.mustFinishBy)
@@ -208,7 +227,7 @@ export function gateBlockers(facts: GateFacts): GateBlocker[] {
   }
 
   // Anything else the server still reports (worded by the server), e.g. a check this screen doesn't know.
-  const known = new Set(['workPackages', 'estimates', 'deadline', 'team'])
+  const known = new Set(['workPackages', 'estimates', 'specialist', 'deadline', 'team'])
   facts.serverMissing.forEach((key, position) => {
     if (known.has(key)) return
     const message = facts.serverBlocking[position] ?? key

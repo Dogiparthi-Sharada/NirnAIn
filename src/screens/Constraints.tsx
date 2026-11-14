@@ -1,14 +1,13 @@
 /**
  * Step 5, Constraints (port of the approved mockup's views/constraints.js and
- * constraints-team.js), on live data: the limits the plan must respect, the question that changes
- * the plan, the team, the task dependencies, and the gate to step 6. Skills are not part of
- * planning (every team member can do every work package), so the design's skills card is left out.
+ * constraints-team.js), on live data: the limits the plan must respect, the two questions that
+ * change the plan, the team, the skills, the task dependencies, and the gate to step 6.
  *
- * Each limit (budget, deadline, capacity) is Must hold (a hard constraint: the solver
+ * Each limit (budget, deadline, capacity, skills) is Must hold (a hard constraint: the solver
  * never breaks it) or Can flex (a soft constraint: it may bend, with a penalty, if that is the
  * only way); `lib/constraintPolicy.ts` recommends a setting and warns about misleading
- * combinations. The cards live in `screens/constraints/*`; the rules (saving, the gate, the plan
- * lock) in `lib/constraints.ts`.
+ * combinations. The cards live in `screens/constraints/*`; the rules (saving, the gate, the
+ * questions) in `lib/constraints.ts`.
  *
  * Gate: Run Optimization is never disabled; a blocked click opens `#con-banner` with a link to
  * each missing input. The inputs stay editable after a plan version is applied; a banner then says
@@ -20,7 +19,7 @@ import { Crumb, PlanInForceBanner } from '@/components/InputsKit'
 import { errorMessage } from '@/lib/api'
 import { policyRisks } from '@/lib/constraintPolicy'
 import { gateBlockers, useConstraintEditor, type ConstraintChanges } from '@/lib/constraints'
-import { useConstraintInputs, useTeam } from '@/lib/inputs'
+import { skillGaps, useConstraintInputs, useProjectSkills, useTeam } from '@/lib/inputs'
 import { policyInputsOf, useOptimizationInputs } from '@/lib/optimize'
 import { useWbs } from '@/lib/queries'
 import { useStepNav } from '@/lib/steps'
@@ -29,6 +28,7 @@ import { ConstraintsGate } from './constraints/ConstraintsGate'
 import { DependenciesCard } from './constraints/DependenciesCard'
 import { BudgetCard, DeadlineCard } from './constraints/LimitCards'
 import { QuestionsPanel, type EffortState } from './constraints/QuestionsPanel'
+import { SkillsEditor } from './constraints/SkillsEditor'
 import { TeamEditor } from './constraints/TeamEditor'
 
 const TRAIL = ['Create Project', 'AI Intake', 'Scope Review', 'WBS Builder', 'Constraints']
@@ -39,6 +39,7 @@ export default function Constraints() {
   const { projectId = '' } = useParams()
   const constraintsQuery = useConstraintInputs(projectId)
   const teamQuery = useTeam(projectId)
+  const skillsQuery = useProjectSkills(projectId)
   const wbsQuery = useWbs(projectId)
   const sheetQuery = useOptimizationInputs(projectId)
   const editor = useConstraintEditor(projectId)
@@ -49,7 +50,9 @@ export default function Constraints() {
   }, [])
 
   const constraints = constraintsQuery.data
-  const policy = constraints ? policyInputsOf(constraints, sheetQuery.data) : null
+  const gaps = skillGaps(skillsQuery.data ?? [])
+  // Wait for the skill list so a skill-gap warning doesn't pop in late.
+  const policy = constraints && !skillsQuery.isPending ? policyInputsOf(constraints, skillsQuery.data, sheetQuery.data) : null
   const risks = policy ? policyRisks(policy) : []
   // A contractor rate confirmed on this project earlier is the default for contractors without one.
   const projectContractorRateCents = constraints?.specialistRateConfirmed ? (constraints.contractorRateCents ?? null) : null
@@ -68,6 +71,7 @@ export default function Constraints() {
     team: teamQuery.data,
     workPackages: wbsQuery.isSuccess ? workPackages : undefined,
     openEstimates: wbsQuery.isSuccess ? openEstimates : undefined,
+    skillGaps: gaps,
     serverMissing,
     serverBlocking: sheetQuery.data?.blocking ?? [],
   })
@@ -111,6 +115,8 @@ export default function Constraints() {
               <QuestionsPanel
                 projectId={projectId}
                 constraints={constraints}
+                skillGaps={gaps}
+                workPackageGap={gaps.length === 0 && serverMissing.includes('specialist')}
                 effort={effort}
                 onSave={save}
               />
@@ -138,6 +144,7 @@ export default function Constraints() {
             </div>
           )}
           <TeamEditor projectId={projectId} projectContractorRateCents={projectContractorRateCents} policy={policy} risks={risks} onSavePolicy={save} />
+          <SkillsEditor projectId={projectId} policy={policy} risks={risks} onSavePolicy={save} />
           <DependenciesCard projectId={projectId} />
         </div>
 

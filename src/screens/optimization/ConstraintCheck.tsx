@@ -72,7 +72,7 @@ function deadlineAdvice(policy: PolicyInputs, run: PlanRun, dateSlipShown: boole
           ? 'You chose to let the deadline move, so every later task shifts to fit the team you have.'
           : 'The deadline was allowed to move, so the plan finishes when the team you have can finish the work.',
         fix: deadline
-          ? `If ${shortDay(deadline)} matters, add people or hours on step 5, then run again.`
+          ? `If ${shortDay(deadline)} matters, allow an outside specialist or add hours on step 5, then run again.`
           : 'If the date matters, set a deadline on step 5 and run again.',
       },
     ]
