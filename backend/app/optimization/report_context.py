@@ -17,6 +17,7 @@ from app.optimization.calendar import week_index, workday_date
 from app.optimization.costing import daily_load, plan_cost
 from app.optimization.load import TENTHS, allocation_blocks, daily_capacity_tenths
 from app.optimization.model import Plan, PlanningInput, Resource, SolveOutcome, Task
+from app.optimization.speed import work_hours
 
 
 def planned_days(plan: Plan, task_id: str) -> int:
@@ -47,9 +48,20 @@ class ReportContext:
     def weeks(self, start: int, end: int) -> tuple[int, int]:
         return self.week_of(start), self.week_of(max(end - 1, start))
 
+    def paced(self, plan: Plan) -> bool:
+        """Whether `plan` runs at each person's pace (D5). The baseline is the plan as
+        written: current owners at the WBS durations and effort."""
+        return plan is not self.baseline
+
     def hours(self, plan: Plan, resource_id: str) -> float:
+        """Hours of work the person has in `plan` (at their pace, `speed.work_hours`)."""
+        resource = self.resources.get(resource_id)
+        if resource is None:
+            return 0.0
         return sum(
-            self.tasks[scheduled.task_id].hours
+            work_hours(self.tasks[scheduled.task_id], resource)
+            if self.paced(plan)
+            else self.tasks[scheduled.task_id].hours
             for scheduled in plan.tasks.values()
             if scheduled.resource_id == resource_id
         )
@@ -79,7 +91,7 @@ class ReportContext:
         if res is None or res.kind != "employee":
             return False
         capacity = daily_capacity_tenths(res.weekly_capacity_hours, self.per_week)
-        load = daily_load(self.inp, plan, resource_id, self.blocks)
+        load = daily_load(self.inp, plan, res, self.blocks, self.paced(plan))
         return any(tenths > capacity for tenths in load)
 
     def name(self, resource_id: str | None) -> str:

@@ -8,10 +8,11 @@ capacity constraint set per person. Modelling rules:
   fixed-size interval from the task's start. "regular" is `load.task_mode`
   at the person's daily hours (part-timers stretch the task). With "Can
   flex" capacity a "flex" mode lets a part-timer work up to 25% over their
-  hours so the task stretches less (never below the WBS duration). In the
-  explanation model a "relaxed" mode at the WBS duration is open only when
-  the person's capacity group is dropped, so a part-timer who makes a date
-  impossible is named in the conflict.
+  hours so the task stretches less (never below their full-time duration).
+  In the explanation model a "relaxed" mode at their full-time duration is
+  open only when the person's capacity group is dropped, so a part-timer
+  who makes a date impossible is named in the conflict. Every mode is at
+  the person's pace for their skill level (`speed.py`).
 * Capacity: a cumulative over the person's intervals and other-project
   bookings against their daily capacity. Must hold: as is. Can flex: each
   interval may move part of its daily load, o, into overtime, paid
@@ -34,7 +35,7 @@ from typing import TYPE_CHECKING, Literal
 from ortools.sat.python import cp_model
 
 from app.optimization import conflicts
-from app.optimization.load import TENTHS, Mode, flex_capacity_tenths, task_daily_tenths
+from app.optimization.load import TENTHS, Mode, flex_capacity_tenths, task_mode
 from app.optimization.model import Conflict, Resource, Task
 
 if TYPE_CHECKING:
@@ -74,8 +75,9 @@ class Workload:
         if self.flexible and flex is not None and flex.duration_days < regular.duration_days:
             modes.append((flex, "flex"))
         shortest = min(mode.duration_days for mode, _ in modes)
-        if self.builder.explain and task.duration_days < shortest:
-            modes.append((Mode(task.duration_days, task_daily_tenths(task), False), "relaxed"))
+        relaxed = task_mode(task, None, self.problem.pace[task.id, resource.id])
+        if self.builder.explain and relaxed.duration_days < shortest:
+            modes.append((relaxed, "relaxed"))
         return modes
 
     def candidate(

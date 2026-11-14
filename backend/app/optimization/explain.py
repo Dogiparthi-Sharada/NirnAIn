@@ -6,7 +6,8 @@ plan; nothing here invents facts:
 * moved later and a predecessor moved too   -> "Dependency cascade from {pred}"
 * moved later behind the same assignee      -> "Waits for {name} to finish {task}"
 * moved later, person busy on other projects-> "{name} is committed to other projects"
-* same start, longer at a part-timer's hours -> "{name} at {h}h/week: {n} working days …"
+* same start, other duration for the person -> "{name} (level 5) at {h}h/week: {n} working
+  days instead of {wbs}" (their skill level's pace and/or a part-timer's hours, D5)
 * taken off a person over 100% in baseline  -> "Over-allocation"
 * given to someone with the required skill  -> "Skill gap"
 * unchanged                                 -> omitted from reassignments, "—" delta
@@ -23,6 +24,7 @@ from datetime import date
 from typing import Any
 
 from app.optimization import formatting as fmt
+from app.optimization.load import paced_days
 from app.optimization.model import (
     PlanningInput,
     RunStatus,
@@ -33,6 +35,7 @@ from app.optimization.model import (
 from app.optimization.report_context import ReportContext, critical_chain, planned_days
 from app.optimization.resources import CONTRACTOR_ID
 from app.optimization.run_summary import run_summary, timeline
+from app.optimization.speed import pace_level, pace_percent, work_hours
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,30 +104,33 @@ def _reassignment_reason(ctx: ReportContext, task: Task, before: str | None, aft
         return " + ".join([first, *(r.lower() for r in rest)])
     if before is None:
         return "No owner assigned"
-    saved = round(task.hours * (old.rate_cents if old else 0)) - round(task.hours * new.rate_cents)
+    before_cost = round(work_hours(task, old) * old.rate_cents) if old else 0
+    saved = before_cost - round(work_hours(task, new) * new.rate_cents)
     if saved > 0:
         return f"Lower cost (saves {fmt.money(saved)})"
     return "Balances workload"
 
 
-def _stretch_reason(ctx: ReportContext, task_id: str) -> str | None:
-    """Why a task that starts on time runs longer than its WBS duration, if it does."""
-    scheduled = ctx.plan.tasks[task_id]
-    days, wbs_days = planned_days(ctx.plan, task_id), ctx.tasks[task_id].duration_days
+def _duration_reason(ctx: ReportContext, task_id: str) -> str | None:
+    """Why a task that starts on time takes another number of days than its WBS duration:
+    the person's skill level (D5), their hours, or both."""
+    scheduled, task = ctx.plan.tasks[task_id], ctx.tasks[task_id]
+    days = planned_days(ctx.plan, task_id)
     resource = ctx.resources.get(scheduled.resource_id) if scheduled.resource_id else None
-    if days <= wbs_days or resource is None:
+    if days == task.duration_days or resource is None:
         return None
-    return (
-        f"{resource.name} at {resource.weekly_capacity_hours:g}h/week: "
-        f"{fmt.plural(days, 'working day')} instead of {wbs_days}"
-    )
+    level = pace_level(resource, task)
+    who = resource.name + (f" (level {level})" if level is not None else "")
+    if days > paced_days(task, pace_percent(resource, task)):
+        who += f" at {resource.weekly_capacity_hours:g}h/week"
+    return f"{who}: {fmt.plural(days, 'working day')} instead of {task.duration_days}"
 
 
 def _schedule_reason(ctx: ReportContext, task_id: str, shift: int) -> str:
     plan, base = ctx.plan, ctx.baseline
     scheduled = plan.tasks[task_id]
     if shift == 0:
-        return _stretch_reason(ctx, task_id) or "No change needed"
+        return _duration_reason(ctx, task_id) or "No change needed"
     if shift < 0:
         return "Starts earlier"
     for predecessor in ctx.tight_predecessors(plan, task_id):
@@ -217,7 +223,8 @@ def _task_rows(
     # Effort spread over the days the plan gives it (longer at a part-timer's hours);
     # finished work has none left.
     days = planned_days(ctx.plan, task.id)
-    hours_per_week = min(round(task.hours / days * ctx.per_week, 1), 168.0) if days else 0.0
+    hours = work_hours(task, resource) if resource else task.hours
+    hours_per_week = min(round(hours / days * ctx.per_week, 1), 168.0) if days else 0.0
     assignment = AssignmentRow(
         wbs_node_id=task.id,
         employee_id=resource.employee_id if resource else None,

@@ -97,11 +97,16 @@ class ModelBuilder:
     def _task(self, task: Task, variables: Variables) -> None:
         """Start, candidates and end of one task; its end follows whoever is chosen."""
         problem, model = self.problem, self.model
-        # Unfinished work never starts before today; the WBS duration is the shortest
-        # any candidate takes.
-        start = model.new_int_var(
-            problem.release, problem.horizon - task.duration_days, f"start[{task.id}]"
+        # Unfinished work never starts before today, and ends by the horizon even with
+        # the fastest candidate (a skilled person may beat the WBS duration, D5).
+        shortest = min(
+            (
+                problem.modes[task.id, resource.id].duration_days
+                for resource in problem.candidates[task.id]
+            ),
+            default=task.duration_days,
         )
+        start = model.new_int_var(problem.release, problem.horizon - shortest, f"start[{task.id}]")
         options: dict[str, cp_model.IntVar] = {}
         ends: list[tuple[cp_model.IntVar, int]] = []
         for resource in problem.candidates[task.id]:
@@ -134,7 +139,7 @@ class ModelBuilder:
         durations = {days for _, days in ends}
         if len(durations) <= 1:
             return start + next(iter(durations), task.duration_days)
-        end = self.model.new_int_var(task.duration_days, self.problem.horizon, f"end[{task.id}]")
+        end = self.model.new_int_var(min(durations), self.problem.horizon, f"end[{task.id}]")
         for literal, days in ends:
             self.model.add(end == start + days).only_enforce_if(literal)
         return end

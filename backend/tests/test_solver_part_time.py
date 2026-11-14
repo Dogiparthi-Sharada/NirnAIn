@@ -38,7 +38,7 @@ def _leo(hours: float = 40) -> Employee:
         "Leo Martins",
         weekly_capacity_hours=hours,
         hourly_rate_cents=9_000,
-        skills={"data": 4},
+        skills={"data": 3},  # at the minimum: the WBS pace (D5)
     )
 
 

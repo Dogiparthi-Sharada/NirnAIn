@@ -2,8 +2,9 @@
 
 `prepare` turns a frozen planning input into what the model needs as plain
 integers: who may take each task, how long it takes with each of them and
-the load it puts on them per day (`load.task_mode`: part-timers stretch
-tasks), the labor cost of each choice, daily capacities, other projects'
+the load it puts on them per day (`load.task_mode`: their skill level sets
+their pace, `speed.py`, and part-timers stretch tasks), the labor cost of
+each choice, daily capacities, other projects'
 bookings, the horizon and the deadline / milestone indices. Only unfinished
 work is modelled, from `release` (today) on; finished work is fixed at the
 dates of the plan in force (`baseline.done_span`). The main model
@@ -37,6 +38,7 @@ from app.optimization.model import (
     target_of,
 )
 from app.optimization.resources import build_resources, candidates_for
+from app.optimization.speed import pace_percent, work_hours
 
 
 @dataclass(slots=True)
@@ -54,6 +56,8 @@ class Problem:
     capacity: dict[str, int]  # employee id -> tenths of an hour per working day
     blocks: dict[str, list[Block]]
     candidates: dict[str, list[Resource]]  # everyone who may ever take the task
+    # (task id, resource id) -> percent of the WBS effort at the person's level (D5)
+    pace: dict[tuple[str, str], int]
     modes: dict[tuple[str, str], Mode]  # (task id, resource id) -> duration and daily load
     # The same at up to 25% over the person's hours, for "Can flex" (employees only).
     flex_modes: dict[tuple[str, str], Mode]
@@ -92,14 +96,23 @@ def prepare(inp: PlanningInput) -> Problem:
         if resource.kind == "employee"
     }
     candidates = candidates_for(work, resources)
+    pace = {
+        (task.id, resource.id): pace_percent(resource, task)
+        for task in work
+        for resource in candidates[task.id]
+    }
     # Contractor profiles have no capacity entry, so they keep the WBS duration.
     modes = {
-        (task.id, resource.id): task_mode(task, capacity.get(resource.id))
+        (task.id, resource.id): task_mode(
+            task, capacity.get(resource.id), pace[task.id, resource.id]
+        )
         for task in work
         for resource in candidates[task.id]
     }
     flex_modes = {
-        (task.id, resource.id): task_mode(task, flex_capacity_tenths(capacity[resource.id]))
+        (task.id, resource.id): task_mode(
+            task, flex_capacity_tenths(capacity[resource.id]), pace[task.id, resource.id]
+        )
         for task in work
         for resource in candidates[task.id]
         if resource.id in capacity
@@ -131,10 +144,11 @@ def prepare(inp: PlanningInput) -> Problem:
         capacity=capacity,
         blocks=blocks,
         candidates=candidates,
+        pace=pace,
         modes=modes,
         flex_modes=flex_modes,
         cost={
-            (task.id, resource.id): round(task.hours * resource.rate_cents)
+            (task.id, resource.id): round(work_hours(task, resource) * resource.rate_cents)
             for task in work
             for resource in candidates[task.id]
         },

@@ -36,8 +36,9 @@ def test_skill_reassignment_report() -> None:
     report = build_report(inp, solve(inp, FAST))
     assert report.status == "optimal"
     assert report.solver.startswith("OR-Tools CP-SAT 9.")
-    assert report.expected_cost_cents == 40 * 10_000 + 80 * 12_000
-    assert report.completion_date == date(2026, 10, 23)
+    # Lisa (SAP 5, one level above the minimum 4) is 10% faster: 72 h in 9 days (D5).
+    assert report.expected_cost_cents == 40 * 10_000 + 72 * 12_000
+    assert report.completion_date == date(2026, 10, 22)
     assert report.iis is None
     assert report.error is None
     result = report.result
@@ -45,9 +46,9 @@ def test_skill_reassignment_report() -> None:
     RunResult.model_validate(result)  # shape matches the API schema
 
     kpis = {k["label"]: k for k in result["kpis"]}
-    assert kpis["Budget"] == {"label": "Budget", "value": "$13,600", "sub": "$6,400 under budget"}
-    assert kpis["Completion Date"]["value"] == "Oct 23, 2026"
-    assert kpis["Completion Date"]["sub"] == "7 days ahead of target"
+    assert kpis["Budget"] == {"label": "Budget", "value": "$12,640", "sub": "$7,360 under budget"}
+    assert kpis["Completion Date"]["value"] == "Oct 22, 2026"
+    assert kpis["Completion Date"]["sub"] == "8 days ahead of target"
     assert kpis["Resource Utilization"]["sub"] == "Average across 2 resources"
     assert kpis["Critical Path"] == {
         "label": "Critical Path",
@@ -67,9 +68,12 @@ def test_skill_reassignment_report() -> None:
     assert [c["delta"] for c in result["scheduleChanges"]] == ["—", "—"]
     assert result["scheduleChanges"][1]["original"] == f"Wk 2{EN_DASH}3"
     assert result["scheduleChanges"][0]["reason"] == "No change needed"
+    assert result["scheduleChanges"][1]["reason"] == (
+        "Lisa Park (level 5): 9 working days instead of 10"
+    )
     assert result["utilization"] == [
-        {"name": "Mark Chen", "before": 100, "after": 33},
-        {"name": "Lisa Park", "before": 0, "after": 67},
+        {"name": "Mark Chen", "before": 100, "after": 36},
+        {"name": "Lisa Park", "before": 0, "after": 64},
     ]
     assert report.critical_path == [
         {"id": "a", "code": "1.1.1", "name": "Design"},
@@ -84,14 +88,14 @@ def test_skill_reassignment_report() -> None:
         "deliverableCode": "1.1",
         "deliverableName": "Customer data",
         "start": "2026-10-12",
-        "end": "2026-10-23",
+        "end": "2026-10-22",
         "baselineStart": "2026-10-12",
         "baselineEnd": "2026-10-23",
         "assignee": "Lisa Park",
         "done": False,
     }
-    assert result["summary"]["completionDate"] == "2026-10-23"
-    assert result["summary"]["peakUtilization"] == {"name": "Lisa Park", "percent": 67}
+    assert result["summary"]["completionDate"] == "2026-10-22"
+    assert result["summary"]["peakUtilization"] == {"name": "Lisa Park", "percent": 64}
     assert result["summary"]["softViolations"] == []
 
     rows = {a.wbs_node_id: a for a in report.assignments}
@@ -99,7 +103,7 @@ def test_skill_reassignment_report() -> None:
     assert rows["b"].baseline_employee_id == "e1"
     assert (rows["b"].start_week, rows["b"].end_week) == (1, 2)
     assert rows["b"].hours_per_week == 40.0
-    assert [r.type for r in report.recommendations] == ["reassignment"]
+    assert [rec.type for rec in report.recommendations] == ["reassignment", "schedule_change"]
 
 
 def test_over_budget_and_late_kpis() -> None:

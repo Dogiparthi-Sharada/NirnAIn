@@ -13,11 +13,14 @@ constraints below (each person's modes and capacity in `workload.py`),
   of the plan in force and its links are already met.
 * Assignment: one boolean x[t,r] per candidate resource, exactly one true.
 * Duration follows the person (multi-mode, `load.task_mode`): candidate
-  (t,r) has its own duration d[t,r] and daily load q[t,r]. Someone who can
-  give the task's daily demand (effort / WBS duration) works at the WBS
-  duration; a part-timer who can't takes ceil(effort / their daily hours)
-  working days, at most their daily hours per day. Contractor profiles keep
-  the WBS duration. Task t has a start s_t shared by its candidates and an
+  (t,r) has its own duration d[t,r] and daily load q[t,r]. Their skill
+  level sets their pace (`speed.py`, D5): each level above the task's
+  minimum is 10% faster (at most 30%), each level below 25% slower; the
+  effort and the full-time duration scale with it, and so does the cost.
+  Someone who can give the daily demand (effort / that duration) works at
+  that duration; a part-timer who can't takes ceil(effort / their daily
+  hours) working days, at most their daily hours per day. Contractor
+  profiles keep the WBS duration. Task t has a start s_t shared by its candidates and an
   end e_t, set by the chosen candidate's mode. Each employee mode carries an
   optional interval from s_t. So cutting someone's hours stretches their
   tasks and lengthens the plan, and giving hours back shortens it.

@@ -136,7 +136,10 @@ tagged with them (`PATCH /wbs/nodes/{nodeId}` `{skills: [name]}`, needed at leve
 else those whose name or description mention every word of the skill
 (`skill_links.py`); a Required skill no package uses is a `needs_you` warning on the
 inputs sheet. Unconfirmed AI estimates and unanswered questions that matter block the
-run (422).
+run (422). A person's skill level sets their pace on a work package: each level above
+its minimum is 10% faster (at most 30%), each level below ("Can flex" skills only) 25%
+slower; the hours, and so the duration and cost, scale with it, on top of a
+part-timer's stretch (`speed.py`).
 
 `POST .../optimization/runs` loads the plan under the caller's RLS session, freezes it
 into `input_snapshot` and commits. A background task then solves it in-process
