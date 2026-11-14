@@ -76,7 +76,7 @@ def test_missing_durations_are_listed_then_summarized_and_owners_are_optional() 
     few = run(tree(("A", None, True), ("B", 5, False)))
     assert few["structureValid"] is True
     assert few["issues"] == [{"type": "warning", "text": "1.1.1 A has no duration."}]
-    many = run(tree(*[(f"P{i}", None, False) for i in range(5)]))
+    many = run(tree(*[(f"P{position}", None, False) for position in range(5)]))
     assert many["issues"] == [
         {"type": "warning", "text": "5 work packages have no duration (1.1.1, 1.1.2, 1.1.3, …)."}
     ]
