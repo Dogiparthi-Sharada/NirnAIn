@@ -3,8 +3,8 @@
 Purpose: A run analyzes its own pasted notes plus every upload whose text was read; transcripts are
 first reduced to one line per speaker turn, then each source becomes a `<document>` inside one
 `<project_notes>` block.
-How it fits: Pure functions used by the intake job (app/jobs/intake.py), which does the I/O; layer:
-ai.
+How it fits: Pure functions used by the intake job (app/jobs/intake.py), which does the I/O;
+layer: ai.
 Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 

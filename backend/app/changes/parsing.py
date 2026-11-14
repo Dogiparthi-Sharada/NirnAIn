@@ -2,8 +2,8 @@
 
 Purpose: Give every rules reader the same, tested way of finding values in free text, and the same
 way of formatting them back for questions and comparisons.
-How it fits: Used by detect*.py, statements.py, questions.py, compare.py and team.py; pure; layer:
-changes.
+How it fits: Used by detect*.py, statements.py, questions.py, compare.py and team.py; pure;
+layer: changes.
 Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 

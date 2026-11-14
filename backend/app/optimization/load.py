@@ -4,8 +4,8 @@ Purpose: Load is measured in tenths of an hour per working day so CP-SAT works w
 long a task takes depends on who does it (`task_mode`): skill sets the pace, and a part-timer who
 can't give the daily demand takes ceil(effort / their daily hours) days, so cutting someone's hours
 lengthens the plan; bookings elsewhere may stretch a task the same way (`booked_modes`).
-How it fits: Used by problem.py, workload.py, report_context.py and conflicts.py; layer:
-optimization.
+How it fits: Used by problem.py, workload.py, report_context.py and conflicts.py;
+layer: optimization.
 Created: 2026-10-14 · Version: 1.0 (NirnAIn demo release)
 """
 

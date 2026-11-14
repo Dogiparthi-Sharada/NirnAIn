@@ -2,8 +2,8 @@
 
 Purpose: Let the PM set what the plan must respect (budget, deadline, policies, milestones) and link
 work packages, refusing cross-project links (SEC-001) and naming any cycle (WBS-009).
-How it fits: Uses app/repositories/planning.py and the pure rules in app/domain/planning.py; layer:
-api.
+How it fits: Uses app/repositories/planning.py and the pure rules in app/domain/planning.py;
+layer: api.
 Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 

@@ -3,8 +3,8 @@
 Purpose: Say what each relaxed plan takes (contractor hours and rate, overtime, the new go-live, the
 extra cost) and offer an option only when its plan uses what the option adds.
 How it fits: `remedies.price_remedies` re-solves relaxed copies and calls these to build the
-`Remedy` entries; `combined_remedy` lists the changes "Change these together" needs; layer:
-optimization.
+`Remedy` entries; `combined_remedy` lists the changes "Change these together" needs;
+layer: optimization.
 Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 

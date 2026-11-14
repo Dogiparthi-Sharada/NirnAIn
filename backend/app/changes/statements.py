@@ -3,8 +3,8 @@
 Purpose: Never propose a value the notes don't decide (QA pack M02/M03): find whether a sentence
 rejects what it mentions, which values it replaces, the policy it states for a budget or deadline
 ("must hold" = hard, "may flex" = soft), and money that is spend rather than a budget.
-How it fits: Called per sentence by detect.py, detect_limits.py and detect_people.py; pure; layer:
-changes.
+How it fits: Called per sentence by detect.py, detect_limits.py and detect_people.py; pure;
+layer: changes.
 Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 

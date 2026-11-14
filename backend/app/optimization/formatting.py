@@ -2,8 +2,8 @@
 
 Purpose: Format money, dates, durations and week ranges the same way everywhere the plan is
 described, so KPI cards, reasons and remedies agree.
-How it fits: Used by explain.py, run_summary.py, conflicts.py and remedy_options.py; layer:
-optimization.
+How it fits: Used by explain.py, run_summary.py, conflicts.py and remedy_options.py;
+layer: optimization.
 Created: 2026-10-14 · Version: 1.0 (NirnAIn demo release)
 """
 

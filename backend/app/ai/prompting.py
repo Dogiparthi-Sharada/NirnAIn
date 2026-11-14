@@ -3,8 +3,8 @@
 Purpose: Project text (notes, scope items, WBS names) is user-controlled, so it always goes inside a
 `<project_data>` block that the system prompt declares to be data, with angle brackets escaped so
 the text can't close the block early.
-How it fits: Used by every prompt builder in app/ai, app/changes/llm.py and app/drafts/ai.py; layer:
-ai.
+How it fits: Used by every prompt builder in app/ai, app/changes/llm.py and app/drafts/ai.py;
+layer: ai.
 Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
