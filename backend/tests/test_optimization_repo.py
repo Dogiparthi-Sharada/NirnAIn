@@ -57,6 +57,9 @@ def run_row(**overrides: Any) -> dict[str, Any]:
         "created_at": NOW,
         "started_at": NOW,
         "finished_at": NOW,
+        "version": None,
+        "applied_at": None,
+        "options": {},
     }
     row.update(overrides)
     return row
@@ -98,7 +101,8 @@ async def test_active_run_and_fail() -> None:
 
 async def test_get_and_latest_map_columns() -> None:
     row = run_row(infeasibility=[{"name": "n", "explanation": "e"}], status="infeasible")
-    conn = Conn(Rows([row]), Rows([run_row(runtime_ms=None, status="queued")]), Rows([]))
+    queued = run_row(runtime_ms=None, status="queued", options=None, version=2, applied_at=NOW)
+    conn = Conn(Rows([row]), Rows([queued]), Rows([]))
     repo = OptimizationRepository(conn)  # type: ignore[arg-type]
     run = await repo.get(row["project_id"], row["id"])
     assert run is not None
@@ -109,6 +113,7 @@ async def test_get_and_latest_map_columns() -> None:
     latest = await repo.latest(uuid.uuid4())
     assert latest is not None
     assert latest.solve_seconds is None
+    assert (latest.version, latest.applied_at, latest.options) == (2, NOW, {})
     assert "ORDER BY public.optimization_runs.created_at DESC" in conn.sql[1]
     assert await repo.latest(uuid.uuid4()) is None
 

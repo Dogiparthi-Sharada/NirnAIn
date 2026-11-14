@@ -16,6 +16,7 @@ from app.repositories.me import ProfileRepository
 from app.repositories.notifications import NotificationRepository
 from app.repositories.optimization import OptimizationRepository
 from app.repositories.orgs import OrgRepository
+from app.repositories.plan import PlanRepository
 from app.repositories.planning import PlanningRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.wbs import WbsRepository
@@ -60,6 +61,10 @@ def get_planning_repo(db: UserDB) -> PlanningRepository:
     return PlanningRepository(db)
 
 
+def get_plan_repo(db: UserDB) -> PlanRepository:
+    return PlanRepository(db)
+
+
 def get_intake_runner(request: Request) -> IntakeRunner:
     intaker: IntakeRunner | None = getattr(request.app.state, "intaker", None)
     if intaker is None:
@@ -77,6 +82,7 @@ Intakes = Annotated[IntakeRepository, Depends(get_intake_repo)]
 Intaker = Annotated[IntakeRunner, Depends(get_intake_runner)]
 Wbs = Annotated[WbsRepository, Depends(get_wbs_repo)]
 Planning = Annotated[PlanningRepository, Depends(get_planning_repo)]
+Plans = Annotated[PlanRepository, Depends(get_plan_repo)]
 
 # Path parameters are camelCase on the wire, like everything else.
 OrgId = Annotated[uuid.UUID, Path(alias="orgId")]
