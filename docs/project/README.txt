@@ -14,11 +14,11 @@ The seven-step workflow
 +----------------+     +----------------+     +----------------+     +----------------+
 | 1 Create       |     | 2 AI Project   |     | 3 Scope        |     | 4 WBS          |
 |   Project      |---->|   Intake       |---->|   Review       |---->|   Builder      |
-+----------------+     +----------------+     +----------------+     +----------------+
++----------------+     +----------------+     +----------------+     +-------+--------+
                                                                              |
-        +--------------------------------------------------------------------+
-        v
-+----------------+     +----------------+     +----------------------+
+        .--------------------------------------------------------------------'
+        |
++-------v--------+     +----------------+     +----------------------+
 | 5 Constraints  |     | 6 Optimization |     | 7 Changes &          |
 |                |---->|   Results      |---->|   Versions (v1, v2)  |
 +----------------+     +----------------+     +----------------------+
@@ -35,26 +35,26 @@ A Dashboard shows each project's status, budget, milestones and risks.
 
 Architecture in one picture
 
-                              sign in, refresh (publishable key)
-       +--------------------------------------------------------------------------------+
-       |                                                                                |
-       |                  RENDER (free tiers)                           SUPABASE (new free project)
-       |                                                                                |
-+------+------+          +------------------------------+                               |
-| Browser     | loads    | Static site                  |                               |
-|             |--------->| React 19 + Vite build        |               +---------------v----------------+
-| project     | the app  | rewrite /* -> /index.html    |               | Auth                           |
-| manager,    |          +------------------------------+               | email + password               |
-| React app,  |                                                 +------>| JWT signing keys (JWKS)        |
-| supabase-js |          +------------------------------+       |       +--------------------------------+
-| for sign-in | /api/v1  | Web service (Docker)         |       | verify token (JWKS)
-|             |--------->| FastAPI, Python 3.12         |-------+
-|             | + Bearer | optimizer: OR-Tools CP-SAT   |
-|             | token    | AI intake and WBS jobs       | SQL as        +--------------------------------+
-|             |          | rule-based AI fallbacks      |-------------->| Postgres 17                    |
-+-------------+          +------------------------------+ authenticated | 25 tables, RLS on every one    |
-                                        :                 + the claims  | 17 migrations, pgTAP tests     |
-                                        :                               +--------------------------------+
+                                    sign in, refresh (publishable key)
+       .--------------------------------------------------------------------------------------------.
+       |                                                                                            |
+       |                 RENDER (free tiers)                            SUPABASE (new free project) |
+       |                                                                                            |
++------+------+          +------------------------------+                                           |
+| Browser     | loads    | Static site                  |               +---------------------------v----+
+|             |--------->| React 19 + Vite build        |               | Auth                           |
+| project     | the app  | rewrite /* -> /index.html    |       .------>| email + password               |
+| manager,    |          +------------------------------+       |       | JWT signing keys (JWKS)        |
+| React app,  |                                                 |       +--------------------------------+
+| supabase-js |          +------------------------------+       | verify token (JWKS)
+| for sign-in | /api/v1  | Web service (Docker)         |-------'
+|             |--------->| FastAPI, Python 3.12         |
+|             | + Bearer | optimizer: OR-Tools CP-SAT   |               +--------------------------------+
+|             | token    | AI intake and WBS jobs       | SQL as        | Postgres 17                    |
+|             |          | rule-based AI fallbacks      |-------------->| 25 tables, RLS on every one    |
++-------------+          +------------------------------+ authenticated | 17 migrations, pgTAP tests     |
+                                        :                 + the claims  +--------------------------------+
+                                        :
                                         : only with ANTHROPIC_API_KEY
                                         :
                                         v
