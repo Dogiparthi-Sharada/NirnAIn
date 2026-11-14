@@ -52,6 +52,7 @@ export interface NewMember {
   roleTitle: string
   /** Whole hours per week on this project, 1–80. */
   hoursPerWeek: number
+  skills: string[]
   workerType: WorkerType
   hourlyRateCents?: number | null
 }
@@ -368,6 +369,7 @@ export function useDecideChange(projectId: string) {
         queryKeys.capacity(projectId),
         keys.team(projectId),
         ['projects', projectId, 'team'],
+        ['projects', projectId, 'skills'],
         queryKeys.scopeItems(projectId),
         ['projects', projectId, 'overview'],
         queryKeys.notifications,

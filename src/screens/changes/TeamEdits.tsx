@@ -6,16 +6,18 @@
  * contractor is recorded as a change, re-planned and approved here. How it fits: `EditsPane`
  * keeps the newcomers and sends them as `edits.addMembers` (POST /projects/{id}/changes); the
  * backend reserves an employee for each and adds them to the team when the change is approved.
- * The form reuses the Team screen's `.member-form` markup and checks what it can before adding
- * (name, role, no second person with the same name, whole hours 1–80, a contractor's rate),
+ * The form reuses the Team screen's `.member-form` / `.skill-picks` markup and checks what it
+ * can before adding (name, role, no second person with the same name, whole hours 1–80, a
+ * contractor's rate),
  * listing every problem at once like the Team screen. Business rules (round 2): an employee is
  * costed from their company record, so only a contractor has a rate field; it may be left
- * empty when the project has a contractor rate, which then applies. People have no skills.
+ * empty when the project has a contractor rate, which then applies. Skills are picked from
+ * the project's skill list.
  */
 import { useEffect, useRef, useState } from 'react'
 import type { NewMember, WorkerType } from '@/lib/changes'
 import { formatMoney } from '@/lib/format'
-import { isWholeHours } from '@/lib/inputs'
+import { isWholeHours, useProjectSkills } from '@/lib/inputs'
 import { memberSummary } from './ui'
 
 const NEW_MEMBER_HOURS = '40'
@@ -37,11 +39,13 @@ function rateCents(raw: string): number | null {
  * `projectRateCents` = the project's contractor rate, the default for a contractor.
  */
 export function NewcomerForm({
+  projectId,
   takenNames,
   projectRateCents,
   onAdd,
   onCancel,
 }: {
+  projectId: string
   takenNames: string[]
   projectRateCents: number | null
   onAdd: (member: NewMember) => void
@@ -52,12 +56,23 @@ export function NewcomerForm({
   const [hours, setHours] = useState(NEW_MEMBER_HOURS)
   const [workerType, setWorkerType] = useState<WorkerType>('employee')
   const [rate, setRate] = useState('')
+  const [picked, setPicked] = useState<Set<string>>(() => new Set())
   const [problems, setProblems] = useState<string[]>([])
+  const skills = useProjectSkills(projectId)
   const nameRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     nameRef.current?.focus()
   }, [])
+
+  function togglePick(skillName: string) {
+    setPicked((previous) => {
+      const next = new Set(previous)
+      if (next.has(skillName)) next.delete(skillName)
+      else next.add(skillName)
+      return next
+    })
+  }
 
   function add() {
     const fullName = name.trim().replace(/\s+/g, ' ')
@@ -74,7 +89,8 @@ export function NewcomerForm({
     else if (contractor && hourlyRateCents === null && projectRateCents === null) found.push('Enter the contractor’s hourly rate.')
     setProblems(found)
     if (found.length > 0) return
-    onAdd({ fullName, roleTitle, hoursPerWeek, workerType, hourlyRateCents: contractor ? (hourlyRateCents ?? projectRateCents) : null })
+    const chosen = (skills.data ?? []).map((skill) => skill.name).filter((skillName) => picked.has(skillName))
+    onAdd({ fullName, roleTitle, hoursPerWeek, skills: chosen, workerType, hourlyRateCents: contractor ? (hourlyRateCents ?? projectRateCents) : null })
   }
 
   return (
@@ -133,6 +149,24 @@ export function NewcomerForm({
           </div>
         )}
       </div>
+      <div className="field mt">
+        <label id="chg-mf-skills-label">Skills</label>
+        <div className="skill-picks" role="group" aria-labelledby="chg-mf-skills-label">
+          {skills.isPending ? (
+            <span className="small muted">Loading skills&hellip;</span>
+          ) : skills.isError ? (
+            <span className="small muted">We couldn’t load the project’s skills; you can add the person without them.</span>
+          ) : skills.data.length > 0 ? (
+            skills.data.map((skill) => (
+              <label className="pick" key={skill.skillId}>
+                <input type="checkbox" value={skill.name} checked={picked.has(skill.name)} onChange={() => togglePick(skill.name)} /> {skill.name}
+              </label>
+            ))
+          ) : (
+            <span className="small muted">The project has no skill list.</span>
+          )}
+        </div>
+      </div>
       <div className="row mt">
         <button className="btn sm" id="chg-mf-add" type="button" onClick={add}>
           Add to this change
@@ -155,6 +189,7 @@ export function NewcomerList({ newcomers, onDrop }: { newcomers: NewMember[]; on
           <tr key={member.fullName}>
             <td>
               <b>Joins:</b> {memberSummary(member)}
+              {member.skills.length > 0 && <span className="small muted"> · {member.skills.join(', ')}</span>}
             </td>
             <td style={{ textAlign: 'right' }}>
               <button className="btn sm sec" type="button" aria-label={`Don’t add ${member.fullName}`} onClick={() => onDrop(member.fullName)}>

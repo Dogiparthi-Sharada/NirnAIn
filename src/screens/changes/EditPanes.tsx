@@ -229,6 +229,7 @@ export function EditsPane({ projectId, current, busy, onSubmit }: { projectId: s
         <NewcomerList newcomers={newcomers} onDrop={(fullName) => setNewcomers((previous) => previous.filter((member) => member.fullName !== fullName))} />
         {adding ? (
           <NewcomerForm
+            projectId={projectId}
             projectRateCents={projectRateCents}
             takenNames={[...team.data.map((member) => member.fullName), ...newcomers.map((member) => member.fullName)]}
             onAdd={(member) => {
