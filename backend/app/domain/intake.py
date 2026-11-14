@@ -10,6 +10,7 @@ from pydantic import Field
 from app.domain.common import (
     CamelModel,
     DocumentKind,
+    Evidence,
     InputModel,
     ItemOrigin,
     JobStatus,
@@ -19,6 +20,8 @@ from app.domain.common import (
 
 
 class ScopeItem(CamelModel):
+    """A scope item on the Scope Review screen (AI-extracted or added by hand)."""
+
     id: uuid.UUID
     project_id: uuid.UUID
     category: ScopeCategory
@@ -26,6 +29,12 @@ class ScopeItem(CamelModel):
     status: ScopeStatus
     origin: ItemOrigin
     confidence: float | None
+    # Evidence ("never invent"): null for items people added themselves.
+    source_quote: str | None
+    evidence: Evidence | None
+    evidence_note: str | None
+    suggested_text: str | None
+    source_document_id: uuid.UUID | None  # the upload the quote is from (null: pasted notes)
     sort_order: int
     created_at: datetime
     updated_at: datetime

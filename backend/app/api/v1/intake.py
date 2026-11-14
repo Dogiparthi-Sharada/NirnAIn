@@ -71,6 +71,18 @@ async def create_run(
     return run
 
 
+@router.get(
+    "/projects/{projectId}/intake/runs",
+    response_model=list[IntakeRun],
+    summary="The project's 20 most recent intake runs, newest first",
+)
+async def list_runs(project_id: ProjectId, runs: Intakes) -> list[IntakeRun]:
+    """Run history for "Previous Intakes" (404 when the project is not visible)."""
+    if not await runs.project_exists(project_id):
+        raise NotFoundError("Project not found")
+    return await runs.list_runs(project_id)
+
+
 # Declared before /{runId} so "latest" isn't parsed as a run id.
 @router.get(
     "/projects/{projectId}/intake/runs/latest",
@@ -78,6 +90,7 @@ async def create_run(
     summary="Latest intake run (404 when the project has none)",
 )
 async def latest_run(project_id: ProjectId, runs: Intakes) -> IntakeRun:
+    """The newest run of the project."""
     run = await runs.latest(project_id)
     if run is None:
         raise NotFoundError("No intake runs yet")
@@ -90,6 +103,7 @@ async def latest_run(project_id: ProjectId, runs: Intakes) -> IntakeRun:
     summary="Get an intake run",
 )
 async def get_run(project_id: ProjectId, run_id: RunId, runs: Intakes) -> IntakeRun:
+    """One run of the project (the `Location` of a created run)."""
     run = await runs.get(project_id, run_id)
     if run is None:
         raise NotFoundError("Intake run not found")
@@ -102,6 +116,7 @@ async def get_run(project_id: ProjectId, run_id: RunId, runs: Intakes) -> Intake
     summary="Scope items extracted (or added) for a project",
 )
 async def list_scope_items(project_id: ProjectId, runs: Intakes) -> list[ScopeItem]:
+    """Every item except removed ones, by category and order, with its evidence."""
     if not await runs.project_exists(project_id):
         raise NotFoundError("Project not found")
     return await runs.list_scope_items(project_id)
@@ -116,6 +131,7 @@ async def list_scope_items(project_id: ProjectId, runs: Intakes) -> list[ScopeIt
 async def create_scope_item(
     project_id: ProjectId, body: ScopeItemCreate, runs: Intakes
 ) -> ScopeItem:
+    """Add the user's own item: accepted, origin manual, no evidence ("Yours")."""
     if not await runs.project_exists(project_id):
         raise NotFoundError("Project not found")
     if not await runs.can_write(project_id):
@@ -132,6 +148,7 @@ async def create_scope_item(
     summary="Accept, edit, or remove a scope item",
 )
 async def update_scope_item(item_id: ItemId, body: ScopeItemUpdate, runs: Intakes) -> ScopeItem:
+    """Partial update; text equal to `suggestedText` resolves a flagged item to stated."""
     patch = body.model_dump(exclude_unset=True)
     item = await runs.update_item(item_id, patch)
     if item is None:

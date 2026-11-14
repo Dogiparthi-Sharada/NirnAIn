@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -27,13 +27,8 @@ from app.domain.common import (
     ScopeStatus,
 )
 from app.domain.intake import IntakeRun, ScopeItem
-from app.repositories.intake import (
-    ActiveRun,
-    ActiveRunExistsError,
-    ClaimedRun,
-    IntakeJobStore,
-    IntakeRepository,
-)
+from app.repositories.intake import ActiveRun, ActiveRunExistsError, IntakeRepository
+from app.repositories.intake_jobs import ClaimedRun, IntakeJobStore
 from tests.conftest import Store
 from tests.test_optimization_repo import Rows
 from tests.test_repositories import Conn, Result
@@ -82,12 +77,16 @@ class FakeIntakes:
             model=None,
             items_extracted=None,
             error=None,
-            created_at=NOW,
+            created_at=NOW + timedelta(seconds=len(self.d.runs)),
             started_at=None,
             finished_at=None,
         )
         self.d.texts[rid] = text
         return rid
+
+    async def list_runs(self, project_id: uuid.UUID) -> list[IntakeRun]:
+        runs = [run for run in self.d.runs.values() if run.project_id == project_id]
+        return sorted(runs, key=lambda run: run.created_at, reverse=True)
 
     async def get(self, project_id: uuid.UUID, run_id: uuid.UUID) -> IntakeRun | None:
         run = self.d.runs.get(run_id)
@@ -106,6 +105,11 @@ class FakeIntakes:
             status=ScopeStatus.ACCEPTED,
             origin=ItemOrigin.MANUAL,
             confidence=None,
+            source_quote=None,
+            evidence=None,
+            evidence_note=None,
+            suggested_text=None,
+            source_document_id=None,
             sort_order=order,
             created_at=NOW,
             updated_at=NOW,
@@ -181,6 +185,19 @@ def test_run_needs_notes_or_a_readable_upload(
     assert intake_data.texts[uuid.UUID(r.json()["id"])] == ""
 
 
+def test_list_runs_newest_first(intake_client: TestClient, store: Store, auth: Auth) -> None:
+    user, _, pid = _project(intake_client, store, auth)
+    url = f"/api/v1/projects/{pid}/intake/runs"
+    first = intake_client.post(url, json={"text": "a"}, headers=auth(user)).json()["id"]
+    second = intake_client.post(url, json={"text": "b"}, headers=auth(user)).json()["id"]
+    listed = intake_client.get(url, headers=auth(user))
+    assert listed.status_code == 200
+    assert [run["id"] for run in listed.json()] == [second, first]
+    assert {"model", "itemsExtracted", "status", "createdAt"} <= set(listed.json()[0])
+    stranger = store.add_user("Eve")
+    assert intake_client.get(url, headers=auth(stranger)).status_code == 404
+
+
 def test_create_run_conflict_on_race(
     intake_client: TestClient, store: Store, intake_data: IntakeStore, auth: Auth
 ) -> None:
@@ -208,6 +225,9 @@ def test_create_scope_item(intake_client: TestClient, store: Store, auth: Auth) 
         "manual",
     )
     assert body["sortOrder"] == 0
+    evidence_fields = ("sourceQuote", "evidence", "evidenceNote", "suggestedText")
+    assert {key: body[key] for key in evidence_fields} == dict.fromkeys(evidence_fields)
+    assert body["sourceDocumentId"] is None
 
     bad = intake_client.post(url, json={"category": "nope", "text": "x"}, headers=auth(user))
     assert bad.status_code == 422
@@ -305,6 +325,11 @@ async def test_create_item_appends_manual_accepted() -> None:
         "status": "accepted",
         "origin": "manual",
         "confidence": None,
+        "source_quote": None,
+        "evidence": None,
+        "evidence_note": None,
+        "suggested_text": None,
+        "source_document_id": None,
         "sort_order": 3,
         "created_at": NOW,
         "updated_at": NOW,
@@ -317,6 +342,38 @@ async def test_create_item_appends_manual_accepted() -> None:
     assert "max(public.scope_items.sort_order)" in conn.sql[0]
     assert conn.params[0]["status"] == ScopeStatus.ACCEPTED
     assert conn.params[0]["origin"] == ItemOrigin.MANUAL
+
+
+async def test_list_runs_is_newest_first_and_capped() -> None:
+    conn = Conn(Rows([]))
+    assert await IntakeRepository(conn).list_runs(uuid.uuid4()) == []  # type: ignore[arg-type]
+    assert "ORDER BY public.intake_runs.created_at DESC" in conn.sql[0]
+    assert conn.params[0]["param_1"] == 20
+
+
+async def test_using_the_suggested_text_makes_the_item_stated() -> None:
+    conn = Conn(Result([]), Rows([]))
+    patch = {"text": "Vendor delay"}
+    assert await IntakeRepository(conn).update_item(uuid.uuid4(), patch) is None  # type: ignore[arg-type]
+    update = conn.sql[0]
+    assert update.startswith("UPDATE public.scope_items SET")
+    takes_suggestion = (
+        "CASE WHEN (public.scope_items.suggested_text = %(suggested_text_1)s::VARCHAR)"
+    )
+    for column, otherwise in (
+        ("evidence", "public.scope_items.evidence"),
+        ("evidence_note", "public.scope_items.evidence_note"),
+        ("suggested_text", "public.scope_items.suggested_text"),
+    ):
+        assert f"{column}={takes_suggestion} THEN" in update
+        assert f"ELSE {otherwise} END" in update
+    assert conn.params[0]["suggested_text_1"] == "Vendor delay"
+    assert conn.params[0]["param_1"] == "stated"
+    assert conn.params[0]["text"] == "Vendor delay"
+
+    status_only = Conn(Result([]), Rows([]))
+    await IntakeRepository(status_only).update_item(uuid.uuid4(), {"status": "accepted"})  # type: ignore[arg-type]
+    assert "CASE" not in status_only.sql[0]
 
 
 async def test_finish_replaces_untouched_ai_items_and_stores_evidence() -> None:

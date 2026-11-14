@@ -24,7 +24,7 @@ from app.jobs.intake import (
     IntakeRunner,
     engine_store,
 )
-from app.repositories.intake import ClaimedRun
+from app.repositories.intake_jobs import ClaimedRun
 
 Finished = tuple[uuid.UUID, uuid.UUID, str, list[ScopeSuggestion], int, int]
 

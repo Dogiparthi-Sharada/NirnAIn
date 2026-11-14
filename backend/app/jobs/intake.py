@@ -31,7 +31,7 @@ from app.ai.intake_llm import (
 from app.ai.intake_rules import RULES_MODEL, extract_by_rules
 from app.ai.llm import LLM, Usage, make_client
 from app.core.config import Settings
-from app.repositories.intake import IntakeJobStore
+from app.repositories.intake_jobs import IntakeJobStore
 
 logger = logging.getLogger("app.jobs.intake")
 
