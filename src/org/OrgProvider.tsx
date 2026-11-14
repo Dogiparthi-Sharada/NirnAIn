@@ -1,3 +1,14 @@
+/**
+ * Loads the signed-in user's profile and resolves the active organization before the app renders.
+ *
+ * Purpose: Every org-scoped query needs an organization, so the signed-in app waits for `/me`,
+ * shows a retry when it fails and explains when the user belongs to no organization yet; the
+ * chosen organization is remembered in this browser.
+ * How it fits: Wraps the signed-in shell in `App.tsx`; exposes `OrgContext` (read with `useOrg`);
+ * uses `useMe` from `lib/queries`; layer: auth.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+ */
+
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { useAuth } from '@/auth/useAuth'
 import { errorMessage } from '@/lib/api'
@@ -8,6 +19,7 @@ import { OrgContext, type OrgContextValue } from './useOrg'
 
 const STORAGE_KEY = 'projectai:org-id'
 
+/** Reads the remembered organization id (null when storage is unavailable). */
 function readStoredOrgId(): string | null {
   try {
     return localStorage.getItem(STORAGE_KEY)
@@ -22,6 +34,7 @@ export default function OrgProvider({ children }: { children: ReactNode }) {
   const meQuery = useMe()
   const [selectedId, setSelectedId] = useState<string | null>(readStoredOrgId)
 
+  /** Makes `orgId` the active organization and remembers it in this browser. */
   const selectOrg = useCallback((orgId: string) => {
     setSelectedId(orgId)
     try {
@@ -34,7 +47,7 @@ export default function OrgProvider({ children }: { children: ReactNode }) {
   const me = meQuery.data
   const value = useMemo<OrgContextValue | null>(() => {
     if (!me || me.organizations.length === 0) return null
-    const org = me.organizations.find((o) => o.id === selectedId) ?? me.organizations[0]!
+    const org = me.organizations.find((organization) => organization.id === selectedId) ?? me.organizations[0]!
     return { me, organizations: me.organizations, org, selectOrg }
   }, [me, selectedId, selectOrg])
 
@@ -81,6 +94,7 @@ export default function OrgProvider({ children }: { children: ReactNode }) {
   return <OrgContext.Provider value={value}>{children}</OrgContext.Provider>
 }
 
+/** A centred white card with the brand on top, for the loading-failure and no-organization states. */
 function CenteredCard({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-6">

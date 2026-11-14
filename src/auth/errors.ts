@@ -1,3 +1,12 @@
+/**
+ * Maps Supabase Auth errors to messages we are happy to show users.
+ *
+ * Purpose: Raw auth errors are technical and sometimes leak whether an account exists; every auth
+ * screen shows the same plain, safe wording instead.
+ * How it fits: Used by the auth screens and `auth/OAuthButtons.tsx`; layer: auth.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+ */
+
 import { isAuthError } from '@supabase/supabase-js'
 
 export type AuthErrorKind =

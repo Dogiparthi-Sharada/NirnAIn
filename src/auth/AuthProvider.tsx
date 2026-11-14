@@ -1,3 +1,13 @@
+/**
+ * Provides the Supabase session to the app and signs users out.
+ *
+ * Purpose: The app must know who is signed in before it renders protected routes, follow sign-in,
+ * sign-out and password-recovery events, and never keep one user's cached data after sign-out.
+ * How it fits: Mounted by `App.tsx` at the router root; exposes `AuthContext` (read with
+ * `useAuth`) to the route guards, `OrgProvider` and the screens; layer: auth.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+ */
+
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
@@ -5,6 +15,7 @@ import type { Session } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import { AuthContext, type AuthContextValue } from './useAuth'
 
+/** Tracks the Supabase session and shares it, with `signOut`, through `AuthContext`. */
 export default function AuthProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -37,6 +48,7 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [navigate, queryClient])
 
+  /** Signs out everywhere (or at least on this device), clears cached data and goes to the login page. */
   const signOut = useCallback(async () => {
     const { error } = await supabase.auth.signOut()
     // A failed global revoke (e.g. already-expired token) still needs to clear this device.

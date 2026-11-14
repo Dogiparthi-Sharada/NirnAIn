@@ -1,11 +1,14 @@
 /**
- * Frame and form pieces of the public sign-in screens (mockup views/auth.js, styles/public.css):
- * the wine brand panel on the left and the form column on the right, plus the design's field,
- * password-rules and brand markup.
+ * Frame and form pieces of the public sign-in screens: brand panel, form column, fields and password rules.
  *
- * Used by Login, Signup, CheckEmail, ForgotPassword, ResetPassword, AuthCallback and AuthConfirm.
- * Only presentation lives here; the Supabase calls stay in each screen.
+ * Purpose: Every auth screen must look like the approved design (mockup views/auth.js,
+ * styles/public.css) with the wine brand panel on the left and the form on the right; only
+ * presentation lives here, the Supabase calls stay in each screen.
+ * How it fits: Used by Login, Signup, CheckEmail, ForgotPassword, ResetPassword, AuthCallback and
+ * AuthConfirm; reads the password policy from `auth/password.ts`; layer: auth.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useEffect, type InputHTMLAttributes, type ReactNode, type Ref } from 'react'
 import { APP_NAME } from '@/components/Brand'
 import { PASSWORD_RULES } from './password'
