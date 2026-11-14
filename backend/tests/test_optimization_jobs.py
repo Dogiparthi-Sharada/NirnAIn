@@ -7,11 +7,13 @@ import threading
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import date
 from typing import Any
 
 import pytest
 
 from app.core.config import Settings
+from app.domain.optimization import RunResult
 from app.jobs import optimizer as jobs
 from app.jobs.optimizer import (
     FAILED_ERROR,
@@ -22,7 +24,7 @@ from app.jobs.optimizer import (
 )
 from app.optimization.explain import Report
 from app.optimization.solver import SolveControl
-from tests.test_optimization_solver import make_input
+from tests.test_optimization_solver import make_input, with_constraints
 
 
 class FakeJobStore:
@@ -75,6 +77,43 @@ async def test_run_solves_and_writes_report() -> None:
     assert rid == run_id
     assert report.status == "optimal"
     assert report.result is not None
+    assert store.failed == []
+
+
+async def test_infeasible_run_gets_priced_remedies() -> None:
+    store = FakeJobStore()
+    tight = with_constraints(make_input(), must_finish_by=date(2026, 10, 16), deadline_mode="hard")
+    store.snapshot = tight.to_snapshot()
+    runner = OptimizationRunner(store, settings())  # type: ignore[arg-type]
+    await runner.submit(uuid.uuid4())
+    await _drain(runner)
+    ((_, report),) = store.finished
+    assert report.status == "infeasible"
+    assert report.iis  # the conflicts are still explained
+    assert report.result is not None
+    (remedy,) = report.result["remedies"]
+    assert remedy["id"] == "move_deadline"
+    assert remedy["title"] == "Move go-live to Oct 23 (+7 days)"
+    assert remedy["completionDate"] == "2026-10-23"
+    RunResult.model_validate(report.result)
+
+
+async def test_remedy_pricing_failure_keeps_the_conflicts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(*args: Any) -> None:
+        raise RuntimeError("pricing bug")
+
+    monkeypatch.setattr(jobs, "price_remedies", broken)
+    store = FakeJobStore()
+    tight = with_constraints(make_input(), must_finish_by=date(2026, 10, 16), deadline_mode="hard")
+    store.snapshot = tight.to_snapshot()
+    runner = OptimizationRunner(store, settings())  # type: ignore[arg-type]
+    await runner.submit(uuid.uuid4())
+    await _drain(runner)
+    ((_, report),) = store.finished
+    assert (report.status, report.result) == ("infeasible", None)
+    assert report.iis
     assert store.failed == []
 
 

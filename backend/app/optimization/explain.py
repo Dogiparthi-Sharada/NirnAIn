@@ -36,6 +36,7 @@ from app.optimization.model import (
     Task,
     qualified,
 )
+from app.optimization.run_summary import run_summary, timeline
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +84,9 @@ class Report:
 
 
 # --------------------------------------------------------------------------- helpers
-class _Ctx:
+class ReportContext:
+    """Lookups shared by every part of the report (tasks, resources, calendar, load)."""
+
     def __init__(self, inp: PlanningInput, outcome: SolveOutcome, plan: Plan) -> None:
         self.inp = inp
         self.plan = plan
@@ -169,7 +172,7 @@ class _Ctx:
         return out
 
 
-def critical_chain(ctx: _Ctx, plan: Plan) -> list[Task]:
+def critical_chain(ctx: ReportContext, plan: Plan) -> list[Task]:
     """Walk back from the last task through binding dependencies or the same assignee."""
     if not plan.tasks:
         return []
@@ -204,7 +207,7 @@ def _chain_label(chain: list[Task]) -> str:
 
 
 # --------------------------------------------------------------------------- reasons
-def _reassignment_reason(ctx: _Ctx, task: Task, before: str | None, after: str) -> str:
+def _reassignment_reason(ctx: ReportContext, task: Task, before: str | None, after: str) -> str:
     reasons = []
     old = ctx.resources.get(before) if before else None
     new = ctx.resources[after]
@@ -223,7 +226,7 @@ def _reassignment_reason(ctx: _Ctx, task: Task, before: str | None, after: str) 
     return "Balances workload"
 
 
-def _schedule_reason(ctx: _Ctx, task_id: str, shift: int) -> str:
+def _schedule_reason(ctx: ReportContext, task_id: str, shift: int) -> str:
     if shift == 0:
         return "No change needed"
     if shift < 0:
@@ -250,7 +253,13 @@ def _schedule_reason(ctx: _Ctx, task_id: str, shift: int) -> str:
 
 # --------------------------------------------------------------------------- report
 def _kpis(
-    ctx: _Ctx, outcome: SolveOutcome, cost: int, finish: date, util: int, n: int, chain: list[Task]
+    ctx: ReportContext,
+    outcome: SolveOutcome,
+    cost: int,
+    finish: date,
+    util: int,
+    n: int,
+    chain: list[Task],
 ) -> list[dict[str, str]]:
     c = ctx.inp.constraints
     budget = c.budget_total_cents if c.budget_total_cents is not None else c.labor_cap_cents
@@ -314,7 +323,7 @@ def build_report(inp: PlanningInput, outcome: SolveOutcome) -> Report:
         return Report(**common, iis=iis, error=outcome.message)
 
     plan, base = outcome.plan, outcome.baseline
-    ctx = _Ctx(inp, outcome, plan)
+    ctx = ReportContext(inp, outcome, plan)
     ordered = sorted(
         inp.tasks, key=lambda t: [int(x) if x.isdigit() else 0 for x in t.code.split(".")]
     )
@@ -417,6 +426,8 @@ def build_report(inp: PlanningInput, outcome: SolveOutcome) -> Report:
         "reassignments": reassignments,
         "scheduleChanges": schedule,
         "utilization": utilization,
+        "schedule": timeline(ctx, ordered),
+        "summary": run_summary(ctx, cost, finish, utilization),
     }
     return Report(
         **common,

@@ -580,9 +580,17 @@ def explain_infeasibility(
 
 
 def solve(
-    inp: PlanningInput, options: SolveOptions | None = None, control: SolveControl | None = None
+    inp: PlanningInput,
+    options: SolveOptions | None = None,
+    control: SolveControl | None = None,
+    *,
+    explain: bool = True,
 ) -> SolveOutcome:
-    """Solve the planning problem. CPU-bound: call it off the event loop."""
+    """Solve the planning problem. CPU-bound: call it off the event loop.
+
+    `explain=False` skips the infeasibility explanation (used when pricing
+    remedies, where only "is there a plan, and what is it" matters).
+    """
     options = options or SolveOptions()
     began = time.perf_counter()
     p = prepare(inp)
@@ -617,7 +625,8 @@ def solve(
             hit_time_limit=mapped == "feasible",
         )
     if mapped == "infeasible":
-        return outcome("infeasible", conflicts=explain_infeasibility(p, options, control))
+        conflicts = explain_infeasibility(p, options, control) if explain else ()
+        return outcome("infeasible", conflicts=conflicts)
     if mapped == "timeout":
         return outcome(
             "timeout",

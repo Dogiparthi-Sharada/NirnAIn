@@ -6,6 +6,9 @@ CPU-bound) and its outcome written on a service connection, which bypasses
 RLS: this is a trusted system job, and `planned_assignments` /
 `recommendations` have no user write policies.
 
+Infeasible runs also get priced remedies ("What it would take"): relaxed
+copies of the input re-solved on the same worker thread budget.
+
 Railway restarts the process on every deploy, so runs can be orphaned:
 `recover_stale` (on startup) and the API (before answering 409) mark runs
 stuck in queued/running for longer than `OPTIMIZER_STALE_AFTER_S` as failed.
@@ -18,12 +21,14 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from dataclasses import replace
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.config import Settings
-from app.optimization.explain import build_report
+from app.optimization.explain import Report, build_report
 from app.optimization.model import PlanningInput, SnapshotError
+from app.optimization.remedies import price_remedies
 from app.optimization.solver import SolveControl, SolveOptions, solve
 from app.repositories.optimization import OptimizationJobStore
 
@@ -92,6 +97,8 @@ class OptimizationRunner:
             )
             outcome = await asyncio.to_thread(solve, inp, self._options, control)
             report = build_report(inp, outcome)
+            if outcome.status == "infeasible":
+                report = await self._with_remedies(inp, report, control, extra)
             async with self._store() as store:
                 await store.finish(run_id, report)
             logger.info(
@@ -109,6 +116,24 @@ class OptimizationRunner:
             await self._fail(run_id, FAILED_ERROR)
         finally:
             self._controls.pop(run_id, None)
+
+    async def _with_remedies(
+        self,
+        inp: PlanningInput,
+        report: Report,
+        control: SolveControl,
+        extra: dict[str, str],
+    ) -> Report:
+        """Add "What it would take" (priced relaxed re-solves) to an infeasible report.
+
+        Best effort: if pricing fails the run still reports its conflicts.
+        """
+        try:
+            remedies = await asyncio.to_thread(price_remedies, inp, self._options, control)
+        except Exception:
+            logger.exception("pricing remedies failed", extra=extra)
+            return report
+        return replace(report, result={"remedies": [remedy.to_json() for remedy in remedies]})
 
     async def _fail(self, run_id: uuid.UUID, error: str) -> None:
         assert self._store is not None  # noqa: S101

@@ -83,7 +83,8 @@ All endpoints are under `/api/v1` except health. JSON uses camelCase. Errors are
 | GET | `/api/v1/orgs/{orgId}/dashboard` | `{totalProjects, onTrack, atRiskOrDelayed, totalBudgetCents, createdThisMonth}` |
 | GET | `/api/v1/notifications` | `unread=true/false`, `limit`, `cursor` |
 | POST | `/api/v1/notifications/{id}/read` | Idempotent. Returns the notification. |
-| POST | `/api/v1/projects/{projectId}/optimization/runs` | 202 + `OptimizationRun` (`queued`), solved in the background. 403 not a writer, 404 project not visible, 409 a run is already queued/running, 422 nothing to optimize (`missing: ["workPackages", "team"]`). |
+| GET | `/api/v1/projects/{projectId}/optimization/inputs` | Confirmation sheet: `{rows: [{key, label, value, source, from}], ready, blocking, missing, hash}` |
+| POST | `/api/v1/projects/{projectId}/optimization/runs` | Optional body `{remedy?, overrides?: {budgetTotalCents?, mustFinishBy?, durationDays?, hoursPerWeek?}, changeRequestId?, baselineRunId?}` (stored as `options`, plus `inputsHash` = the inputs sheet's `hash` for the saved inputs). 202 + `OptimizationRun` (`queued`), solved in the background. 403 not a writer, 404 project / change request / baseline run not visible, 409 a run is already queued/running or the change was decided, 422 inputs not ready (`missing`: `workPackages`, `estimates`, `deadline`, `specialist`, `team`). |
 | GET | `/api/v1/projects/{projectId}/optimization/runs/latest` | Latest run, or 404 when there are none |
 | GET | `/api/v1/projects/{projectId}/optimization/runs/{runId}` | One run |
 
@@ -97,7 +98,16 @@ DB unreachable / pool exhausted / statement timeout → 503.
 `model.py` (input/output + the frozen `input_snapshot` format), `baseline.py`
 (forward-pass "before" plan), `solver.py` (model, status mapping, infeasibility
 explanation via assumption literals; the module docstring documents the formulation
-and its simplifications) and `explain.py` (the UI `result` payload and DB rows).
+and its simplifications), `explain.py` + `run_summary.py` (the UI `result` payload and
+DB rows), `overrides.py` (per-run what-ifs), `remedies.py` (priced relaxed re-solves
+for infeasible runs, `result.remedies`) and `inputs.py` + `input_sheet.py` (the
+confirmation sheet).
+
+Inputs (`app/repositories/planning_input.py`): capacity comes from the project team at
+the hours they give this project (all active org employees when the project has no
+team); the deadline is soft only when the PM answered "soft"; outside specialists only
+when the PM answered "yes" (contractor rate, else $175/h). Unconfirmed AI estimates and
+unanswered questions that matter block the run (422).
 
 `POST .../optimization/runs` loads the plan under the caller's RLS session, freezes it
 into `input_snapshot` and commits. A background task then solves it in-process

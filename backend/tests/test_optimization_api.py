@@ -17,6 +17,7 @@ from app.core.security import CurrentPrincipal
 from app.domain.common import OrgRole, SolverStatus
 from app.domain.optimization import OptimizationRun
 from app.jobs.optimizer import RESTART_ERROR
+from app.optimization.inputs import InputFacts, facts_from_input
 from app.optimization.model import Employee, PlanningInput, Task
 from app.repositories.optimization import ActiveRun, ActiveRunExistsError, ProjectContext
 from tests.conftest import Store, rls_violation
@@ -28,6 +29,12 @@ Auth = Callable[[uuid.UUID], dict[str, str]]
 class RunStore:
     runs: dict[uuid.UUID, dict[str, Any]] = field(default_factory=dict)
     inputs: dict[uuid.UUID, PlanningInput] = field(default_factory=dict)
+    # Sheet facts only the database knows (answers, estimate confirmations), per project.
+    facts: dict[uuid.UUID, dict[str, Any]] = field(default_factory=dict)
+    # Planned owners (WBS node id -> employee id) of earlier runs.
+    owners: dict[uuid.UUID, dict[str, str]] = field(default_factory=dict)
+    # Change requests: id -> {"project_id", "status", "proposed_run_id"}.
+    changes: dict[uuid.UUID, dict[str, Any]] = field(default_factory=dict)
     race: bool = False  # simulate a concurrent insert hitting the unique index
 
 
@@ -63,7 +70,34 @@ class FakeRuns:
             project.id, PlanningInput(str(project.id), project.name, today, (), ())
         )
 
-    async def create(self, project_id: uuid.UUID, snapshot: dict[str, Any]) -> uuid.UUID:
+    async def input_facts(self, project: ProjectContext, inp: PlanningInput) -> InputFacts:
+        return facts_from_input(inp, **self.r.facts.get(project.id, {}))
+
+    async def baseline_owners(
+        self, project_id: uuid.UUID, run_id: uuid.UUID
+    ) -> dict[str, str] | None:
+        run = self.r.runs.get(run_id)
+        if run is None or run["project_id"] != project_id:
+            return None
+        return self.r.owners.get(run_id, {})
+
+    async def change_request_status(
+        self, project_id: uuid.UUID, change_request_id: uuid.UUID
+    ) -> str | None:
+        change = self.r.changes.get(change_request_id)
+        return change["status"] if change and change["project_id"] == project_id else None
+
+    async def mark_replanning(
+        self, project_id: uuid.UUID, change_request_id: uuid.UUID, run_id: uuid.UUID
+    ) -> None:
+        self.r.changes[change_request_id].update(status="replanning", proposed_run_id=run_id)
+
+    async def create(
+        self,
+        project_id: uuid.UUID,
+        snapshot: dict[str, Any],
+        options: dict[str, Any] | None = None,
+    ) -> uuid.UUID:
         if not await self.can_write(project_id):
             raise rls_violation()
         if self.r.race:
@@ -81,6 +115,7 @@ class FakeRuns:
             "created_at": datetime.now(UTC),
             "started_at": None,
             "finished_at": None,
+            "options": options or {},
             "snapshot": snapshot,
         }
         return rid
@@ -231,9 +266,14 @@ def test_stale_active_run_is_failed_and_replaced(
 @pytest.mark.parametrize(
     ("tasks", "team", "missing", "detail"),
     [
-        (False, False, ["workPackages", "team"], "WBS Builder and team members in Constraints"),
-        (False, True, ["workPackages"], "Add work packages with durations in WBS Builder before"),
-        (True, False, ["team"], "Add team members in Constraints before"),
+        (
+            False,
+            False,
+            ["workPackages", "team"],
+            "Add work packages with durations on step 4 and add your team on step 5 before",
+        ),
+        (False, True, ["workPackages"], "Add work packages with durations on step 4 before"),
+        (True, False, ["team"], "Add your team on step 5 before"),
     ],
 )
 def test_create_run_422_lists_missing_inputs(
@@ -349,9 +389,168 @@ def test_finished_run_result_is_camel_case(
         },
     )
     body = opt_client.get(_url(pid, f"/{run_id}"), headers=auth(user)).json()
-    assert set(body["result"]) == {"kpis", "reassignments", "scheduleChanges", "utilization"}
+    assert set(body["result"]) == {
+        "kpis",
+        "reassignments",
+        "scheduleChanges",
+        "utilization",
+        "schedule",
+        "summary",
+        "remedies",
+    }
     assert body["result"]["kpis"][1] == {"label": "Solve", "value": "x"}  # no null `sub`
     assert body["result"]["scheduleChanges"][0]["delta"] == "—"
+
+
+def test_unconfirmed_ai_estimates_are_422(
+    opt_client: TestClient, store: Store, run_store: RunStore, runner: FakeRunner, auth: Auth
+) -> None:
+    user, _, pid = _project(opt_client, store, auth)
+    _ready(run_store, pid)
+    run_store.facts[uuid.UUID(pid)] = {"unconfirmed_estimates": 2}
+    response = opt_client.post(_url(pid), headers=auth(user))
+    assert response.status_code == 422
+    body = response.json()
+    assert body["missing"] == ["estimates"]
+    assert body["detail"] == "Confirm 2 AI estimates on step 4 before running the optimizer."
+    assert (runner.submitted, run_store.runs) == ([], {})
+
+
+def test_inputs_sheet(
+    opt_client: TestClient, store: Store, run_store: RunStore, auth: Auth
+) -> None:
+    user, org, pid = _project(opt_client, store, auth)
+    _ready(run_store, pid)
+    run_store.facts[uuid.UUID(pid)] = {"unconfirmed_estimates": 1, "team_from_project": True}
+    response = opt_client.get(f"/api/v1/projects/{pid}/optimization/inputs", headers=auth(user))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert set(body) == {"rows", "ready", "blocking", "missing", "hash"}
+    assert body["ready"] is False
+    assert body["blocking"] == ["Confirm 1 AI estimate on step 4"]
+    assert body["missing"] == ["estimates"]
+    assert len(body["hash"]) == 64
+    rows = {row["key"]: row for row in body["rows"]}
+    assert rows["workPackages"] == {
+        "key": "workPackages",
+        "label": "Work packages",
+        "value": "1 work package · 1 AI estimate not confirmed",
+        "source": "needs_you",
+        "from": "Step 4",
+    }
+    assert rows["team"]["value"] == "Mark Chen · capacity can flex"
+    assert rows["team"]["source"] == "confirmed"
+
+    viewer = store.add_user("Vic Viewer")
+    store.members[(org, viewer)] = OrgRole.VIEWER
+    url = f"/api/v1/projects/{pid}/optimization/inputs"
+    assert opt_client.get(url, headers=auth(viewer)).status_code == 200
+    outsider = store.add_user("Eve")
+    assert opt_client.get(url, headers=auth(outsider)).status_code == 404
+
+
+def test_run_body_is_applied_and_stored_as_options(
+    opt_client: TestClient, store: Store, run_store: RunStore, runner: FakeRunner, auth: Auth
+) -> None:
+    user, _, pid = _project(opt_client, store, auth)
+    _ready(run_store, pid)
+    task_id, employee_id = uuid.uuid4(), uuid.uuid4()
+    run_store.inputs[uuid.UUID(pid)] = PlanningInput(
+        pid,
+        "CRM",
+        date(2026, 10, 5),
+        (Task(str(task_id), "1.1.1", "Design", 5),),
+        (Employee(str(employee_id), "Mark Chen"),),
+    )
+    baseline = opt_client.post(_url(pid), headers=auth(user)).json()["id"]
+    run_store.runs[uuid.UUID(baseline)]["status"] = "optimal"
+    run_store.owners[uuid.UUID(baseline)] = {str(task_id): str(employee_id)}
+    change_id = uuid.uuid4()
+    run_store.changes[change_id] = {"project_id": uuid.UUID(pid), "status": "ready"}
+
+    body = {
+        "remedy": "move_deadline",
+        "overrides": {
+            "budgetTotalCents": 5_000_000,
+            "mustFinishBy": "2026-12-18",
+            "durationDays": {str(task_id): 8},
+            "hoursPerWeek": {str(employee_id): 20},
+        },
+        "changeRequestId": str(change_id),
+        "baselineRunId": baseline,
+    }
+    response = opt_client.post(_url(pid), json=body, headers=auth(user))
+    assert response.status_code == 202, response.text
+    run = response.json()
+    assert run["options"] == {**body, "inputsHash": run["options"]["inputsHash"]}
+    assert (run["version"], run["appliedAt"]) == (None, None)
+    snapshot = run_store.runs[uuid.UUID(run["id"])]["snapshot"]
+    constraints = snapshot["constraints"]
+    assert constraints["budget_total_cents"] == 5_000_000
+    assert constraints["must_finish_by"] == "2026-12-18"
+    assert constraints["deadline_mode"] == "soft"  # the remedy, for this run
+    assert snapshot["tasks"][0]["duration_days"] == 8
+    assert snapshot["tasks"][0]["owner_id"] == str(employee_id)  # baseline owner
+    assert snapshot["employees"][0]["weekly_capacity_hours"] == 20
+    change = run_store.changes[change_id]
+    assert (change["status"], change["proposed_run_id"]) == ("replanning", uuid.UUID(run["id"]))
+    assert runner.submitted[-1] == uuid.UUID(run["id"])
+
+
+def test_run_records_the_inputs_sheet_hash(
+    opt_client: TestClient, store: Store, run_store: RunStore, auth: Auth
+) -> None:
+    user, _, pid = _project(opt_client, store, auth)
+    _ready(run_store, pid)
+    inputs = opt_client.get(f"/api/v1/projects/{pid}/optimization/inputs", headers=auth(user))
+    sheet_hash = inputs.json()["hash"]
+
+    plain = opt_client.post(_url(pid), headers=auth(user)).json()
+    assert plain["options"] == {"inputsHash": sheet_hash}
+
+    run_store.runs[uuid.UUID(plain["id"])]["status"] = "optimal"
+    # Overrides and remedies change the snapshot, not the saved inputs' fingerprint.
+    what_if = {"remedy": "move_deadline", "overrides": {"budgetTotalCents": 1}}
+    response = opt_client.post(_url(pid), json=what_if, headers=auth(user))
+    assert response.status_code == 202, response.text
+    assert response.json()["options"] == {**what_if, "inputsHash": sheet_hash}
+
+
+def test_run_body_references_are_checked(
+    opt_client: TestClient, store: Store, run_store: RunStore, runner: FakeRunner, auth: Auth
+) -> None:
+    user, _, pid = _project(opt_client, store, auth)
+    _ready(run_store, pid)
+    decided = uuid.uuid4()
+    run_store.changes[decided] = {"project_id": uuid.UUID(pid), "status": "approved"}
+
+    def post(body: dict[str, Any]) -> Any:
+        return opt_client.post(_url(pid), json=body, headers=auth(user))
+
+    assert post({"changeRequestId": str(uuid.uuid4())}).status_code == 404
+    assert post({"changeRequestId": str(decided)}).status_code == 409
+    missing_baseline = post({"baselineRunId": str(uuid.uuid4())})
+    assert missing_baseline.status_code == 404
+    assert missing_baseline.json()["detail"] == "Baseline run not found"
+    assert post({"remedy": "hire_everyone"}).status_code == 422
+    assert post({"overrides": {"budget": 1}}).status_code == 422
+    assert post({"overrides": {"durationDays": {str(uuid.uuid4()): 0}}}).status_code == 422
+    assert (runner.submitted, run_store.runs) == ([], {})
+
+
+def test_specialist_remedy_answers_the_specialist_question(
+    opt_client: TestClient, store: Store, run_store: RunStore, auth: Auth
+) -> None:
+    user, _, pid = _project(opt_client, store, auth)
+    _ready(run_store, pid)
+    run_store.facts[uuid.UUID(pid)] = {"task_skill_gaps": ["SAP"]}
+    blocked = opt_client.post(_url(pid), headers=auth(user))
+    assert (blocked.status_code, blocked.json()["missing"]) == (422, ["specialist"])
+    response = opt_client.post(_url(pid), json={"remedy": "specialist"}, headers=auth(user))
+    assert response.status_code == 202, response.text
+    snapshot = run_store.runs[uuid.UUID(response.json()["id"])]["snapshot"]
+    assert snapshot["constraints"]["allow_contractors"] is True
+    assert snapshot["constraints"]["contractor_rate_cents"] == 17_500
 
 
 def test_optimizer_unavailable_is_503() -> None:
@@ -369,3 +568,4 @@ def test_openapi_lists_routes(opt_client: TestClient) -> None:
     assert "/api/v1/projects/{projectId}/optimization/runs" in paths
     assert "/api/v1/projects/{projectId}/optimization/runs/latest" in paths
     assert "/api/v1/projects/{projectId}/optimization/runs/{runId}" in paths
+    assert "/api/v1/projects/{projectId}/optimization/inputs" in paths

@@ -40,3 +40,19 @@ def shift(days: int, per_week: int) -> str:
     weeks = n / per_week
     text = f"{weeks:.0f}" if n % per_week == 0 else f"{weeks:.1f}"
     return f"{sign}{text}w"
+
+
+def money_short(cents: int | float) -> str:
+    """`$28K`, `$1.2M`, `$950`: for headlines where the exact figure follows."""
+    dollars = abs(cents) / 100
+    sign = "-" if cents < 0 else ""
+    if dollars >= 1_000_000:
+        return f"{sign}${dollars / 1_000_000:.1f}M".replace(".0M", "M")
+    if dollars >= 1_000:
+        return f"{sign}${round(dollars / 1_000):,}K"
+    return f"{sign}${round(dollars):,}"
+
+
+def short_day(when: date) -> str:
+    """`Oct 17` (no year)."""
+    return f"{when:%b} {when.day}"

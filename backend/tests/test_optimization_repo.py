@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.domain.common import SolverStatus
 from app.optimization.explain import build_report
-from app.optimization.model import PlanningInput
+from app.optimization.model import Constraints, PlanningInput, Task
 from app.optimization.solver import solve
 from app.repositories.optimization import (
     ActiveRunExistsError,
@@ -21,6 +21,7 @@ from app.repositories.optimization import (
     OptimizationRepository,
     ProjectContext,
 )
+from app.repositories.planning_input import build_constraints
 from tests.test_optimization_solver import FAST, make_input
 from tests.test_repositories import Conn, Result
 
@@ -100,7 +101,13 @@ async def test_active_run_and_fail() -> None:
 
 
 async def test_get_and_latest_map_columns() -> None:
-    row = run_row(infeasibility=[{"name": "n", "explanation": "e"}], status="infeasible")
+    row = run_row(
+        infeasibility=[{"name": "n", "explanation": "e"}],
+        status="infeasible",
+        version=2,
+        applied_at=NOW,
+        options={"remedy": "specialist"},
+    )
     queued = run_row(runtime_ms=None, status="queued", options=None, version=2, applied_at=NOW)
     conn = Conn(Rows([row]), Rows([queued]), Rows([]))
     repo = OptimizationRepository(conn)  # type: ignore[arg-type]
@@ -110,6 +117,7 @@ async def test_get_and_latest_map_columns() -> None:
     assert run.status == SolverStatus.INFEASIBLE
     assert run.iis is not None
     assert run.iis[0].name == "n"
+    assert (run.version, run.applied_at, run.options) == (2, NOW, {"remedy": "specialist"})
     latest = await repo.latest(uuid.uuid4())
     assert latest is not None
     assert latest.solve_seconds is None
@@ -191,14 +199,14 @@ async def test_load_input_builds_planning_input() -> None:
                 {
                     "id": e1,
                     "full_name": "Mark",
-                    "weekly_capacity_hours": Decimal("40.0"),
+                    "hours_per_week": Decimal("40.0"),
                     "hourly_rate_cents": 9000,
                     "is_contractor": False,
                 },
                 {
                     "id": e2,
                     "full_name": "Lisa",
-                    "weekly_capacity_hours": Decimal("32.0"),
+                    "hours_per_week": Decimal("16.0"),  # hours on this project
                     "hourly_rate_cents": None,
                     "is_contractor": True,
                 },
@@ -234,6 +242,10 @@ async def test_load_input_builds_planning_input() -> None:
     assert (t1.effort_hours, t1.owner_id) == (30.0, str(e1))
     assert t1.skills[0].skill_name == "SAP"
     assert [e.name for e in inp.employees] == ["Mark", "Lisa"]
+    assert [employee.weekly_capacity_hours for employee in inp.employees] == [40.0, 16.0]
+    assert "project_team_members" in conn.sql[2]  # the project's team, not the whole org
+    assert inp.deliverables == {"1.1": "Node 1.1", "1.2": "Node 1.2"}
+    assert inp.constraints.allow_contractors is False  # nothing answered yet
     assert inp.employees[0].skills == {str(sap): 4}
     assert inp.employees[1].is_contractor
     assert [(d.predecessor_id, d.successor_id, d.lag_days) for d in inp.dependencies] == [
@@ -267,10 +279,13 @@ async def test_load_input_with_constraint_set_and_no_data() -> None:
         "capacity_penalty": 1.0,
         "skill_mode": "soft",
         "allow_contractors": False,
-        "contractor_rate_cents": 5,
+        "contractor_rate_cents": None,
+        "specialist_answer": "yes",
+        "deadline_answer": "soft",
     }
-    # nodes, team, deps, constraint set, milestones (no task ids -> no skills/profs/alloc queries)
-    conn = Conn(Rows([]), Rows([]), Rows([]), Rows([cs]), Rows([]))
+    # nodes, project team (empty), org employees (fallback), deps, constraint set,
+    # milestones (no task ids -> no skills/profs/alloc queries)
+    conn = Conn(Rows([]), Rows([]), Rows([]), Rows([]), Rows([cs]), Rows([]))
     ctx = project_ctx()
     inp = await OptimizationRepository(conn).load_input(ctx, date(2026, 10, 1))  # type: ignore[arg-type]
     assert (inp.tasks, inp.employees) == ((), ())
@@ -279,8 +294,117 @@ async def test_load_input_with_constraint_set_and_no_data() -> None:
     assert c.budget_total_cents == ctx.budget_cents
     assert c.must_finish_by == ctx.target_end_date
     assert (c.labor_cap_cents, c.budget_mode, c.working_days_per_week) == (100, "soft", 6)
-    assert (c.capacity_mode, c.skill_mode, c.allow_contractors) == ("hard", "soft", False)
-    assert len(conn.sql) == 5
+    assert (c.capacity_mode, c.skill_mode, c.deadline_mode) == ("hard", "soft", "soft")
+    assert (c.allow_contractors, c.contractor_rate_cents) == (True, 17_500)  # default rate
+    assert "project_team_members" in conn.sql[1]
+    assert "employees.active IS true" in conn.sql[2]  # no project team: whole org
+    assert len(conn.sql) == 6
+
+
+@pytest.mark.parametrize(
+    ("deadline_answer", "specialist_answer", "deadline_mode", "contractors"),
+    [
+        (None, None, "hard", False),
+        ("unknown", "unknown", "hard", False),
+        ("hard", "no", "hard", False),
+        ("soft", "yes", "soft", True),
+    ],
+)
+def test_answers_set_deadline_and_specialist_policy(
+    deadline_answer: str | None,
+    specialist_answer: str | None,
+    deadline_mode: str,
+    contractors: bool,
+) -> None:
+    constraint_set: Any = SimpleNamespace(
+        start_date=None,
+        budget_total_cents=None,
+        labor_cap_cents=None,
+        budget_mode="soft",
+        budget_penalty=1.0,
+        must_finish_by=date(2026, 12, 18),
+        deadline_mode="soft",  # ignored: the answer decides
+        deadline_penalty_per_day=1.0,
+        working_days_per_week=5,
+        capacity_mode="hard",
+        capacity_penalty=1.0,
+        skill_mode="soft",
+        allow_contractors=True,  # ignored: only a "yes" allows specialists
+        contractor_rate_cents=9_000,
+        deadline_answer=deadline_answer,
+        specialist_answer=specialist_answer,
+    )
+    constraints, _ = build_constraints(constraint_set, project_ctx(), date(2026, 10, 1))
+    assert constraints.deadline_mode == deadline_mode
+    assert constraints.allow_contractors is contractors
+    assert constraints.contractor_rate_cents == 9_000
+    assert (constraints.budget_mode, constraints.capacity_mode) == ("soft", "hard")
+
+
+async def test_input_facts_reads_answers_and_confirmations() -> None:
+    ctx = project_ctx()
+    inp = make_input(
+        tasks=(Task(str(uuid.uuid4()), "1.1", "Design", 5),),
+        constraints=Constraints(budget_total_cents=ctx.budget_cents),
+    )
+    sap = uuid.uuid4()
+    conn = Conn(
+        Rows(
+            [
+                {
+                    "budget_total_cents": None,
+                    "deadline_answer": "hard",
+                    "specialist_answer": None,
+                    "specialist_rate_confirmed": False,
+                    "contingency_pct": Decimal("10.00"),
+                }
+            ]
+        ),
+        Rows([{"estimate_confirmed_at": None}, {"estimate_confirmed_at": NOW}]),
+        Rows([{"type": "FS", "total": 4}, {"type": "SS", "total": 1}]),
+        Rows([{"count": 2}]),
+        Rows([{"skill_id": sap, "name": "SAP", "required": True}]),
+        Rows([{"source_quote": "Budget is $400K"}, {"source_quote": "Budget approved at $375K"}]),
+    )
+    facts = await OptimizationRepository(conn).input_facts(ctx, inp)  # type: ignore[arg-type]
+    assert (facts.confirmed_ai_estimates, facts.unconfirmed_estimates) == (1, 1)
+    assert facts.dependency_types == {"FS": 4, "SS": 1}
+    assert facts.team_from_project is True
+    assert facts.skills[0].name == "SAP"
+    assert facts.skills[0].covered is False
+    assert facts.skill_gaps == ["SAP"]
+    assert facts.budget_quote == "Budget approved at $375K"
+    assert (facts.deadline_answer, facts.contingency_pct) == ("hard", 10.0)
+    assert "wbs_nodes.origin = " in conn.sql[1]
+    assert "ILIKE" in conn.sql[5]
+
+
+async def test_baseline_owners_and_change_requests() -> None:
+    run_id, change_id, node, person = (uuid.uuid4() for _ in range(4))
+    conn = Conn(
+        Rows([{"id": run_id}]),
+        Rows([{"wbs_node_id": node, "employee_id": person}]),
+        Rows([]),
+        Rows([{"status": "ready"}]),
+        Rows([]),
+    )
+    repo = OptimizationRepository(conn)  # type: ignore[arg-type]
+    project_id = uuid.uuid4()
+    assert await repo.baseline_owners(project_id, run_id) == {str(node): str(person)}
+    assert "planned_assignments.employee_id IS NOT NULL" in conn.sql[1]
+    assert await repo.baseline_owners(project_id, uuid.uuid4()) is None
+    assert await repo.change_request_status(project_id, change_id) == "ready"
+    await repo.mark_replanning(project_id, change_id, run_id)
+    assert conn.sql[4].startswith("UPDATE public.change_requests SET status=")
+    assert "proposed_run_id=" in conn.sql[4]
+
+
+async def test_create_stores_options() -> None:
+    conn = Conn(Rows([]))
+    repo = OptimizationRepository(conn)  # type: ignore[arg-type]
+    await repo.create(uuid.uuid4(), {"version": 1}, {"remedy": "specialist"})
+    assert "options" in conn.sql[0]
+    assert conn.params[0]["options"] == {"remedy": "specialist"}
 
 
 async def test_job_store_claim_finish_fail() -> None:

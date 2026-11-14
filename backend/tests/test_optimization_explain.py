@@ -31,6 +31,7 @@ def test_skill_reassignment_report() -> None:
             Task("b", "1.1.2", "Build", 10, owner_id="e1", skills=(SAP,)),
         ),
         constraints=Constraints(budget_total_cents=2_000_000, must_finish_by=date(2026, 10, 30)),
+        deliverables={"1.1": "Customer data"},
     )
     report = build_report(inp, solve(inp, FAST))
     assert report.status == "optimal"
@@ -75,6 +76,23 @@ def test_skill_reassignment_report() -> None:
         {"id": "b", "code": "1.1.2", "name": "Build"},
     ]
 
+    timeline = {row["wbsNodeId"]: row for row in result["schedule"]}
+    assert timeline["b"] == {
+        "wbsNodeId": "b",
+        "code": "1.1.2",
+        "name": "Build",
+        "deliverableCode": "1.1",
+        "deliverableName": "Customer data",
+        "start": "2026-10-12",
+        "end": "2026-10-23",
+        "baselineStart": "2026-10-12",
+        "baselineEnd": "2026-10-23",
+        "assignee": "Lisa Park",
+    }
+    assert result["summary"]["completionDate"] == "2026-10-23"
+    assert result["summary"]["peakUtilization"] == {"name": "Lisa Park", "percent": 67}
+    assert result["summary"]["softViolations"] == []
+
     rows = {a.wbs_node_id: a for a in report.assignments}
     assert rows["b"].employee_id == "e2"
     assert rows["b"].baseline_employee_id == "e1"
@@ -96,6 +114,13 @@ def test_over_budget_and_late_kpis() -> None:
     kpis = {k["label"]: k for k in result["kpis"]}
     assert kpis["Budget"]["sub"] == "$11,000 over budget"
     assert kpis["Completion Date"]["sub"] == "14 days over target"
+    summary = result["summary"]
+    assert summary["daysLate"] == 14
+    assert summary["deadlineMode"] == "soft"
+    assert summary["softViolations"][:2] == [
+        "Go-live 14 days after Oct 9, 2026",
+        "$11,000 over the budget",
+    ]
 
 
 def test_no_budget_no_deadline_kpis() -> None:
