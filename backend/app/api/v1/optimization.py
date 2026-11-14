@@ -3,9 +3,11 @@
 `GET …/optimization/inputs` is the confirmation sheet ("Check the inputs the
 solver will use"). `POST …/optimization/runs` freezes the inputs (with the
 body's overrides, remedy and baseline applied) into a queued run that the
-in-process worker (`app/jobs/optimizer.py`) solves after the response; the
-body itself is stored as the run's `options`. With `changeRequestId` this is
-also the re-plan of a change on step 7.
+in-process worker (`app/jobs/optimizer.py`) solves after the response. The
+run's `options` are the body as sent plus `inputsHash`: the hash the inputs
+sheet showed for the saved inputs, so the screen can tell when the latest
+plan is out of date. With `changeRequestId` this is also the re-plan of a
+change on step 7.
 """
 
 from __future__ import annotations
@@ -99,6 +101,9 @@ async def create_run(
         await runs.fail_run(active.id, RESTART_ERROR)  # orphaned by a restart
 
     inp, sheet = await _sheet(runs, project)
+    # Fingerprint of the saved inputs, before this run's baseline, overrides and
+    # remedy: exactly the `hash` GET …/optimization/inputs returns for the same data.
+    saved_inputs_hash = inputs_hash(inp)
     lifted = LIFTED_BY_REMEDY.get(body.remedy or "")
     blockers: list[Blocker] = [blocker for blocker in sheet.blockers if blocker.key != lifted]
     if blockers:
@@ -119,9 +124,10 @@ async def create_run(
             raise NotFoundError("Baseline run not found")
         inp = with_baseline(inp, owners)
 
-    # Stored exactly as sent (camelCase, ids and dates as strings): the run's setup.
+    # The body exactly as sent (camelCase, ids and dates as strings): the run's setup.
     options = body.model_dump(mode="json", by_alias=True, exclude_none=True)
     inp = apply_remedy(apply_overrides(inp, options.get("overrides")), body.remedy)
+    options["inputsHash"] = saved_inputs_hash
 
     try:
         run_id = await runs.create(project_id, inp.to_snapshot(), options)

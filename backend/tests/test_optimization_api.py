@@ -482,7 +482,7 @@ def test_run_body_is_applied_and_stored_as_options(
     response = opt_client.post(_url(pid), json=body, headers=auth(user))
     assert response.status_code == 202, response.text
     run = response.json()
-    assert run["options"] == body
+    assert run["options"] == {**body, "inputsHash": run["options"]["inputsHash"]}
     assert (run["version"], run["appliedAt"]) == (None, None)
     snapshot = run_store.runs[uuid.UUID(run["id"])]["snapshot"]
     constraints = snapshot["constraints"]
@@ -495,6 +495,25 @@ def test_run_body_is_applied_and_stored_as_options(
     change = run_store.changes[change_id]
     assert (change["status"], change["proposed_run_id"]) == ("replanning", uuid.UUID(run["id"]))
     assert runner.submitted[-1] == uuid.UUID(run["id"])
+
+
+def test_run_records_the_inputs_sheet_hash(
+    opt_client: TestClient, store: Store, run_store: RunStore, auth: Auth
+) -> None:
+    user, _, pid = _project(opt_client, store, auth)
+    _ready(run_store, pid)
+    inputs = opt_client.get(f"/api/v1/projects/{pid}/optimization/inputs", headers=auth(user))
+    sheet_hash = inputs.json()["hash"]
+
+    plain = opt_client.post(_url(pid), headers=auth(user)).json()
+    assert plain["options"] == {"inputsHash": sheet_hash}
+
+    run_store.runs[uuid.UUID(plain["id"])]["status"] = "optimal"
+    # Overrides and remedies change the snapshot, not the saved inputs' fingerprint.
+    what_if = {"remedy": "move_deadline", "overrides": {"budgetTotalCents": 1}}
+    response = opt_client.post(_url(pid), json=what_if, headers=auth(user))
+    assert response.status_code == 202, response.text
+    assert response.json()["options"] == {**what_if, "inputsHash": sheet_hash}
 
 
 def test_run_body_references_are_checked(

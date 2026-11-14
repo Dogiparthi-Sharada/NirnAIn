@@ -84,7 +84,7 @@ All endpoints are under `/api/v1` except health. JSON uses camelCase. Errors are
 | GET | `/api/v1/notifications` | `unread=true/false`, `limit`, `cursor` |
 | POST | `/api/v1/notifications/{id}/read` | Idempotent. Returns the notification. |
 | GET | `/api/v1/projects/{projectId}/optimization/inputs` | Confirmation sheet: `{rows: [{key, label, value, source, from}], ready, blocking, missing, hash}` |
-| POST | `/api/v1/projects/{projectId}/optimization/runs` | Optional body `{remedy?, overrides?: {budgetTotalCents?, mustFinishBy?, durationDays?, hoursPerWeek?}, changeRequestId?, baselineRunId?}` (stored as `options`). 202 + `OptimizationRun` (`queued`), solved in the background. 403 not a writer, 404 project / change request / baseline run not visible, 409 a run is already queued/running or the change was decided, 422 inputs not ready (`missing`: `workPackages`, `estimates`, `deadline`, `specialist`, `team`). |
+| POST | `/api/v1/projects/{projectId}/optimization/runs` | Optional body `{remedy?, overrides?: {budgetTotalCents?, mustFinishBy?, durationDays?, hoursPerWeek?}, changeRequestId?, baselineRunId?}` (stored as `options`, plus `inputsHash` = the inputs sheet's `hash` for the saved inputs). 202 + `OptimizationRun` (`queued`), solved in the background. 403 not a writer, 404 project / change request / baseline run not visible, 409 a run is already queued/running or the change was decided, 422 inputs not ready (`missing`: `workPackages`, `estimates`, `deadline`, `specialist`, `team`). |
 | GET | `/api/v1/projects/{projectId}/optimization/runs/latest` | Latest run, or 404 when there are none |
 | GET | `/api/v1/projects/{projectId}/optimization/runs/{runId}` | One run |
 
