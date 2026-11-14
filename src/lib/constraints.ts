@@ -10,39 +10,21 @@
  * - The Run Optimization gate: `gateBlockers` merges what this screen knows (answers, team, WBS)
  *   with the server's readiness check (`GET …/optimization/inputs`, which also sees work-package
  *   skill gaps), so the button is never disabled but a blocked click can name every missing input.
- * - The plan lock: once a plan version is applied the inputs are read-only and the server answers
- *   409 "Plan vN is in force; record a change on step 7"; changes go through step 7.
+ * - Inputs stay editable after a plan version is applied: changes take effect when the PM re-runs
+ *   step 6 and applies the result as the next version (step 7 records why a plan changed).
  */
 import { useCallback } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { apiFetch, errorMessage, isApiError } from './api'
+import { apiFetch, errorMessage } from './api'
 import type { PolicyKey, PolicyMode } from './constraintPolicy'
+import { budgetProblem } from './createForm'
 import { formatDate } from './format'
-import { inputKeys, type ConstraintInputs, type DeadlineAnswerValue, type PlanVersion, type ProjectTeamMember, type SpecialistAnswer } from './inputs'
+import { inputKeys, type ConstraintInputs, type DeadlineAnswerValue, type ProjectTeamMember, type SpecialistAnswer } from './inputs'
 import { queryKeys } from './queries'
 import { toast } from './toast'
 
 /** A partial edit of the constraint set; the editor fills in the rest from the saved set. */
 export type ConstraintChanges = Partial<ConstraintInputs>
-
-/* ───────────────────────────── Plan lock ───────────────────────────── */
-
-/** The plan version in force (the latest applied one), or null while inputs are still editable. */
-export function planLockOf(versions: PlanVersion[] | undefined): number | null {
-  if (!versions || versions.length === 0) return null
-  return Math.max(...versions.map((planVersion) => planVersion.version))
-}
-
-/** What a click on a locked input explains (same wording as the approved design). */
-export function lockedMessage(version: number): string {
-  return `Plan v${version} is applied. Use step 7, Changes & Versions, to change its inputs.`
-}
-
-/** True for the server's 409 "Plan vN is in force; record a change on step 7". */
-export function isPlanLockError(error: unknown): boolean {
-  if (!isApiError(error) || error.status !== 409) return false
-  return typeof error.extensions.version === 'number' || /is in force/i.test(error.detail)
-}
 
 /* ───────────────────────────── Saving ───────────────────────────── */
 
@@ -50,29 +32,27 @@ type QueryClient = ReturnType<typeof useQueryClient>
 
 /**
  * A solver input changed: the step 6 confirmation sheet, the team's booked hours (they depend on
- * the plan window) and the coverage views must refresh. A lock error also refreshes the plan
- * versions so the screen switches to its read-only state.
+ * the plan window) and the capacity view must refresh.
  */
-export function refreshPlanningInputs(queryClient: QueryClient, projectId: string, error?: unknown): void {
+export function refreshPlanningInputs(queryClient: QueryClient, projectId: string): void {
   void queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'optimization'] })
   void queryClient.invalidateQueries({ queryKey: inputKeys.team(projectId) })
   void queryClient.invalidateQueries({ queryKey: queryKeys.capacity(projectId) })
-  if (isPlanLockError(error)) void queryClient.invalidateQueries({ queryKey: inputKeys.planVersions(projectId) })
 }
 
 /** `refreshPlanningInputs` for this project, for mutations made outside this module. */
-export function useInputsRefresh(projectId: string): (error?: unknown) => void {
+export function useInputsRefresh(projectId: string): () => void {
   const queryClient = useQueryClient()
-  return useCallback((error?: unknown) => refreshPlanningInputs(queryClient, projectId, error), [queryClient, projectId])
+  return useCallback(() => refreshPlanningInputs(queryClient, projectId), [queryClient, projectId])
 }
 
-/** Reports a failed save in a toast; a plan-lock 409 also switches the screen to read-only. */
+/** Reports a failed save in a toast and reloads the inputs, which may have changed meanwhile. */
 export function useSaveFailure(projectId: string): (error: unknown) => void {
   const refresh = useInputsRefresh(projectId)
   return useCallback(
     (error: unknown) => {
       toast(errorMessage(error))
-      refresh(error)
+      refresh()
     },
     [refresh],
   )
@@ -118,11 +98,11 @@ export function useConstraintEditor(projectId: string) {
       queryClient.setQueryData(cacheKey, withWaitingChanges(saved))
       refreshPlanningInputs(queryClient, projectId)
     },
-    onError: async (error, changes, context) => {
+    onError: async (_, changes, context) => {
       await queryClient.cancelQueries({ queryKey: cacheKey })
       if (context?.previous) queryClient.setQueryData(cacheKey, withWaitingChanges(context.previous, changes))
       if (queryClient.isMutating({ mutationKey }) <= 1) void queryClient.invalidateQueries({ queryKey: cacheKey })
-      refreshPlanningInputs(queryClient, projectId, error)
+      refreshPlanningInputs(queryClient, projectId)
     },
   })
 }
@@ -271,6 +251,15 @@ export function parseDollars(text: string): number | null {
   if (cleaned === '') return null
   if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return Number.NaN
   return Math.round(Number(cleaned) * 100)
+}
+
+/**
+ * Why a budget amount typed on step 5 can't be saved, or null when it can. Same rules as step 1
+ * (`budgetProblem`): dollars and cents only, more than $0, and at most $100B so a typo with extra
+ * zeros is caught. A blank field is fine: it clears the limit.
+ */
+export function moneyLimitProblem(text: string): string | null {
+  return text.replace(/[$,\s]/g, '') === '' ? null : budgetProblem(text)
 }
 
 /** A percentage from 0 to 100 from "10" or "10 %"; NaN otherwise. */

@@ -121,6 +121,8 @@ export function InfeasibleState({ projectId, run, resolving, resolveError, onRes
                 id="btn-resolve"
                 type="button"
                 disabled={picked === null || resolving}
+                aria-describedby="remedy-help"
+                title={picked === null ? 'Pick one of the options above first.' : undefined}
                 onClick={() => picked && onResolve(picked)}
               >
                 {resolving ? 'Starting\u2026' : 'Re-solve with this change'}

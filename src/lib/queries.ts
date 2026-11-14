@@ -233,23 +233,40 @@ function intakeRunPath(projectId: string, suffix = ''): string {
   return `/api/v1/projects/${encodeURIComponent(projectId)}/intake/runs${suffix}`
 }
 
-/** Latest AI intake run for a project (`null` when none yet); polls while it is queued or running. */
+function intakeRunActive(run: IntakeRun | null | undefined): boolean {
+  return run?.status === 'queued' || run?.status === 'running'
+}
+
+/**
+ * A run's scope items exist only once it has finished, so the scope list (and the "What the AI
+ * found" counts built from it) must be refetched then, not when the run is queued.
+ */
+function refreshAfterIntakeRun(queryClient: ReturnType<typeof useQueryClient>, projectId: string) {
+  void queryClient.invalidateQueries({ queryKey: queryKeys.scopeItems(projectId) })
+}
+
+/**
+ * Latest AI intake run for a project (`null` when none yet); polls while it is queued or running
+ * and refreshes the scope items when a poll sees the run finish.
+ */
 export function useLatestIntakeRun(projectId: string) {
+  const queryClient = useQueryClient()
   return useQuery({
     queryKey: queryKeys.latestIntakeRun(projectId),
     queryFn: async ({ signal }) => {
+      const previous = queryClient.getQueryData<IntakeRun | null>(queryKeys.latestIntakeRun(projectId))
+      let run: IntakeRun | null
       try {
-        return await apiFetch<IntakeRun>(intakeRunPath(projectId, '/latest'), { signal })
+        run = await apiFetch<IntakeRun>(intakeRunPath(projectId, '/latest'), { signal })
       } catch (error) {
         if (isApiError(error) && error.status === 404) return null
         throw error
       }
+      if (intakeRunActive(previous) && !intakeRunActive(run)) refreshAfterIntakeRun(queryClient, projectId)
+      return run
     },
     enabled: Boolean(projectId),
-    refetchInterval: (query) => {
-      const status = query.state.data?.status
-      return status === 'queued' || status === 'running' ? INTAKE_POLL_MS : false
-    },
+    refetchInterval: (query) => (intakeRunActive(query.state.data) ? INTAKE_POLL_MS : false),
   })
 }
 
@@ -259,7 +276,9 @@ export function useStartIntakeRun(projectId: string) {
     mutationFn: (text: string) => apiFetch<IntakeRun>(intakeRunPath(projectId), { method: 'POST', json: { text } }),
     onSuccess: (run) => {
       queryClient.setQueryData(queryKeys.latestIntakeRun(projectId), run)
-      return queryClient.invalidateQueries({ queryKey: queryKeys.scopeItems(projectId) })
+      // Usually queued: the poll refreshes the scope items once it finishes. A run that came back
+      // already finished has its items now.
+      if (!intakeRunActive(run)) refreshAfterIntakeRun(queryClient, projectId)
     },
     onError: (error) => {
       // Someone else already started one: show it.

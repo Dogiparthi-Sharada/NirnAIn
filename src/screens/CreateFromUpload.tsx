@@ -195,7 +195,15 @@ export default function CreateFromUpload() {
             <Link className="btn sec" to="/projects/new">
               &larr; Choose a different start
             </Link>
-            <button className="btn" id="btn-read" type="button" onClick={read} disabled={(!file && !notes.trim()) || extract.isPending} aria-busy={extract.isPending || undefined}>
+            <button
+              className="btn"
+              id="btn-read"
+              type="button"
+              onClick={read}
+              disabled={(!file && !notes.trim()) || extract.isPending}
+              aria-busy={extract.isPending || undefined}
+              title={!file && !notes.trim() ? 'Attach a file or paste notes first.' : undefined}
+            >
               {extract.isPending ? 'Reading…' : 'Read it and fill in the project'}
             </button>
           </div>

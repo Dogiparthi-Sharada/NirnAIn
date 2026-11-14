@@ -297,6 +297,8 @@ export interface WbsNodePatch {
   name?: string
   durationDays?: number | null
   ownerEmployeeId?: string | null
+  /** Work packages: the skills it needs, by name from the project's skill list (stored at min proficiency 3). */
+  skills?: string[]
 }
 
 export type AiJobKind = 'wbs_generate' | 'wbs_validate'

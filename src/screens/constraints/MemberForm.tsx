@@ -1,43 +1,54 @@
 /**
  * The add / edit form under the team table on step 5 (approved mockup views/constraints-team.js
- * `openMemberForm` / `saveMember`): name, role, hours per week on this project, hourly rate and
- * skills.
+ * `openMemberForm` / `saveMember`): name, role, type (employee or contractor), hours per week on
+ * this project, for contractors only the hourly rate, and skills.
+ *
+ * Cost rule: an employee's cost comes from their company record (else the standard $85/h), so the
+ * form asks no rate for them; a contractor's rate is required, unless the project has a confirmed
+ * contractor rate, which then applies when the field is left blank.
  *
  * The form checks what it can before saving (a name, a role, no second person with the same name,
- * hours a whole number from 1 to 80, a rate in dollars or blank) and lists every problem at once;
- * the server's answer (for example a 409 duplicate or the plan lock) is shown in the same box. A
- * blank rate means the optimizer's default rate. Skills are picked from the project's skill list;
- * skills a person has outside that list are kept when they are edited.
+ * hours a whole number from 1 to 80, a contractor's rate in dollars) and lists every problem at
+ * once; the server's answer (for example a 409 duplicate) is shown in the same box. Skills are
+ * picked from the project's skill list; skills a person has outside that list are kept when they
+ * are edited.
  */
 import { useEffect, useRef, useState } from 'react'
 import { errorMessage } from '@/lib/api'
 import { parseDollars } from '@/lib/constraints'
 import {
-  hourlyRateText,
+  DEFAULT_HOURLY_RATE_CENTS,
   isHourlyRate,
   isWholeHours,
+  perHourText,
+  workerTypeOf,
   type ProjectSkill,
   type ProjectTeamMember,
   type TeamMemberInput,
+  type WorkerType,
 } from '@/lib/inputs'
 
 const NEW_MEMBER_HOURS = '40'
 
 /** The add / edit form. `member` null = a new person. */
-export function MemberForm({ member, team, skills, skillsLoading, saving, serverError, onSave, onCancel }: {
+export function MemberForm({ member, team, skills, skillsLoading, projectContractorRateCents, saving, serverError, onSave, onCancel }: {
   member: ProjectTeamMember | null
   team: ProjectTeamMember[]
   skills: ProjectSkill[]
   skillsLoading: boolean
+  /** The project's confirmed contractor rate, the default for a contractor without one; null = none. */
+  projectContractorRateCents: number | null
   saving: boolean
   serverError: unknown
   onSave: (input: TeamMemberInput) => void
   onCancel: () => void
 }) {
+  const startingType = member ? workerTypeOf(member) : 'employee'
   const [name, setName] = useState(member?.fullName ?? '')
   const [role, setRole] = useState(member?.roleTitle ?? '')
+  const [workerType, setWorkerType] = useState<WorkerType>(startingType)
   const [hours, setHours] = useState(member ? String(member.hoursPerWeek) : NEW_MEMBER_HOURS)
-  const [rate, setRate] = useState(member?.hourlyRateCents != null ? String(member.hourlyRateCents / 100) : '')
+  const [rate, setRate] = useState(startingType === 'contractor' && member?.hourlyRateCents != null ? String(member.hourlyRateCents / 100) : '')
   const [picked, setPicked] = useState<Set<string>>(() => new Set(member?.skills ?? []))
   const [problems, setProblems] = useState<string[]>([])
   const nameRef = useRef<HTMLInputElement>(null)
@@ -45,6 +56,8 @@ export function MemberForm({ member, team, skills, skillsLoading, saving, server
   useEffect(() => {
     nameRef.current?.focus()
   }, [])
+
+  const contractor = workerType === 'contractor'
 
   function togglePick(skillName: string) {
     setPicked((previous) => {
@@ -66,16 +79,20 @@ export function MemberForm({ member, team, skills, skillsLoading, saving, server
     }
     if (!roleTitle) found.push('Enter a role.')
     if (hours.trim() === '' || !isWholeHours(hoursPerWeek)) found.push('Hours per week must be a whole number from 1 to 80.')
-    const hourlyRateCents = parseDollars(rate)
-    if (hourlyRateCents !== null && !isHourlyRate(hourlyRateCents)) {
-      found.push('Rate must be dollars per hour, for example 95, or blank for the default.')
-    }
+    const hourlyRateCents = contractor ? parseDollars(rate) : null
+    if (contractor && hourlyRateCents === null && projectContractorRateCents === null) found.push('Enter the contractor\u2019s hourly rate.')
+    else if (hourlyRateCents !== null && !isHourlyRate(hourlyRateCents)) found.push('Rate must be dollars per hour, for example 95.')
     setProblems(found)
     if (found.length > 0) return
     const listed = new Set(skills.map((skill) => skill.name))
     const keptOutsideList = (member?.skills ?? []).filter((skillName) => !listed.has(skillName))
     const chosen = skills.map((skill) => skill.name).filter((skillName) => picked.has(skillName))
-    onSave({ fullName, roleTitle, hoursPerWeek, hourlyRateCents, skills: [...chosen, ...keptOutsideList] })
+    const memberSkills = [...chosen, ...keptOutsideList]
+    onSave(
+      contractor
+        ? { fullName, roleTitle, hoursPerWeek, workerType, hourlyRateCents, skills: memberSkills }
+        : { fullName, roleTitle, hoursPerWeek, workerType, skills: memberSkills },
+    )
   }
 
   const messages = serverError && problems.length === 0 ? [errorMessage(serverError)] : problems
@@ -110,22 +127,47 @@ export function MemberForm({ member, team, skills, skillsLoading, saving, server
           />
         </div>
         <div className="field">
+          <label htmlFor="mf-type">
+            Type<span className="req">*</span>
+          </label>
+          <select
+            className="in"
+            id="mf-type"
+            value={workerType}
+            aria-describedby="mf-type-note"
+            onChange={(event) => setWorkerType(event.target.value as WorkerType)}
+          >
+            <option value="employee">Employee</option>
+            <option value="contractor">Contractor</option>
+          </select>
+          <p className="note" id="mf-type-note">
+            {contractor
+              ? 'Billed at their own hourly rate, overtime included.'
+              : `Costed at their company rate, or the standard ${perHourText(DEFAULT_HOURLY_RATE_CENTS)} if none is on record.`}
+          </p>
+        </div>
+        <div className="field">
           <label htmlFor="mf-hours">
             Hours per week on this project<span className="req">*</span>
           </label>
           <input className="in" id="mf-hours" type="number" min={1} max={80} step={1} value={hours} onChange={(event) => setHours(event.target.value)} />
         </div>
-        <div className="field">
-          <label htmlFor="mf-rate">Rate ($/h)</label>
-          <input
-            className="in"
-            id="mf-rate"
-            inputMode="decimal"
-            placeholder={hourlyRateText(null)}
-            value={rate}
-            onChange={(event) => setRate(event.target.value)}
-          />
-        </div>
+        {contractor && (
+          <div className="field">
+            <label htmlFor="mf-rate">
+              Rate ($/h)
+              {projectContractorRateCents === null && <span className="req">*</span>}
+            </label>
+            <input
+              className="in"
+              id="mf-rate"
+              inputMode="decimal"
+              placeholder={projectContractorRateCents === null ? 'e.g. 150' : `project rate ${perHourText(projectContractorRateCents)}`}
+              value={rate}
+              onChange={(event) => setRate(event.target.value)}
+            />
+          </div>
+        )}
       </div>
       <div className="field mt">
         <label id="mf-skills-label">Skills</label>

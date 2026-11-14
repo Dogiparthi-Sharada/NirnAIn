@@ -1,7 +1,7 @@
 /**
  * Planning inputs for steps 3–5 (Scope Review, WBS Builder, Constraints): types and hooks for
  * the team, the project's skill list, confirmed effort estimates, the answers to the questions
- * that change the plan, and the plan lock (inputs are read-only once a plan version is applied).
+ * that change the plan, and the applied plan versions.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch, isApiError } from './api'
@@ -38,12 +38,24 @@ export interface ConstraintInputs extends ConstraintSet {
   allowContractors?: boolean
 }
 
+/**
+ * Who a person is to the company, which decides where their cost comes from: an employee is
+ * costed at the rate on their company record (else the standard internal rate), a contractor at
+ * the hourly rate agreed for them. Both count toward the budget.
+ */
+export type WorkerType = 'employee' | 'contractor'
+
 export interface ProjectTeamMember {
   employeeId: string
   fullName: string
   roleTitle: string | null
   hoursPerWeek: number
-  /** The person's hourly rate; null (or absent on older servers) = planned at the default rate. */
+  /** Absent on older servers, which know only employees. */
+  workerType?: WorkerType
+  /**
+   * Employees: the rate on their company record (null = none, so the standard rate applies).
+   * Contractors: their agreed rate (null = the project's contractor rate).
+   */
   hourlyRateCents?: number | null
   /** Average weekly hours already committed to other projects in this plan's window. */
   bookedHours: number
@@ -54,11 +66,14 @@ export interface TeamMemberInput {
   fullName: string
   roleTitle: string
   hoursPerWeek: number
-  /** Null = no rate of their own: the optimizer plans them at `DEFAULT_HOURLY_RATE_CENTS`. */
+  /** Omitted = employee (the server's default). */
+  workerType?: WorkerType
+  /** Contractors only: an employee's rate comes from the company record and the server refuses one here. */
   hourlyRateCents?: number | null
   skills: string[]
 }
 
+/** A skill on the project's list (step 5), Required or Optional. */
 export interface ProjectSkill {
   skillId: string
   name: string
@@ -75,6 +90,15 @@ export interface PlanVersion {
   expectedCostCents: number | null
   solver: string | null
   label: string | null
+}
+
+/**
+ * The plan version in force (the latest applied one), or null before any plan is applied. Inputs
+ * stay editable either way; it only tells the screens which version a re-run would replace.
+ */
+export function versionInForce(versions: PlanVersion[] | undefined): number | null {
+  if (!versions || versions.length === 0) return null
+  return Math.max(...versions.map((planVersion) => planVersion.version))
 }
 
 /** Suggestions for the Role field (free text is still allowed). */
@@ -117,24 +141,42 @@ export function isWholeHours(value: number): boolean {
   return Number.isInteger(value) && value >= 1 && value <= 80
 }
 
-/** Rate the optimizer plans people without one at ($85/h, a blended IT rate; backend model.py). */
+/** The standard internal rate for employees without a company rate ($85/h; backend `DEFAULT_HOURLY_RATE_CENTS`). */
 export const DEFAULT_HOURLY_RATE_CENTS = 8_500
 /** The API accepts rates up to $1,000,000/h. */
 const MAX_HOURLY_RATE_CENTS = 100_000_000
 
-export function isHourlyRate(cents: number): boolean {
-  return Number.isInteger(cents) && cents >= 0 && cents <= MAX_HOURLY_RATE_CENTS
+/** A person's worker type; older servers don't send one and know only employees. */
+export function workerTypeOf(member: ProjectTeamMember): WorkerType {
+  return member.workerType ?? 'employee'
 }
 
-/** "$95/h", or "default $85/h" for someone without a rate of their own. */
-export function hourlyRateText(cents: number | null | undefined): string {
-  const dollars = (value: number) => `$${(value / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}/h`
-  return cents == null ? `default ${dollars(DEFAULT_HOURLY_RATE_CENTS)}` : dollars(cents)
+/** A contractor's rate: more than $0 and at most what the API accepts. */
+export function isHourlyRate(cents: number): boolean {
+  return Number.isInteger(cents) && cents > 0 && cents <= MAX_HOURLY_RATE_CENTS
+}
+
+/** "$95/h", "$175.50/h". */
+export function perHourText(cents: number): string {
+  return `$${(cents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}/h`
+}
+
+/**
+ * Where a person's cost comes from, as the team table shows it: "Employee · company rate",
+ * "Employee · standard $85/h" (no rate on their company record), "Contractor · $185/h", or
+ * "Contractor · project rate $160/h" when they use the project's contractor rate.
+ */
+export function costRateText(member: ProjectTeamMember, projectContractorRateCents: number | null): string {
+  if (workerTypeOf(member) === 'employee') {
+    return member.hourlyRateCents != null ? 'Employee \u00B7 company rate' : `Employee \u00B7 standard ${perHourText(DEFAULT_HOURLY_RATE_CENTS)}`
+  }
+  if (member.hourlyRateCents != null) return `Contractor \u00B7 ${perHourText(member.hourlyRateCents)}`
+  return projectContractorRateCents != null ? `Contractor \u00B7 project rate ${perHourText(projectContractorRateCents)}` : 'Contractor \u00B7 rate needed'
 }
 
 /** Required skills nobody on the team has. */
 export function skillGaps(skills: ProjectSkill[]): string[] {
-  return skills.filter((s) => s.required && s.holders.length === 0).map((s) => s.name)
+  return skills.filter((skill) => skill.required && skill.holders.length === 0).map((skill) => skill.name)
 }
 
 /* ───────────────────────────── Hooks ───────────────────────────── */
@@ -259,6 +301,7 @@ export function useRemoveTeamMember(projectId: string) {
   })
 }
 
+/** The project's skill list with who on the team has each skill. */
 export function useProjectSkills(projectId: string) {
   return useQuery({
     queryKey: inputKeys.skills(projectId),
@@ -267,6 +310,7 @@ export function useProjectSkills(projectId: string) {
   })
 }
 
+/** Adds a skill to the project's list (names are unique, case-insensitive). */
 export function useAddSkill(projectId: string) {
   const queryClient = useQueryClient()
   return useMutation({
@@ -276,6 +320,7 @@ export function useAddSkill(projectId: string) {
   })
 }
 
+/** Renames a skill or switches it between Required and Optional. */
 export function useUpdateSkill(projectId: string) {
   const queryClient = useQueryClient()
   return useMutation({
@@ -288,6 +333,7 @@ export function useUpdateSkill(projectId: string) {
   })
 }
 
+/** Removes a skill from the project's list. */
 export function useRemoveSkill(projectId: string) {
   const queryClient = useQueryClient()
   return useMutation({

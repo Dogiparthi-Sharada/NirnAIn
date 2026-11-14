@@ -50,13 +50,17 @@ function policyAdvice(policy: PolicyInputs, run: PlanRun): AdviceItem[] {
   })
 }
 
-/** Facts about the deadline: go-live moved past it (remedy or a deadline that can move), or it was only assumed hard. */
-function deadlineAdvice(policy: PolicyInputs, run: PlanRun): AdviceItem[] {
+/**
+ * Facts about the deadline: go-live moved past it (remedy or a deadline that can move), or it was
+ * only assumed hard. A late go-live is left out when the ways-to-keep-the-date card already says so.
+ */
+function deadlineAdvice(policy: PolicyInputs, run: PlanRun, dateSlipShown: boolean): AdviceItem[] {
   const finish = run.result?.summary?.completionDate
   const deadline = policy.mustFinishBy
   if (!finish) return []
   const movedByRemedy = run.options?.remedy === 'move_deadline'
   const daysLate = deadline ? daysBetween(deadline, finish) : 0
+  if (dateSlipShown && !movedByRemedy) return []
   if (movedByRemedy || daysLate > 0) {
     const after = deadline && daysLate > 0 ? `, ${pluralDays(daysLate)} after ${shortDay(deadline)}` : ''
     return [
@@ -104,10 +108,10 @@ function PolicySummary({ policy }: { policy: PolicyInputs }) {
   )
 }
 
-/** The "Constraint check" card on the plan, just under the KPIs. */
-export function ConstraintCheckCard({ policy, run }: { policy: PolicyInputs; run: PlanRun }) {
+/** The "Constraint check" card on the plan, just under the KPIs (and the date card, when shown). */
+export function ConstraintCheckCard({ policy, run, dateSlipShown }: { policy: PolicyInputs; run: PlanRun; dateSlipShown: boolean }) {
   const navigateToStep = useStepNav()
-  const items = [...policyAdvice(policy, run), ...deadlineAdvice(policy, run)]
+  const items = [...policyAdvice(policy, run), ...deadlineAdvice(policy, run, dateSlipShown)]
   if (items.length === 0) {
     return (
       <div className="card advice ok">

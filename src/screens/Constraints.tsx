@@ -6,25 +6,23 @@
  * Each limit (budget, deadline, capacity, skills) is Must hold (a hard constraint: the solver
  * never breaks it) or Can flex (a soft constraint: it may bend, with a penalty, if that is the
  * only way); `lib/constraintPolicy.ts` recommends a setting and warns about misleading
- * combinations. The cards live in `screens/constraints/*`; the rules (saving, the gate, the plan
- * lock) in `lib/constraints.ts`.
+ * combinations. The cards live in `screens/constraints/*`; the rules (saving, the gate, the
+ * questions) in `lib/constraints.ts`.
  *
  * Gate: Run Optimization is never disabled; a blocked click opens `#con-banner` with a link to
- * each missing input. Lock: once a plan version is applied the inputs are read-only (the server
- * answers 409 "Plan vN is in force; record a change on step 7"), so the screen says so, explains
- * every attempted edit, and points to step 7.
+ * each missing input. The inputs stay editable after a plan version is applied; a banner then says
+ * that changes take effect once step 6 re-runs and the result is applied as the next version.
  */
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router'
-import { Crumb } from '@/components/InputsKit'
+import { useParams } from 'react-router'
+import { Crumb, PlanInForceBanner } from '@/components/InputsKit'
 import { errorMessage } from '@/lib/api'
 import { policyRisks } from '@/lib/constraintPolicy'
-import { gateBlockers, isPlanLockError, lockedMessage, planLockOf, useConstraintEditor, type ConstraintChanges } from '@/lib/constraints'
-import { skillGaps, useConstraintInputs, usePlanVersions, useProjectSkills, useTeam } from '@/lib/inputs'
+import { gateBlockers, useConstraintEditor, type ConstraintChanges } from '@/lib/constraints'
+import { skillGaps, useConstraintInputs, useProjectSkills, useTeam } from '@/lib/inputs'
 import { policyInputsOf, useOptimizationInputs } from '@/lib/optimize'
 import { useWbs } from '@/lib/queries'
-import { stepPath, useStepNav } from '@/lib/steps'
-import { toast } from '@/lib/toast'
+import { useStepNav } from '@/lib/steps'
 import { totalWeeks, wbsBlockers, type WbsTreeNode } from '@/lib/wbs'
 import { ConstraintsGate } from './constraints/ConstraintsGate'
 import { DependenciesCard } from './constraints/DependenciesCard'
@@ -44,7 +42,6 @@ export default function Constraints() {
   const skillsQuery = useProjectSkills(projectId)
   const wbsQuery = useWbs(projectId)
   const sheetQuery = useOptimizationInputs(projectId)
-  const versionsQuery = usePlanVersions(projectId)
   const editor = useConstraintEditor(projectId)
   const [runClicks, setRunClicks] = useState(0)
 
@@ -52,13 +49,13 @@ export default function Constraints() {
     document.title = 'Constraints · NirnAIn'
   }, [])
 
-  const lockedVersion = planLockOf(versionsQuery.data)
-  const locked = lockedVersion !== null
   const constraints = constraintsQuery.data
   const gaps = skillGaps(skillsQuery.data ?? [])
   // Wait for the skill list so a skill-gap warning doesn't pop in late.
   const policy = constraints && !skillsQuery.isPending ? policyInputsOf(constraints, skillsQuery.data, sheetQuery.data) : null
   const risks = policy ? policyRisks(policy) : []
+  // A contractor rate confirmed on this project earlier is the default for contractors without one.
+  const projectContractorRateCents = constraints?.specialistRateConfirmed ? (constraints.contractorRateCents ?? null) : null
 
   const nodes = (wbsQuery.data ?? []) as WbsTreeNode[]
   const workPackages = nodes.filter((node) => node.level === 3).length
@@ -79,15 +76,8 @@ export default function Constraints() {
     serverBlocking: sheetQuery.data?.blocking ?? [],
   })
 
-  /** Inputs are read-only once a plan version is applied: explain that instead of saving. */
-  function editable(): boolean {
-    if (lockedVersion === null) return true
-    toast(lockedMessage(lockedVersion))
-    return false
-  }
-
   function save(changes: ConstraintChanges) {
-    if (editable()) editor.mutate(changes)
+    editor.mutate(changes)
   }
 
   /** Never disabled: ready inputs go to step 6, anything missing opens (and focuses) the banner. */
@@ -95,8 +85,6 @@ export default function Constraints() {
     setRunClicks((count) => count + 1)
     if (blockers.length === 0) goToStep('optimization')
   }
-
-  const changesPath = stepPath('changes', projectId)
 
   return (
     <section className="view on" id="v-constraints">
@@ -109,31 +97,15 @@ export default function Constraints() {
           you about risky combinations.
         </div>
 
-        {locked && (
-          <div className="banner row between" id="con-locked" role="status">
-            <span>
-              <b>Plan v{lockedVersion} is in force.</b> These inputs are read-only now; to change them, record a change on step 7, Changes
-              &amp; Versions.
-            </span>
-            <Link className="btn sm" to={changesPath}>
-              Report a change &rarr;
-            </Link>
-          </div>
-        )}
+        <PlanInForceBanner projectId={projectId} id="con-in-force" />
         {editor.isError && (
           <div className="alert bad row between" role="alert">
             <span>
               <b>Your change wasn&rsquo;t saved.</b> {errorMessage(editor.error)}
             </span>
-            {isPlanLockError(editor.error) ? (
-              <Link className="btn sec sm" to={changesPath}>
-                Open Changes &amp; Versions
-              </Link>
-            ) : (
-              <button className="btn sec sm" type="button" onClick={() => editor.reset()}>
-                Dismiss
-              </button>
-            )}
+            <button className="btn sec sm" type="button" onClick={() => editor.reset()}>
+              Dismiss
+            </button>
           </div>
         )}
 
@@ -146,18 +118,16 @@ export default function Constraints() {
                 skillGaps={gaps}
                 workPackageGap={gaps.length === 0 && serverMissing.includes('specialist')}
                 effort={effort}
-                locked={locked}
                 onSave={save}
               />
               <BudgetCard
                 constraints={constraints}
                 policy={policy}
                 risks={risks}
-                locked={locked}
                 onSave={save}
                 budgetSource={sheetQuery.data?.rows.find((row) => row.key === 'budget')?.source}
               />
-              <DeadlineCard constraints={constraints} policy={policy} risks={risks} locked={locked} onSave={save} />
+              <DeadlineCard constraints={constraints} policy={policy} risks={risks} onSave={save} />
             </>
           ) : constraintsQuery.isError ? (
             <div className="card span2" id="qpanel" role="alert">
@@ -173,9 +143,9 @@ export default function Constraints() {
               </p>
             </div>
           )}
-          <TeamEditor projectId={projectId} policy={policy} risks={risks} locked={locked} editable={editable} onSavePolicy={save} />
-          <SkillsEditor projectId={projectId} policy={policy} risks={risks} locked={locked} editable={editable} onSavePolicy={save} />
-          <DependenciesCard projectId={projectId} editable={editable} />
+          <TeamEditor projectId={projectId} projectContractorRateCents={projectContractorRateCents} policy={policy} risks={risks} onSavePolicy={save} />
+          <SkillsEditor projectId={projectId} policy={policy} risks={risks} onSavePolicy={save} />
+          <DependenciesCard projectId={projectId} />
         </div>
 
         <ConstraintsGate

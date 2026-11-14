@@ -1,11 +1,11 @@
 /**
  * The plan state of Optimization Results (`#opt-plan`; port of the mockup's views/optimize-plan.js).
  *
- * Shows the applied banner, the specialist-rate confirmation, the run's KPIs, the Constraint
- * check, the timeline and the detail tabs, then Export and Apply. Apply stays disabled while
- * the plan books an outside specialist whose rate nobody confirmed; confirming saves
- * `specialistRateConfirmed: true` on the project's constraint set. Applying makes the run the
- * next plan version (v1, v2 …) and opens step 7.
+ * Shows the applied banner, the contractor-rate confirmation, the run's KPIs, the ways to keep the
+ * date when the plan finishes late (`KeepDateCard`), the Constraint check, the timeline and the
+ * detail tabs, then Export and Apply. Apply stays disabled while the plan books a contractor at a
+ * rate nobody confirmed; confirming saves that rate as the project's contractor rate
+ * (`contractorRateCents`, `specialistRateConfirmed: true`), the default for contractors on step 5. Applying makes the run the next plan version (v1, v2 …) and opens step 7.
  */
 import { useState } from 'react'
 import { Link } from 'react-router'
@@ -13,6 +13,7 @@ import { errorMessage } from '@/lib/api'
 import type { PolicyInputs } from '@/lib/constraintPolicy'
 import { formatDate, formatMoney } from '@/lib/format'
 import {
+  dateSlipOf,
   DEFAULT_SPECIALIST_RATE_CENTS,
   exportRun,
   shortHash,
@@ -22,11 +23,13 @@ import {
   type ConstraintAnswers,
   type ExportFormat,
   type PlanRun,
+  type RemedyId,
 } from '@/lib/optimize'
 import { useApplyRun, useSaveConstraints } from '@/lib/queries'
 import { stepPath, useStepNav } from '@/lib/steps'
 import { ConstraintCheckCard } from './ConstraintCheck'
 import { daysBetween, shortDay } from './dates'
+import { KeepDateCard, type AcceptState } from './KeepDateCard'
 import { PlanDetails } from './PlanDetails'
 import { PlanGantt } from './PlanGantt'
 import { ProblemAlert, QuietNote } from './ui'
@@ -41,6 +44,10 @@ interface PlanViewProps {
   /** Inputs for the policy rules, once the constraint set has loaded. */
   policy: PolicyInputs | null
   showToast: (message: string) => void
+  /** Re-runs the solver with one of the plan's priced remedies. */
+  onUseRemedy: (remedy: RemedyId) => void
+  remedyStarting: boolean
+  remedyError: unknown
 }
 
 /** "$175/h". */
@@ -49,7 +56,18 @@ function hourlyRate(cents: number): string {
 }
 
 /** The optimal (or best feasible) plan and the actions on it. */
-export function PlanView({ projectId, run, constraints, constraintsError, onRetryConstraints, policy, showToast }: PlanViewProps) {
+export function PlanView({
+  projectId,
+  run,
+  constraints,
+  constraintsError,
+  onRetryConstraints,
+  policy,
+  showToast,
+  onUseRemedy,
+  remedyStarting,
+  remedyError,
+}: PlanViewProps) {
   const navigateToStep = useStepNav()
   const applyRun = useApplyRun(projectId)
   const saveConstraints = useSaveConstraints(projectId)
@@ -69,10 +87,10 @@ export function PlanView({ projectId, run, constraints, constraintsError, onRetr
   const canApply = !applied && rateKnown && !needsRate && !applyRun.isPending
   const deadline = constraints?.mustFinishBy ?? summary?.deadline ?? null
 
-  /** Saves the current constraint set with the specialist rate marked as confirmed. */
+  /** Saves the current constraint set with the shown contractor rate as the confirmed one. */
   function confirmRate() {
     if (!constraints) return
-    const confirmed: ConstraintAnswers = { ...constraints, specialistRateConfirmed: true }
+    const confirmed: ConstraintAnswers = { ...constraints, contractorRateCents: rateCents, specialistRateConfirmed: true }
     saveConstraints.mutate(confirmed, {
       onSuccess: () => {
         refreshInputs()
@@ -105,6 +123,11 @@ export function PlanView({ projectId, run, constraints, constraintsError, onRetr
     }
   }
 
+  /** Why an export button waits: the other format is still downloading. */
+  function exportBusy(format: ExportFormat): string | undefined {
+    return exporting !== null && exporting !== format ? 'Wait for the other export to finish.' : undefined
+  }
+
   if (!result) {
     return <QuietNote>The solver finished but returned no plan details. Run it again to rebuild the plan.</QuietNote>
   }
@@ -113,6 +136,12 @@ export function PlanView({ projectId, run, constraints, constraintsError, onRetr
   // Measured against the saved deadline: a move_deadline run's own summary deadline is the moved one.
   const lateDays = summary && deadline ? daysBetween(deadline, summary.completionDate) : 0
   const lateReason = run.options?.remedy === 'move_deadline' ? 'you chose to move the date' : 'the date was allowed to move'
+  const slip = dateSlipOf(run)
+  let accept: AcceptState
+  if (applied) accept = { kind: 'applied', version: run.version ?? 0 }
+  else if (needsRate) accept = { kind: 'blocked', reason: 'Confirm the contractor rate above first.' }
+  else if (!rateKnown) accept = { kind: 'blocked', reason: 'Checking the contractor rate\u2026' }
+  else accept = { kind: 'ready', applying: applyRun.isPending, onAccept: apply }
 
   return (
     <div id="opt-plan">
@@ -140,14 +169,14 @@ export function PlanView({ projectId, run, constraints, constraintsError, onRetr
           <span>
             {constraints?.contractorRateCents != null ? (
               <>
-                The plan uses the outside specialist rate of <b>{hourlyRate(rateCents)}</b> from Constraints.
+                The plan books a contractor at the project&rsquo;s contractor rate of <b>{hourlyRate(rateCents)}</b>.
               </>
             ) : (
               <>
-                The outside specialist&rsquo;s rate isn&rsquo;t in your notes. We used <b>{hourlyRate(rateCents)}</b>, a typical market rate.
+                The plan books a contractor at <b>{hourlyRate(rateCents)}</b>, an estimate (a typical market rate).
               </>
             )}{' '}
-            Confirm it before applying, or change it on Constraints.
+            Confirm it before applying, or add the contractor to the team on step 5 with their agreed rate and run again.
           </span>
           <button className="btn sm" id="btn-rate" type="button" onClick={confirmRate} disabled={saveConstraints.isPending}>
             {saveConstraints.isPending ? 'Confirming\u2026' : `Confirm ${hourlyRate(rateCents)}`}
@@ -159,7 +188,7 @@ export function PlanView({ projectId, run, constraints, constraintsError, onRetr
         <ProblemAlert title="Couldn't check the specialist rate" error={constraintsError} onRetry={onRetryConstraints} />
       )}
 
-      {lateDays > 0 && deadline ? (
+      {slip ? null : lateDays > 0 && deadline ? (
         <div className="alert warn">
           Best plan found within your constraints. It finishes after {shortDay(deadline)} because {lateReason}.
         </div>
@@ -179,8 +208,10 @@ export function PlanView({ projectId, run, constraints, constraintsError, onRetr
         </div>
       )}
 
+      {slip && <KeepDateCard slip={slip} starting={remedyStarting} startError={remedyError} onUse={onUseRemedy} accept={accept} />}
+
       {policy ? (
-        <ConstraintCheckCard policy={policy} run={run} />
+        <ConstraintCheckCard policy={policy} run={run} dateSlipShown={slip !== null} />
       ) : constraintsError != null ? (
         <ProblemAlert title="Couldn't load the constraint check" error={constraintsError} onRetry={onRetryConstraints} />
       ) : (
@@ -207,14 +238,14 @@ export function PlanView({ projectId, run, constraints, constraintsError, onRetr
           &larr; Adjust Constraints
         </button>
         <div className="row">
-          <button className="btn sec" type="button" onClick={() => void download('pdf')} disabled={exporting !== null}>
+          <button className="btn sec" type="button" onClick={() => void download('pdf')} disabled={exporting !== null} title={exportBusy('pdf')}>
             {exporting === 'pdf' ? 'Exporting\u2026' : 'Export PDF Report'}
           </button>
-          <button className="btn sec" type="button" onClick={() => void download('msproject')} disabled={exporting !== null}>
+          <button className="btn sec" type="button" onClick={() => void download('msproject')} disabled={exporting !== null} title={exportBusy('msproject')}>
             {exporting === 'msproject' ? 'Exporting\u2026' : 'Export to MS Project'}
           </button>
           {applied ? (
-            <button className="btn" id="btn-apply" type="button" disabled>
+            <button className="btn" id="btn-apply" type="button" disabled title="This plan is already applied.">
               {'\u2713'} Applied as Plan v{run.version}
             </button>
           ) : (
@@ -224,7 +255,7 @@ export function PlanView({ projectId, run, constraints, constraintsError, onRetr
               type="button"
               onClick={apply}
               disabled={!canApply}
-              title={needsRate ? 'Confirm the specialist rate first' : undefined}
+              title={needsRate ? 'Confirm the contractor rate first' : !rateKnown ? 'Checking the contractor rate\u2026' : undefined}
             >
               {applyRun.isPending ? 'Applying\u2026' : 'Apply Optimized Plan'}
             </button>

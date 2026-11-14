@@ -27,11 +27,19 @@ export function formatMoney(cents: number | null | undefined, currency = 'USD', 
   return moneyFormatter(currency, options.compact ?? false).format(cents / 100)
 }
 
-const dateFormatter = new Intl.DateTimeFormat(undefined, {
+/** Calendar days (`YYYY-MM-DD`) carry no time zone, so they are formatted as written. */
+const calendarDayFormatter = new Intl.DateTimeFormat(undefined, {
   year: 'numeric',
   month: 'short',
   day: 'numeric',
   timeZone: 'UTC',
+})
+
+/** Moments (full ISO timestamps) are shown on the user's own calendar. */
+const localDayFormatter = new Intl.DateTimeFormat(undefined, {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
 })
 
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -41,14 +49,19 @@ const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   minute: '2-digit',
 })
 
+const CALENDAR_DAY = /^\d{4}-\d{2}-\d{2}$/
+
 /**
- * Formats an ISO date. Date-only values (`YYYY-MM-DD`) are calendar dates and are
- * rendered in UTC so they never shift a day in negative-offset time zones.
+ * Formats an ISO date or timestamp as "Nov 13, 2026". Date-only values (`YYYY-MM-DD`) are calendar
+ * dates and keep their day in every time zone. Timestamps are shown in the user's local time zone,
+ * so a plan applied at 7 pm PST on Nov 13 (03:00 UTC on Nov 14) reads Nov 13.
  */
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return '—'
-  const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T00:00:00Z` : iso)
-  return Number.isNaN(date.getTime()) ? '—' : dateFormatter.format(date)
+  const calendarDay = CALENDAR_DAY.test(iso)
+  const date = new Date(calendarDay ? `${iso}T00:00:00Z` : iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  return (calendarDay ? calendarDayFormatter : localDayFormatter).format(date)
 }
 
 export function formatDateTime(iso: string): string {

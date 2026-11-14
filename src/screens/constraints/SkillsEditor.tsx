@@ -7,12 +7,12 @@
  * if the PM allows one); Can flex = it may go to someone without it, with ramp-up time added. A
  * required skill nobody has is a gap: it makes the specialist question count and is called out
  * below the table. Data: `GET/POST/PATCH/DELETE …/skills` (contract [B]; names are unique,
- * case-insensitive). Read-only while a plan version is in force.
+ * case-insensitive); every change refreshes the step 6 confirmation sheet.
  */
 import { Fragment, useState } from 'react'
 import { errorMessage } from '@/lib/api'
 import { policyOf, type PolicyInputs, type PolicyRisk } from '@/lib/constraintPolicy'
-import { policyChanges, useInputsRefresh, useSaveFailure, type ConstraintChanges } from '@/lib/constraints'
+import { policyChanges, useSaveFailure, type ConstraintChanges } from '@/lib/constraints'
 import { skillGaps, useAddSkill, useProjectSkills, useRemoveSkill, useUpdateSkill, type ProjectSkill } from '@/lib/inputs'
 import { toast } from '@/lib/toast'
 import { CommitInput } from './CommitInput'
@@ -29,9 +29,8 @@ function cleanName(text: string): string {
 }
 
 /** One skill: inline name, Required / Optional, who has it, Remove. */
-function SkillRow({ skill, locked, onRename, onNeed, onRemove }: {
+function SkillRow({ skill, onRename, onNeed, onRemove }: {
   skill: ProjectSkill
-  locked: boolean
   onRename: (text: string) => void
   onNeed: (required: boolean) => void
   onRemove: () => void
@@ -39,7 +38,7 @@ function SkillRow({ skill, locked, onRename, onNeed, onRemove }: {
   return (
     <tr>
       <td>
-        <CommitInput className="in sm" data-skname={skill.skillId} maxLength={60} aria-label="Skill name" value={skill.name} onCommit={onRename} disabled={locked} />
+        <CommitInput className="in sm" data-skname={skill.skillId} maxLength={60} aria-label="Skill name" value={skill.name} onCommit={onRename} />
       </td>
       <td>
         <span className="seg sm" role="group" aria-label={`${skill.name}: needed`}>
@@ -79,14 +78,12 @@ function SkillRow({ skill, locked, onRename, onNeed, onRemove }: {
   )
 }
 
-/** The skills card. `editable()` returns false (and explains the plan lock) when inputs are frozen. */
-export function SkillsEditor({ projectId, policy, risks, locked, editable, onSavePolicy }: {
+/** The skills card: the project's skills, who has each one, the gaps and the skills Must hold / Can flex switch. */
+export function SkillsEditor({ projectId, policy, risks, onSavePolicy }: {
   projectId: string
   /** Null while the constraint set is loading or failed: the card works without its switch. */
   policy: PolicyInputs | null
   risks: PolicyRisk[]
-  locked: boolean
-  editable: () => boolean
   onSavePolicy: (changes: ConstraintChanges) => void
 }) {
   const skillsQuery = useProjectSkills(projectId)
@@ -94,7 +91,6 @@ export function SkillsEditor({ projectId, policy, risks, locked, editable, onSav
   const updateSkill = useUpdateSkill(projectId)
   const removeSkill = useRemoveSkill(projectId)
   const reportFailure = useSaveFailure(projectId)
-  const refreshOnLock = useInputsRefresh(projectId)
   const [newName, setNewName] = useState('')
   const [newRequired, setNewRequired] = useState(true)
   const [addError, setAddError] = useState('')
@@ -110,7 +106,6 @@ export function SkillsEditor({ projectId, policy, risks, locked, editable, onSav
   }
 
   function add() {
-    if (!editable()) return
     const name = cleanName(newName)
     const problem = nameError(name, null)
     setAddError(problem)
@@ -119,10 +114,7 @@ export function SkillsEditor({ projectId, policy, risks, locked, editable, onSav
       { name, required: newRequired },
       {
         onSuccess: () => setNewName(''),
-        onError: (error) => {
-          setAddError(errorMessage(error))
-          refreshOnLock(error)
-        },
+        onError: (error) => setAddError(errorMessage(error)),
       },
     )
   }
@@ -131,16 +123,15 @@ export function SkillsEditor({ projectId, policy, risks, locked, editable, onSav
     const name = cleanName(text)
     const problem = nameError(name, skill.skillId)
     if (problem) toast(problem)
-    else if (name !== skill.name && editable()) updateSkill.mutate({ skillId: skill.skillId, patch: { name } }, { onError: reportFailure })
+    else if (name !== skill.name) updateSkill.mutate({ skillId: skill.skillId, patch: { name } }, { onError: reportFailure })
   }
 
   function setNeed(skill: ProjectSkill, required: boolean) {
-    if (!editable() || skill.required === required) return
+    if (skill.required === required) return
     updateSkill.mutate({ skillId: skill.skillId, patch: { required } }, { onError: reportFailure })
   }
 
   function remove(skill: ProjectSkill) {
-    if (!editable()) return
     removeSkill.mutate(skill.skillId, { onSuccess: () => toast(`${skill.name} removed.`), onError: reportFailure })
   }
 
@@ -177,7 +168,6 @@ export function SkillsEditor({ projectId, policy, risks, locked, editable, onSav
       <SkillRow
         key={skill.skillId}
         skill={skill}
-        locked={locked}
         onRename={(text) => rename(skill, text)}
         onNeed={(required) => setNeed(skill, required)}
         onRemove={() => remove(skill)}
@@ -217,7 +207,6 @@ export function SkillsEditor({ projectId, policy, risks, locked, editable, onSav
           onKeyDown={(event) => {
             if (event.key === 'Enter') add()
           }}
-          disabled={locked}
         />
         <select
           className="in sm"
@@ -225,7 +214,6 @@ export function SkillsEditor({ projectId, policy, risks, locked, editable, onSav
           aria-label="Needed"
           value={newRequired ? 'Required' : 'Optional'}
           onChange={(event) => setNewRequired(event.target.value === 'Required')}
-          disabled={locked}
         >
           <option>Required</option>
           <option>Optional</option>

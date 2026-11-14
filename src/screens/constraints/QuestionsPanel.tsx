@@ -8,7 +8,8 @@
  * planned with the safer assumption (no specialist, hard deadline) and the plan says so. The
  * deadline answer is the same setting as the Deadline card's Must hold / Can flex. A specialist's
  * cost rests on a rate; until the PM confirms it (or enters the agreed rate) the plan marks the
- * cost as estimated and step 6 asks again before applying.
+ * cost as estimated and step 6 asks again before applying. The confirmed rate is stored as the
+ * project's contractor rate, which contractors on the team without a rate of their own then use.
  */
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
@@ -121,7 +122,7 @@ function EffortAnswer({ effort, projectId }: { effort: EffortState; projectId: s
 }
 
 /** The specialist's hourly rate: estimated until the PM confirms it or enters the agreed one. */
-function SpecialistRate({ constraints, locked, onSave }: { constraints: ConstraintInputs; locked: boolean; onSave: (changes: ConstraintChanges) => void }) {
+function SpecialistRate({ constraints, onSave }: { constraints: ConstraintInputs; onSave: (changes: ConstraintChanges) => void }) {
   const rateCents = constraints.contractorRateCents ?? DEFAULT_SPECIALIST_RATE_CENTS
   const confirmed = Boolean(constraints.specialistRateConfirmed)
 
@@ -150,11 +151,10 @@ function SpecialistRate({ constraints, locked, onSave }: { constraints: Constrai
           style={{ width: 110 }}
           value={dollarsText(rateCents)}
           onCommit={commitRate}
-          disabled={locked}
         />
         {confirmed ? <Chip kind="confirmed" /> : <Chip kind="inferred">Estimated</Chip>}
         {!confirmed && (
-          <button className="btn sm" id="con-rate-confirm" type="button" onClick={() => onSave({ specialistRateConfirmed: true })}>
+          <button className="btn sm" id="con-rate-confirm" type="button" onClick={() => onSave({ contractorRateCents: rateCents, specialistRateConfirmed: true })}>
             Confirm {hourlyRate(rateCents)}
           </button>
         )}
@@ -185,17 +185,16 @@ function Question({ id, tier, title, why, children }: { id: string; tier: 'high'
 }
 
 /**
- * The questions card. `onSave` handles the plan lock; `skillGaps` are required skills on the
+ * The questions card. `onSave` saves an answer; `skillGaps` are required skills on the
  * project's list that nobody has; `workPackageGap` is the server noticing a work package that
  * needs a skill nobody on the team has (outside the list), which also makes the question count.
  */
-export function QuestionsPanel({ projectId, constraints, skillGaps, workPackageGap, effort, locked, onSave }: {
+export function QuestionsPanel({ projectId, constraints, skillGaps, workPackageGap, effort, onSave }: {
   projectId: string
   constraints: ConstraintInputs
   skillGaps: string[]
   workPackageGap: boolean
   effort: EffortState
-  locked: boolean
   onSave: (changes: ConstraintChanges) => void
 }) {
   const specialist = constraints.specialistAnswer
@@ -263,7 +262,7 @@ export function QuestionsPanel({ projectId, constraints, skillGaps, workPackageG
             </>
           )}
         </div>
-        {specialist === 'yes' && <SpecialistRate constraints={constraints} locked={locked} onSave={onSave} />}
+        {specialist === 'yes' && <SpecialistRate constraints={constraints} onSave={onSave} />}
       </Question>
 
       <Question
