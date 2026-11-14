@@ -24,7 +24,7 @@ from app.domain.changes import (
     ChangeStatus,
     PlanOverrides,
 )
-from app.domain.common import SolverStatus
+from app.domain.common import ConstraintMode, SolverStatus
 from app.repositories.access import ProjectRef
 from app.repositories.change_team import ChangeTeamWrites
 from app.repositories.tables import (
@@ -171,7 +171,8 @@ class ChangeRepository(ChangeTeamWrites):
 
     async def write_overrides(self, project: ProjectRef, overrides: PlanOverrides) -> None:
         """The approved change becomes the project's inputs for every later run:
-        constraint set budget / must-finish-by, WBS durations and team hours.
+        constraint set budget / must-finish-by (and the policy stated with them), WBS
+        durations and team hours.
         """
         if overrides.budget_total_cents is not None or overrides.must_finish_by is not None:
             changes: dict[str, Any] = {"updated_at": sa.func.now()}
@@ -179,6 +180,15 @@ class ChangeRepository(ChangeTeamWrites):
                 changes["budget_total_cents"] = overrides.budget_total_cents
             if overrides.must_finish_by is not None:
                 changes["must_finish_by"] = overrides.must_finish_by
+            # A policy the notes stated ("must hold") is kept; the deadline answer drives
+            # the deadline mode of later runs.
+            policies: dict[str, Any] = {}
+            if overrides.budget_mode is not None:
+                policies["budget_mode"] = ConstraintMode(overrides.budget_mode)
+            if overrides.deadline_mode is not None:
+                policies["deadline_mode"] = ConstraintMode(overrides.deadline_mode)
+                policies["deadline_answer"] = overrides.deadline_mode
+            changes.update(policies)
             statement = pg_insert(constraint_sets).values(
                 project_id=project.id,
                 budget_total_cents=(
@@ -188,6 +198,7 @@ class ChangeRepository(ChangeTeamWrites):
                 ),
                 start_date=project.start_date,
                 must_finish_by=overrides.must_finish_by or project.target_end_date,
+                **policies,
             )
             await self._connection.execute(
                 statement.on_conflict_do_update(

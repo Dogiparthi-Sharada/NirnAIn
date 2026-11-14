@@ -1,7 +1,8 @@
 """Rules reading of people in new meeting notes (step 7, no AI key or Claude failed).
 
 What: finds who gives the project different hours ("Leo can only give 16 hours a week",
-"Ana will be at 20 hours per week"), who leaves ("Mark is leaving"), and who is brought in
+"Ana will be at 20 hours per week"; only hours a week said after the person's name), who
+leaves ("Mark is leaving"), and who is brought in
 ("bring in an outside security specialist", "hire a contractor for the data migration").
 Why: mid-project the PM's meetings change the team as often as dates and money; the
 deterministic reader must catch it without Claude and without inventing anything: a
@@ -18,7 +19,7 @@ import math
 import re
 from collections import Counter
 
-from app.changes import parsing
+from app.changes import parsing, statements
 from app.changes.context import ChangeContext, PersonRef
 from app.changes.team import DEFAULT_NEW_MEMBER_HOURS, addition
 from app.domain.changes import DetectedChange, NewMember
@@ -71,6 +72,17 @@ def match_people(sentence: str, people: tuple[PersonRef, ...]) -> list[PersonRef
     return out
 
 
+def _named_at(person: PersonRef, text: str) -> int:
+    """Where the sentence first names the person (full, first or last name)."""
+    parts = [person.name, *person.name.split()]
+    found = [
+        match.start()
+        for part in parts
+        if (match := re.search(rf"\b{re.escape(part)}\b", text, re.I)) is not None
+    ]
+    return min(found, default=0)
+
+
 def capacity_change(
     sentence: parsing.Sentence, context: ChangeContext, change_id: str
 ) -> DetectedChange | None:
@@ -81,7 +93,14 @@ def capacity_change(
         return None
     person = people[0]
     leaves = parsing.has(sentence.body, _LEAVES)
-    hour_figures = parsing.hours(sentence.body)
+    # Business rule: hours change only with "<Name> … N hours a week"; a task's "80 hours"
+    # or the old value after "instead of" never does.
+    named_at = _named_at(person, sentence.body)
+    hour_figures = [
+        hours
+        for position, hours in parsing.weekly_hours(statements.without_replaced(sentence.body))
+        if position > named_at
+    ]
     if leaves:
         new: float = 0
     elif hour_figures:
@@ -159,7 +178,8 @@ def newcomer_change(
     if any(person.name.casefold() == full_name.casefold() for person in context.people):
         return None
     contractor = bool(outside) or head in _CONTRACT_NOUNS or "bring" in match["verb"].lower()
-    stated = [] if hours_taken else [hours for hours in parsing.hours(sentence.body) if hours >= 1]
+    weekly = parsing.weekly_hours(statements.without_replaced(sentence.body))
+    stated = [] if hours_taken else [hours for _, hours in weekly if hours >= 1]
     hours = round(stated[0]) if stated else None
     member = NewMember(
         full_name=full_name,

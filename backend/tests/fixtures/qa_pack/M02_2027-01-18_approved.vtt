@@ -1,0 +1,39 @@
+WEBVTT
+
+NOTE
+SYNTHETIC QA PROJECT - fictional people, rates and decisions
+Meeting M02: Approved scope growth and resource changes
+Date: 2027-01-18 09:00 America/Los_Angeles
+Project: PRJ-QA-1042
+
+M02-01
+00:00:00.000 --> 00:01:29.000
+<v Jane Doe, project manager>This is the January 18, 2027 change meeting for PRJ-QA-1042. These decisions supersede the specific January 4 fields mentioned below. All unmentioned scope, resource rates, dependency links and limits remain as previously approved. Changes are proposed against Plan v1; Plan v1 remains active until the updated plan is applied.</v>
+
+M02-02
+00:01:30.000 --> 00:02:59.000
+<v Robert Walsh, sponsor>Increase internal database sources from 12 to 18 and replace W03 effort of 240 hours with 360 total hours. Increase concurrent users from 500 to 800 and replace W07 effort of 96 hours with 160 total hours. Increase training audience from 300 to 450 and replace W14 effort of 80 hours with 120 total hours. W13 UAT is now 120 total hours rather than 80. These are replacement totals, not increments to add a second time.</v>
+
+M02-03
+00:03:00.000 --> 00:04:29.000
+<v Robert Walsh, sponsor>Define disaster recovery acceptance as RTO four hours and RPO one hour. Add mandatory W16 (1.4.5) Disaster recovery drill: 80 hours, Lisa, Disaster Recovery, after W12. Add W16 as another predecessor of W13. The SLA gap is now resolved by a requirement and work package, while delivery of the drill remains future work.</v>
+
+M02-04
+00:04:30.000 --> 00:05:59.000
+<v Robert Walsh, sponsor>Replace the budget with a $350,000 soft target; budget may flex, and any excess must be shown. Set contingency to 10% of the total budget, reserved inside that budget. Keep fixed infrastructure at $60,000 and the two category targets unchanged. July 30 remains a soft go-live target; April 30 and June 30 remain soft milestones. Capacity and required skills remain hard.</v>
+
+M02-05
+00:06:00.000 --> 00:07:29.000
+<v Jane Doe, project manager>From January 25 onward, Mark has only 24 project hours per week instead of 40 because of another assignment. From January 25 onward, Lisa has 32 project hours per week instead of 20. James is entirely unavailable from February 15 through February 26 inclusive, then returns to 16 hours per week. All other capacities remain the same.</v>
+
+M02-06
+00:07:30.000 --> 00:08:59.000
+<v Tom Rivera, BI developer>My QA Testing skill was verified today, January 18. Add QA Testing effective today to my existing Power BI and Training skills. I still have 32 project hours per week. I can be considered for future UAT but no completed work should be reassigned.</v>
+
+M02-07
+00:09:00.000 --> 00:10:29.000
+<v Jane Doe, project manager>W01 completed on January 15: actual start January 4, 80 actual hours, actual labor cost $8,000, zero remaining effort. W04 also completed on January 15: actual start January 4, 80 actual hours, actual cost $12,000, zero remaining effort. Lock both histories. All remaining work is replanned from January 18 onward. For this fixture, W09 has 32 actual hours and $4,160 actual cost through January 15; W12 has 40 actual hours and $4,400 actual cost. W09 and W12 are in progress; keep their actual start January 4 and schedule only their remaining 32 and 40 hours. Every other package is not started.</v>
+
+M02-08
+00:10:30.000 --> 00:11:59.000
+<v Robert Walsh, sponsor>We discussed increasing the budget to $400,000 but rejected that proposal. We also discussed a six-day week and rejected it. Priya is still allowed at $175 per hour, 32 hours per week, beginning February 8. These discussions do not change either value or the Monday-through-Friday calendar.</v>
