@@ -7,6 +7,7 @@ User-side queries (RLS) and the worker's service-side writes, mirroring
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +15,7 @@ import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.ai.evidence import ScopeSuggestion
 from app.ai.intake import PASTED_TITLE, Source
 from app.core.errors import pg_error_info
 from app.domain.common import DocumentKind, ItemOrigin, JobStatus, ScopeCategory, ScopeStatus
@@ -278,10 +280,11 @@ class IntakeJobStore:
         run_id: uuid.UUID,
         project_id: uuid.UUID,
         model: str,
-        items: list[dict[str, Any]],
+        suggestions: Sequence[ScopeSuggestion],
         input_tokens: int,
         output_tokens: int,
     ) -> None:
+        """Store the run's suggestions as pending AI items and mark the run succeeded."""
         # Re-analysis replaces earlier AI suggestions nobody has touched yet;
         # accepted, removed and edited items stay.
         await self._conn.execute(
@@ -293,22 +296,26 @@ class IntakeJobStore:
                 _unedited(),
             )
         )
-        if items:
-            counters: dict[str, int] = {}
+        if suggestions:
+            next_sort_order: dict[ScopeCategory, int] = {}
             rows = []
-            for it in items:
-                category = str(it["category"])
-                sort_order = counters.get(category, 0)
-                counters[category] = sort_order + 1
+            for suggestion in suggestions:
+                sort_order = next_sort_order.get(suggestion.category, 0)
+                next_sort_order[suggestion.category] = sort_order + 1
                 rows.append(
                     {
                         "id": uuid.uuid4(),
                         "project_id": project_id,
                         "intake_run_id": run_id,
-                        "category": ScopeCategory(category),
-                        "text": str(it["text"])[:2000],
-                        "original_text": str(it["text"])[:2000],
-                        "confidence": it.get("confidence"),
+                        "source_document_id": suggestion.source_document_id,
+                        "category": suggestion.category,
+                        "text": suggestion.text,
+                        "original_text": suggestion.text,
+                        "source_quote": suggestion.source_quote,
+                        "evidence": suggestion.evidence,
+                        "evidence_note": suggestion.evidence_note,
+                        "suggested_text": suggestion.suggested_text,
+                        "confidence": suggestion.confidence,
                         "status": ScopeStatus.PENDING,
                         "origin": ItemOrigin.AI,
                         "sort_order": sort_order,
@@ -321,7 +328,7 @@ class IntakeJobStore:
             .values(
                 status=JobStatus.SUCCEEDED,
                 model=model,
-                items_extracted=len(items),
+                items_extracted=len(suggestions),
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 finished_at=sa.func.now(),

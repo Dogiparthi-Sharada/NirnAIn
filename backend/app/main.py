@@ -86,7 +86,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if app.state.token_verifier is None:
         logger.warning("SUPABASE_URL is not set; authenticated endpoints will return 503")
     if settings.anthropic_api_key is None:
-        logger.warning("ANTHROPIC_API_KEY is not set; AI intake runs will fail")
+        logger.warning("ANTHROPIC_API_KEY is not set; AI intake uses the rule-based extractor")
 
     register_exception_handlers(app)
 

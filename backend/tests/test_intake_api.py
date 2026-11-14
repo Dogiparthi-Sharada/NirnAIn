@@ -13,11 +13,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
+from app.ai.evidence import ScopeSuggestion
 from app.ai.intake import Source
 from app.api import deps
 from app.core.security import CurrentPrincipal
 from app.domain.common import (
     DocumentKind,
+    Evidence,
     ItemOrigin,
     JobStatus,
     OrgRole,
@@ -317,11 +319,20 @@ async def test_create_item_appends_manual_accepted() -> None:
     assert conn.params[0]["origin"] == ItemOrigin.MANUAL
 
 
-async def test_finish_replaces_untouched_ai_items_and_keeps_original_text() -> None:
+async def test_finish_replaces_untouched_ai_items_and_stores_evidence() -> None:
     conn = ManyConn()
-    run_id, pid = uuid.uuid4(), uuid.uuid4()
-    items = [{"category": "risk", "text": "Vendor delay", "confidence": 0.8}]
-    await IntakeJobStore(conn).finish(run_id, pid, "m", items, 1, 2)  # type: ignore[arg-type]
+    run_id, pid, upload_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    suggestion = ScopeSuggestion(
+        category=ScopeCategory.RISK,
+        text="Vendor delay of 3 months",
+        confidence=0.8,
+        source_quote="the vendor may slip",
+        evidence=Evidence.FLAGGED,
+        evidence_note="The notes give no length for the delay.",
+        suggested_text="Vendor delay",
+        source_document_id=upload_id,
+    )
+    await IntakeJobStore(conn).finish(run_id, pid, "m", [suggestion], 1, 2)  # type: ignore[arg-type]
     delete, insert, update = conn.sql
     assert delete.startswith("DELETE FROM public.scope_items")
     for fragment in (
@@ -336,7 +347,14 @@ async def test_finish_replaces_untouched_ai_items_and_keeps_original_text() -> N
     assert conn.params[0]["status_1"] == ScopeStatus.PENDING
     assert insert.startswith("INSERT INTO public.scope_items")
     ((row,),) = conn.many
-    assert row["original_text"] == row["text"] == "Vendor delay"
+    assert row["original_text"] == row["text"] == "Vendor delay of 3 months"
+    assert (row["source_quote"], row["evidence"], row["suggested_text"]) == (
+        "the vendor may slip",
+        Evidence.FLAGGED,
+        "Vendor delay",
+    )
+    assert row["evidence_note"] == "The notes give no length for the delay."
+    assert row["source_document_id"] == upload_id
     assert update.startswith("UPDATE public.intake_runs")
 
 

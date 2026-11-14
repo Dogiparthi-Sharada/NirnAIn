@@ -173,6 +173,13 @@ class ItemOrigin(StrEnum):
     MANUAL = "manual"
 
 
+# --- check constraint on public.scope_items.evidence ("never invent")
+class Evidence(StrEnum):
+    STATED = "stated"  # the source quote says it
+    INFERRED = "inferred"  # derived from the quote, or no exact quote was found
+    FLAGGED = "flagged"  # says more than the quote; suggested_text is what the quote supports
+
+
 # --- public.ai_job_kind
 class AiJobKind(StrEnum):
     WBS_GENERATE = "wbs_generate"

@@ -11,26 +11,29 @@ from typing import Any
 import anthropic
 import pytest
 
+from app.ai.evidence import NO_QUOTE_NOTE, ScopeSuggestion
 from app.ai.intake import Source
+from app.ai.intake_llm import ExtractedItem, ExtractionOutput
+from app.ai.llm import Usage
 from app.core.config import Settings
+from app.domain.common import Evidence, ScopeCategory
 from app.jobs.intake import (
     EMPTY_ERROR,
     FAILED_ERROR,
     RESTART_ERROR,
-    UNCONFIGURED_ERROR,
     IntakeRunner,
-    _ExtractedItem,
-    _Extraction,
     engine_store,
 )
 from app.repositories.intake import ClaimedRun
+
+Finished = tuple[uuid.UUID, uuid.UUID, str, list[ScopeSuggestion], int, int]
 
 
 class FakeJobStore:
     def __init__(self, text: str = "Some notes", uploads: tuple[Source, ...] = ()) -> None:
         sources = [Source(None, "Pasted notes", text), *uploads]
         self.claimed: ClaimedRun | None = ClaimedRun(uuid.uuid4(), sources)
-        self.finished: list[tuple[uuid.UUID, uuid.UUID, str, list[dict[str, Any]], int, int]] = []
+        self.finished: list[Finished] = []
         self.failed: list[tuple[uuid.UUID, str]] = []
         self.stale = 0
         self.broken = False
@@ -50,11 +53,11 @@ class FakeJobStore:
         run_id: uuid.UUID,
         project_id: uuid.UUID,
         model: str,
-        items: list[dict[str, Any]],
+        suggestions: list[ScopeSuggestion],
         input_tokens: int,
         output_tokens: int,
     ) -> None:
-        self.finished.append((run_id, project_id, model, items, input_tokens, output_tokens))
+        self.finished.append((run_id, project_id, model, suggestions, input_tokens, output_tokens))
 
     async def fail(self, run_id: uuid.UUID, error: str) -> None:
         self.failed.append((run_id, error))
@@ -76,32 +79,51 @@ async def _drain(runner: IntakeRunner) -> None:
         await asyncio.wait(tasks)
 
 
-def _fake_extract(result: _Extraction, tokens: tuple[int, int] = (100, 50)):
-    def extract(self: IntakeRunner, text: str) -> tuple[_Extraction, int, int]:
-        return result, *tokens
+def _item(
+    category: str, text: str, quote: str | None = None, evidence: Evidence = Evidence.STATED
+) -> ExtractedItem:
+    return ExtractedItem(
+        category=category,
+        text=text,
+        confidence=0.9,
+        source_quote=quote,
+        evidence=evidence,
+        evidence_note=None,
+        suggested_text=None,
+    )
+
+
+def _fake_extract(result: ExtractionOutput, tokens: tuple[int, int] = (100, 50)) -> Any:
+    def extract(self: IntakeRunner, notes: str) -> tuple[ExtractionOutput, Usage]:
+        return result, Usage(*tokens)
 
     return extract
 
 
 async def test_run_extracts_and_writes_items(monkeypatch: pytest.MonkeyPatch) -> None:
-    result = _Extraction(
+    result = ExtractionOutput(
         items=[
-            _ExtractedItem(category="objective", text="Ship the thing", confidence=0.9),
-            _ExtractedItem(category="not_a_category", text="ignored", confidence=0.5),
-            _ExtractedItem(category="risk", text="  ", confidence=0.5),  # blank, dropped
+            _item("objective", "Ship the thing", quote="ship  THE thing"),
+            _item("risk", "Vendor may slip", quote="not in the notes"),
+            _item("not_a_category", "ignored"),
+            _item("risk", "  "),  # blank, dropped
         ]
     )
     monkeypatch.setattr(IntakeRunner, "_extract", _fake_extract(result))
-    store = FakeJobStore()
+    store = FakeJobStore(text="We must Ship the thing soon.")
     runner = IntakeRunner(store, settings())  # type: ignore[arg-type]
     run_id = uuid.uuid4()
     await runner.submit(run_id)
     assert runner.active == 1
     await _drain(runner)
-    ((rid, _pid, model, items, input_tokens, output_tokens),) = store.finished
+    ((rid, _pid, model, suggestions, input_tokens, output_tokens),) = store.finished
     assert rid == run_id
     assert model == "claude-opus-5-5"
-    assert items == [{"category": "objective", "text": "Ship the thing", "confidence": 0.9}]
+    assert [(item.text, item.source_quote, item.evidence) for item in suggestions] == [
+        ("Ship the thing", "Ship the thing", Evidence.STATED),
+        ("Vendor may slip", None, Evidence.INFERRED),
+    ]
+    assert suggestions[1].evidence_note == NO_QUOTE_NOTE
     assert (input_tokens, output_tokens) == (100, 50)
     assert store.failed == []
 
@@ -116,7 +138,7 @@ async def test_run_not_queued_is_skipped() -> None:
 
 
 async def test_blank_notes_fail_without_calling_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom(self: IntakeRunner, text: str) -> tuple[_Extraction, int, int]:
+    def boom(self: IntakeRunner, notes: str) -> tuple[ExtractionOutput, Usage]:
         raise AssertionError("should not be called")
 
     monkeypatch.setattr(IntakeRunner, "_extract", boom)
@@ -128,17 +150,25 @@ async def test_blank_notes_fail_without_calling_the_model(monkeypatch: pytest.Mo
     assert store.failed == [(run_id, EMPTY_ERROR)]
 
 
-async def test_missing_api_key_fails_without_calling_the_model() -> None:
-    store = FakeJobStore()
+async def test_without_api_key_the_rules_extractor_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(self: IntakeRunner, notes: str) -> tuple[ExtractionOutput, Usage]:
+        raise AssertionError("should not be called")
+
+    monkeypatch.setattr(IntakeRunner, "_extract", boom)
+    store = FakeJobStore(text="RISKS:\n- Vendor delay")
     runner = IntakeRunner(store, settings(with_key=False))  # type: ignore[arg-type]
-    run_id = uuid.uuid4()
-    await runner.submit(run_id)
+    await runner.submit(uuid.uuid4())
     await _drain(runner)
-    assert store.failed == [(run_id, UNCONFIGURED_ERROR)]
+    ((_rid, _pid, model, suggestions, input_tokens, output_tokens),) = store.finished
+    assert (model, input_tokens, output_tokens) == ("rules", 0, 0)
+    assert [(item.category, item.text) for item in suggestions] == [
+        (ScopeCategory.RISK, "Vendor delay")
+    ]
+    assert store.failed == []
 
 
 async def test_llm_error_fails_without_leaking(monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom(self: IntakeRunner, text: str) -> tuple[_Extraction, int, int]:
+    def boom(self: IntakeRunner, notes: str) -> tuple[ExtractionOutput, Usage]:
         raise anthropic.APIConnectionError(message="secret internals", request=object())  # type: ignore[arg-type]
 
     monkeypatch.setattr(IntakeRunner, "_extract", boom)
@@ -152,7 +182,7 @@ async def test_llm_error_fails_without_leaking(monkeypatch: pytest.MonkeyPatch) 
 
 
 async def test_unexpected_crash_fails_without_leaking(monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom(self: IntakeRunner, text: str) -> tuple[_Extraction, int, int]:
+    def boom(self: IntakeRunner, notes: str) -> tuple[ExtractionOutput, Usage]:
         raise RuntimeError("secret internals")
 
     monkeypatch.setattr(IntakeRunner, "_extract", boom)
@@ -208,7 +238,7 @@ async def test_engine_store_uses_a_transaction() -> None:
 async def test_background_task_schedules_on_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     from starlette.background import BackgroundTasks
 
-    result = _Extraction(items=[_ExtractedItem(category="risk", text="X", confidence=0.5)])
+    result = ExtractionOutput(items=[_item("risk", "X")])
     monkeypatch.setattr(IntakeRunner, "_extract", _fake_extract(result))
     store = FakeJobStore()
     runner = IntakeRunner(store, settings())  # type: ignore[arg-type]
@@ -224,9 +254,9 @@ async def test_pasted_notes_and_uploads_are_analyzed_together(
 ) -> None:
     seen: list[str] = []
 
-    def extract(self: IntakeRunner, notes: str) -> tuple[_Extraction, int, int]:
+    def extract(self: IntakeRunner, notes: str) -> tuple[ExtractionOutput, Usage]:
         seen.append(notes)
-        return _Extraction(items=[]), 1, 1
+        return ExtractionOutput(items=[]), Usage(1, 1)
 
     monkeypatch.setattr(IntakeRunner, "_extract", extract)
     upload = Source(uuid.uuid4(), 'brief "v2".pdf', "Budget <b>$375K</b>")
@@ -246,7 +276,7 @@ async def test_pasted_notes_and_uploads_are_analyzed_together(
 
 
 async def test_uploads_alone_can_be_analyzed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(IntakeRunner, "_extract", _fake_extract(_Extraction(items=[])))
+    monkeypatch.setattr(IntakeRunner, "_extract", _fake_extract(ExtractionOutput(items=[])))
     store = FakeJobStore()
     store.claimed = ClaimedRun(uuid.uuid4(), [Source(uuid.uuid4(), "call.vtt", "Go-live in Q3")])
     runner = IntakeRunner(store, settings())  # type: ignore[arg-type]
