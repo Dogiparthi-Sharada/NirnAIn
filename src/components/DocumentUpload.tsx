@@ -4,7 +4,7 @@
  * Shared by the manual Create Project form (files upload after the project exists), Create from
  * upload (one source file to read) and AI Project Intake (uploads straight to the project). It only
  * picks files and shows their state; callers do the uploading. `checkFile` is the client-side
- * pre-check (type, 50 MB) — the server checks again.
+ * pre-check (type, no video, 100 MB) — the server checks again with the same rules and messages.
  */
 import { useId, useRef, useState, type DragEvent } from 'react'
 
@@ -18,14 +18,19 @@ const TILES = [
     accept: '.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   },
   { key: 'transcript', icon: '💬', label: 'Transcript', sub: 'Meeting text', accept: '.txt,.vtt,.srt,.md,text/plain,text/vtt' },
-  { key: 'audio', icon: '🎙', label: 'Audio', sub: 'MP3, WAV, M4A', accept: '.mp3,.wav,.m4a,.ogg,.webm,.aac,.flac,audio/*' },
+  { key: 'audio', icon: '🎙', label: 'Audio', sub: 'MP3, WAV, M4A · transcription coming soon', accept: '.mp3,.wav,.m4a,.ogg,.webm,.aac,.flac,audio/*' },
 ] as const
 
 export type TileKey = (typeof TILES)[number]['key']
 
 const ALL_ACCEPT = TILES.map((tile) => tile.accept).join(',')
 const SUPPORTED_EXTENSIONS = /\.(pdf|docx|txt|vtt|srt|md|mp3|wav|m4a|ogg|webm|aac|flac)$/i
-export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+const VIDEO_EXTENSIONS = /\.(mp4|mov|m4v|avi|mkv|wmv)$/i
+/** Same limit as the API and the `source_documents.size_bytes` check (100 MB). */
+export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+const TOO_LARGE_MESSAGE = 'Files can be at most 100 MB.'
+const VIDEO_MESSAGE = "MP4 and other video files are not supported. Upload the meeting's transcript (.vtt, .srt or .txt) instead."
+const VIDEO_NOTE = "MP4 and other video files are not supported — upload the meeting's transcript (.vtt, .srt or .txt) instead."
 
 export type UploadEntryStatus = 'pending' | 'uploading' | 'ready' | 'failed'
 
@@ -38,10 +43,21 @@ export interface UploadEntry {
   detail?: string | null
 }
 
+/**
+ * A video file (there is no transcription; intake needs the meeting's transcript): a video
+ * extension, any video/* type, or a .webm that the browser doesn't label audio/webm.
+ */
+export function isVideoFile(file: File): boolean {
+  const mimeType = file.type.split(';')[0].trim().toLowerCase()
+  if (VIDEO_EXTENSIONS.test(file.name) || mimeType.startsWith('video/')) return true
+  return /\.webm$/i.test(file.name) && mimeType !== 'audio/webm'
+}
+
 /** Client-side check before uploading; returns an error message or null. */
 export function checkFile(file: File): string | null {
+  if (isVideoFile(file)) return VIDEO_MESSAGE
   if (!SUPPORTED_EXTENSIONS.test(file.name)) return 'Unsupported file type. Use PDF, Word (.docx), transcript (.txt, .vtt, .srt) or audio.'
-  if (file.size > MAX_UPLOAD_BYTES) return 'Files can be at most 50 MB.'
+  if (file.size > MAX_UPLOAD_BYTES) return TOO_LARGE_MESSAGE
   return null
 }
 
@@ -69,7 +85,7 @@ export default function DocumentUpload({
   onFiles,
   onRemove,
   disabled = false,
-  hint = 'Drag files here or click a tile to browse. Max 50 MB per file.',
+  hint = 'Drag files here or click a tile to browse. Max 100 MB per file.',
   error,
   idPrefix,
 }: {
@@ -85,6 +101,7 @@ export default function DocumentUpload({
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
   const hintId = useId()
+  const videoNoteId = useId()
 
   function browse(accept: string) {
     const input = inputRef.current
@@ -133,7 +150,7 @@ export default function DocumentUpload({
             type="button"
             onClick={() => browse(tile.accept)}
             disabled={disabled}
-            aria-describedby={hintId}
+            aria-describedby={`${hintId} ${videoNoteId}`}
             aria-label={`Upload ${tile.label} (${tile.sub})`}
           >
             {/* A bare text node like the design (`.tile` sizes it; `.tile span` would shrink it); the aria-label names the tile. */}
@@ -145,6 +162,9 @@ export default function DocumentUpload({
       </div>
       <div className="hint" id={hintId}>
         {hint}
+      </div>
+      <div className="note" id={videoNoteId}>
+        {VIDEO_NOTE}
       </div>
       {error && (
         <p className="err" role="alert">

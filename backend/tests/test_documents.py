@@ -12,6 +12,7 @@ import docx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.types import Message
 
 from app.ai import documents as extraction_module
 from app.ai.documents import (
@@ -21,14 +22,17 @@ from app.ai.documents import (
     TOO_LARGE_DETAIL,
     UNREADABLE_ERROR,
     UNSUPPORTED_DETAIL,
+    VIDEO_DETAIL,
     Extraction,
     clean_transcript,
     detect_kind,
     extract_text,
     file_title,
+    is_video,
 )
 from app.api import deps
 from app.api.v1 import documents as documents_api
+from app.core.errors import ContentTooLargeError
 from app.core.security import CurrentPrincipal
 from app.domain.common import DocumentKind, JobStatus, OrgRole
 from app.domain.intake import SourceDocument
@@ -92,6 +96,17 @@ def test_detect_kind_by_extension_then_mime_type() -> None:
     assert detect_kind(None, None) is None
 
 
+def test_video_is_recognised_by_extension_or_mime_type() -> None:
+    for name in ("call.mp4", "call.MOV", "a.m4v", "a.avi", "a.mkv", "a.wmv"):
+        assert is_video(name, None)
+    assert is_video("recording.webm", "video/webm")
+    assert is_video("recording.webm", None)
+    assert not is_video("recording.webm", "audio/webm")
+    assert is_video("blob", "video/quicktime; codecs=avc1")
+    assert not is_video("call.mp3", "audio/mpeg")
+    assert not is_video("call.vtt", "text/vtt")
+
+
 def test_file_title_strips_paths() -> None:
     assert file_title("C:\\Users\\jane\\brief.pdf") == "brief.pdf"
     assert file_title("  ") == "Untitled document"
@@ -132,6 +147,8 @@ def test_plain_text_is_kept_verbatim_and_capped() -> None:
     assert result.text == "OBJECTIVES:\n- Ship <fast>\n\n- Cut cost\ufffd"
     huge = extract_text(DocumentKind.TRANSCRIPT, b"a" * (MAX_CHARS + 10))
     assert len(huge.text or "") == MAX_CHARS
+    from_stream = extract_text(DocumentKind.PDF, io.BytesIO(pdf_with_text("Scope")))
+    assert from_stream == Extraction(JobStatus.SUCCEEDED, "Scope")
 
 
 # --------------------------------------------------------------------------- API
@@ -283,9 +300,60 @@ def test_upload_rejects_unsupported_and_too_large_files(
     user, _, project_id = _project(documents_client, store, auth)
     sheet = _upload(documents_client, project_id, auth(user), "plan.xlsx", b"PK", "x/y")
     assert (sheet["status"], sheet["detail"]) == (415, UNSUPPORTED_DETAIL)
+    movie = _upload(documents_client, project_id, auth(user), "call.mp4", b"\x00", "video/mp4")
+    assert (movie["status"], movie["detail"]) == (415, VIDEO_DETAIL)
+    voice = _upload(documents_client, project_id, auth(user), "memo.webm", b"\x1a", "audio/webm")
+    assert (voice["status"], voice["kind"]) == (201, "audio")
     monkeypatch.setattr(documents_api, "MAX_UPLOAD_BYTES", 4)
     big = _upload(documents_client, project_id, auth(user), "notes.txt", b"12345", "text/plain")
     assert (big["status"], big["detail"]) == (413, TOO_LARGE_DETAIL)
+    missing = documents_client.post(
+        f"/api/v1/projects/{project_id}/documents",
+        files={"other": ("a.txt", b"x", "text/plain")},
+        headers=auth(user),
+    )
+    assert missing.status_code == 422
+
+
+def test_oversized_uploads_are_refused_before_they_are_read(
+    documents_client: TestClient, store: Store, auth: Auth, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, _, project_id = _project(documents_client, store, auth)
+    monkeypatch.setattr(documents_api, "MAX_UPLOAD_BYTES", 100)
+    monkeypatch.setattr(documents_api, "FORM_OVERHEAD_BYTES", 200)
+    url = f"/api/v1/projects/{project_id}/documents"
+    declared = _upload(documents_client, project_id, auth(user), "a.txt", b"x" * 400, "text/plain")
+    assert (declared["status"], declared["detail"]) == (413, TOO_LARGE_DETAIL)
+
+    boundary = "nirnain-test"
+    head = (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="a.txt"\r\n'
+        "Content-Type: text/plain\r\n\r\n"
+    ).encode()
+    chunks = [head, *([b"x" * 100] * 10), f"\r\n--{boundary}--\r\n".encode()]
+    streamed = documents_client.post(  # chunked, no Content-Length: counted as it streams in
+        url,
+        content=iter(chunks),
+        headers={**auth(user), "content-type": f"multipart/form-data; boundary={boundary}"},
+    )
+    assert (streamed.status_code, streamed.json()["detail"]) == (413, TOO_LARGE_DETAIL)
+
+
+async def test_body_counter_stops_reading_at_the_limit() -> None:
+    messages: list[Message] = [
+        {"type": "http.request", "body": b"x" * 60, "more_body": True} for _ in range(5)
+    ]
+    pulled: list[Message] = []
+
+    async def receive() -> Message:
+        pulled.append(messages[len(pulled)])
+        return pulled[-1]
+
+    receive_within_limit = documents_api._capped_receive(receive, 100)
+    assert await receive_within_limit() == messages[0]
+    with pytest.raises(ContentTooLargeError):
+        await receive_within_limit()
+    assert len(pulled) == 2  # the rest of the body is never pulled in
 
 
 def test_upload_and_delete_permissions(

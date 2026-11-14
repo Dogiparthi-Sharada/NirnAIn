@@ -3,10 +3,10 @@
 Mirrors `app.jobs.optimizer`: the API commits a queued intake run and calls
 `IntakeRunner.submit`. The run's notes (pasted text + readable uploads) are
 analyzed by Claude on a worker thread (`asyncio.to_thread` — the SDK's sync
-client blocks), or, without an API key, by the deterministic rule-based
-extractor (the run's model is then 'rules'). The outcome is written on a
-service connection, which bypasses RLS: this is a trusted system job, same
-as how optimization results are written.
+client blocks), or by the deterministic rule-based extractor when there is
+no API key or the Claude call fails (the run's model is then 'rules'). The
+outcome is written on a service connection, which bypasses RLS: this is a
+trusted system job, same as how optimization results are written.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import anthropic
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.ai.evidence import ScopeSuggestion
-from app.ai.intake import Source, fit_sources, notes_block
+from app.ai.intake import Source, fit_sources, notes_block, with_spoken_text
 from app.ai.intake_llm import (
     SYSTEM_PROMPT,
     ExtractionOutput,
@@ -91,7 +91,7 @@ class IntakeRunner:
             if claimed is None:
                 logger.info("intake run not queued; skipping", extra=log_extra)
                 return
-            sources = fit_sources(claimed.sources)
+            sources = fit_sources(await asyncio.to_thread(with_spoken_text, claimed.sources))
             if not sources:
                 await self._fail(run_id, EMPTY_ERROR)
                 return
@@ -119,22 +119,32 @@ class IntakeRunner:
         except asyncio.CancelledError:
             await self._fail(run_id, RESTART_ERROR)
             raise
-        except anthropic.APIError:
-            logger.exception("intake LLM call failed", extra=log_extra)
-            await self._fail(run_id, FAILED_ERROR)
         except Exception:
             logger.exception("intake run failed", extra=log_extra)
             await self._fail(run_id, FAILED_ERROR)
 
     async def _suggest(self, sources: Sequence[Source]) -> tuple[str, list[ScopeSuggestion], Usage]:
-        """Scope suggestions from Claude, or from the rules when no API key is set."""
+        """Scope suggestions from Claude; from the rules when no key is set or Claude fails."""
         if not self._llm.configured:
-            # Labelled fallback: the run records model 'rules' and uses no tokens.
-            suggestions = await asyncio.to_thread(extract_by_rules, sources)
-            return RULES_MODEL, suggestions, Usage(0, 0)
-        output, usage = await asyncio.to_thread(self._extract, notes_block(sources))
-        suggestions = await asyncio.to_thread(suggestions_from_model, output.items, sources)
+            return await self._suggest_by_rules(sources)
+        try:
+            output, usage = await asyncio.to_thread(self._extract, notes_block(sources))
+            suggestions = await asyncio.to_thread(suggestions_from_model, output.items, sources)
+        except (anthropic.APIError, ValueError):
+            # An API error, a refusal or an answer that fails validation
+            # (pydantic's ValidationError is a ValueError) must not lose the
+            # run: the labelled rules extractor reads the same notes instead.
+            logger.warning("intake Claude call failed; using the rules extractor", exc_info=True)
+            return await self._suggest_by_rules(sources)
         return self._llm.model, suggestions, usage
+
+    @staticmethod
+    async def _suggest_by_rules(
+        sources: Sequence[Source],
+    ) -> tuple[str, list[ScopeSuggestion], Usage]:
+        """Labelled fallback: the run records model 'rules' and uses no tokens."""
+        suggestions = await asyncio.to_thread(extract_by_rules, sources)
+        return RULES_MODEL, suggestions, Usage(0, 0)
 
     def _extract(self, notes: str) -> tuple[ExtractionOutput, Usage]:
         """One structured Claude call over the `<project_notes>` block (blocking)."""

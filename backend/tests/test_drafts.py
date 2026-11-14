@@ -13,7 +13,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
+from app.ai.documents import TOO_LARGE_DETAIL, VIDEO_DETAIL
 from app.ai.llm import LLM, Usage
+from app.api.v1 import documents as documents_api
 from app.domain.common import OrgRole
 from app.drafts import ai as draft_ai
 from app.drafts.extract_text import (
@@ -159,7 +161,13 @@ def test_extract_text_rejects_audio_and_unknown_types() -> None:
     assert audio.value.detail == AUDIO_DETAIL
     with pytest.raises(UnsupportedFileError):
         extract_text("sheet.xlsx", None, b"x")
+    with pytest.raises(UnsupportedFileError) as video:
+        extract_text("kickoff.mp4", "video/mp4", b"\x00")
+    assert video.value.detail == VIDEO_DETAIL
     assert extract_text("notes", "text/plain", "caf\xe9 notes".encode("cp1252")) == "café notes"
+    # A text file read only up to the limit can end in half a character: it is dropped.
+    cut_off = io.BytesIO("Budget 375K \u2013 final".encode()[:-7])
+    assert extract_text("notes.txt", None, cut_off) == "Budget 375K"
 
 
 # --------------------------------------------------------------------------- AI answer checks
@@ -290,6 +298,10 @@ def test_extract_from_files(draft_client: TestClient, store: Store, auth: Auth) 
         _url(org), files={"file": ("a.png", b"x", "image/png")}, headers=auth(user)
     )
     assert response.status_code == 415
+    response = draft_client.post(
+        _url(org), files={"file": ("kickoff.mov", b"\x00", "video/quicktime")}, headers=auth(user)
+    )
+    assert (response.status_code, response.json()["detail"]) == (415, VIDEO_DETAIL)
     response = draft_client.post(_url(org), files={"other": ("a.txt", b"x")}, headers=auth(user))
     assert response.status_code == 422
     response = draft_client.post(
@@ -316,3 +328,16 @@ def test_extract_uses_ai_and_falls_back_to_rules(
     response = draft_client.post(_url(org), json={"text": KICKOFF}, headers=auth(user))
     assert response.json()["model"] == "rules"
     assert response.json()["fields"]["name"]["value"] == "Enterprise Data Platform"
+
+
+def test_extract_refuses_files_over_the_limit(
+    draft_client: TestClient, store: Store, auth: Auth, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = store.add_user()
+    org = store.add_org(user)
+    monkeypatch.setattr(documents_api, "MAX_UPLOAD_BYTES", 10)
+    response = draft_client.post(
+        _url(org), files={"file": ("notes.txt", b"x" * 11, "text/plain")}, headers=auth(user)
+    )
+    assert (response.status_code, response.json()["detail"]) == (413, TOO_LARGE_DETAIL)
+    assert TOO_LARGE_DETAIL == "Files can be at most 100 MB."

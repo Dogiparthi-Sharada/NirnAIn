@@ -34,7 +34,7 @@ export function usePmOptions() {
 }
 
 /**
- * Files picked on the manual form before the project exists. They are checked on pick (type, 50 MB)
+ * Files picked on the manual form before the project exists. They are checked on pick (type, 100 MB)
  * and uploaded as project documents right after the project is created (`uploadTo`).
  */
 export function usePendingUploads() {
