@@ -3,6 +3,7 @@
 The repository gathers plain facts (`OverviewFacts`) under the caller's RLS session;
 `build_overview` turns them into what the dashboard shows. Nothing is invented: values
 that are not tracked stay null and the client labels them ("Not tracked yet").
+Milestone status comes from each milestone's own work (`overview_milestones.py`).
 """
 
 from __future__ import annotations
@@ -17,11 +18,16 @@ from pydantic import ValidationError
 from app.domain.common import CamelModel, ConstraintMode, ProjectStatus, ScopeStatus
 from app.domain.notifications import Notification
 from app.domain.optimization import RunKpi
+from app.domain.overview_milestones import (
+    MilestoneFact,
+    MilestoneSummary,
+    milestone_summary,
+    planned_finishes,
+)
 from app.domain.projects import Project
 
 PolicyKey = Literal["budget", "deadline", "capacity", "skills"]
 StepKey = Literal["intake", "scope", "wbs", "constraints", "optimization", "changes"]
-MilestoneStatus = Literal["On track", "At risk", "Not planned yet"]
 RiskLevel = Literal["High", "Medium"]
 FindingSource = Literal["wbs_validate", "optimization"]
 
@@ -48,12 +54,6 @@ class PolicyFacts:
     skill_mode: ConstraintMode = ConstraintMode.HARD
     deadline_answer: str | None = None
     specialist_answer: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class MilestoneFact:
-    name: str
-    due_date: date
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,17 +129,6 @@ class ConstraintChoice(CamelModel):
     name: str
     mode: ConstraintMode
     label: str
-
-
-class NextMilestone(CamelModel):
-    name: str
-    due_date: date
-    status: MilestoneStatus
-
-
-class MilestoneSummary(CamelModel):
-    total: int
-    next: NextMilestone | None
 
 
 class OverviewRisk(CamelModel):
@@ -244,24 +233,6 @@ def constraint_choices(policy: PolicyFacts | None) -> list[ConstraintChoice]:
         ConstraintChoice(key=key, name=POLICY_NAMES[key], mode=mode, label=POLICY_LABELS[mode])
         for key, mode in modes.items()
     ]
-
-
-def milestone_summary(
-    milestones: list[MilestoneFact], completion: date | None, today: date
-) -> MilestoneSummary:
-    upcoming = sorted((m for m in milestones if m.due_date >= today), key=lambda m: m.due_date)
-    if not upcoming:
-        return MilestoneSummary(total=len(milestones), next=None)
-    first = upcoming[0]
-    status: MilestoneStatus
-    if completion is None:
-        status = "Not planned yet"
-    else:
-        status = "On track" if completion <= first.due_date else "At risk"
-    return MilestoneSummary(
-        total=len(milestones),
-        next=NextMilestone(name=first.name, due_date=first.due_date, status=status),
-    )
 
 
 def plan_risks(run: AppliedRunFacts | None) -> list[OverviewRisk]:
@@ -375,7 +346,12 @@ def build_overview(facts: OverviewFacts, today: date) -> ProjectOverview:
         applied_version=run.version if run else None,
         plan=plan,
         constraint_choices=constraint_choices(facts.policy),
-        milestones=milestone_summary(facts.milestones, run.completion_date if run else None, today),
+        milestones=milestone_summary(
+            facts.milestones,
+            run.completion_date if run else None,
+            planned_finishes(run.result if run else None),
+            today,
+        ),
         risks=plan_risks(run) + scope_risks(facts.scope_risks),
         notifications=facts.notifications,
         notification_total=max(facts.notification_total, len(facts.notifications)),

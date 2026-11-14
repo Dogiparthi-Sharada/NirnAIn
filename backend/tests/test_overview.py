@@ -16,20 +16,22 @@ from app.domain.common import ConstraintMode, NotificationLevel, ScopeStatus
 from app.domain.notifications import Notification
 from app.domain.overview import (
     AppliedRunFacts,
-    MilestoneFact,
     OverviewFacts,
     PolicyFacts,
     ProgressFacts,
     ScopeRisk,
     build_overview,
     constraint_choices,
-    milestone_summary,
     next_step,
     peak_utilization,
     soft_violations,
 )
+from app.domain.overview_milestones import MilestoneFact, milestone_summary, planned_finishes
 from app.domain.projects import Project
+from app.repositories.overview import OverviewRepository
 from tests.conftest import Store
+from tests.test_optimization_repo import Rows
+from tests.test_repositories import Conn
 
 TODAY = date(2026, 3, 2)
 RESULT: dict[str, Any] = {
@@ -88,19 +90,79 @@ def test_constraint_choices_deadline_follows_the_answer() -> None:
     assert constraint_choices(PolicyFacts(deadline_answer="unknown"))[1].mode == "hard"
 
 
-def test_milestone_status_compares_with_the_plan_completion() -> None:
+def test_a_milestone_without_a_wbs_node_compares_with_the_plan_completion() -> None:
     ms = [
         MilestoneFact("Kickoff", date(2026, 2, 1)),
         MilestoneFact("Phase 2", date(2026, 9, 30)),
         MilestoneFact("Phase 1", date(2026, 4, 15)),
     ]
-    unplanned = milestone_summary(ms, None, TODAY)
+    unplanned = milestone_summary(ms, None, {}, TODAY)
     assert unplanned.total == 3
     assert unplanned.next is not None
     assert (unplanned.next.name, unplanned.next.status) == ("Phase 1", "Not planned yet")
-    assert milestone_summary(ms, date(2026, 4, 15), TODAY).next.status == "On track"  # type: ignore[union-attr]
-    assert milestone_summary(ms, date(2026, 5, 1), TODAY).next.status == "At risk"  # type: ignore[union-attr]
-    assert milestone_summary(ms[:1], None, TODAY).next is None
+    assert milestone_summary(ms, date(2026, 4, 15), {}, TODAY).next.status == "On track"  # type: ignore[union-attr]
+    assert milestone_summary(ms, date(2026, 5, 1), {}, TODAY).next.status == "At risk"  # type: ignore[union-attr]
+    assert milestone_summary(ms[:1], None, {}, TODAY).next is None
+
+
+def _schedule(*ends: tuple[str, str]) -> dict[str, Any]:
+    return {"schedule": [{"wbsNodeId": node_id, "end": end} for node_id, end in ends]}
+
+
+def test_a_milestone_is_judged_by_its_own_packages_not_the_project_finish() -> None:
+    """QA pack VIEW-001: MS1 'Ingestion (W01-W03)' is due Apr 30, 2027; Plan v1 finishes
+    W01-W03 by Feb 26 and the whole project on Jun 23. MS1 is on track."""
+    ms1 = MilestoneFact("MS1 Ingestion (W01-W03)", date(2027, 4, 30), frozenset({"d1", "w1", "w3"}))
+    plan_v1 = _schedule(("w1", "2027-01-29"), ("w3", "2027-02-26"), ("w9", "2027-06-23"))
+    finishes = planned_finishes(plan_v1)
+    summary = milestone_summary([ms1], date(2027, 6, 23), finishes, date(2026, 11, 14))
+    assert summary.next is not None
+    assert summary.next.status == "On track"
+    # One of its own packages after its date puts it at risk, however early the rest is.
+    late = planned_finishes(_schedule(("w1", "2027-01-29"), ("w3", "2027-05-03")))
+    assert milestone_summary([ms1], date(2027, 5, 3), late, TODAY).next.status == "At risk"  # type: ignore[union-attr]
+    # A plan that schedules none of its packages hasn't planned it.
+    other = planned_finishes(_schedule(("w9", "2027-06-23"), ("bad", "not a date")))
+    assert other == {"w9": date(2027, 6, 23)}
+    assert milestone_summary([ms1], date(2027, 6, 23), other, TODAY).next.status == (  # type: ignore[union-attr]
+        "Not planned yet"
+    )
+    applied = build_overview(
+        OverviewFacts(
+            project=_project(Store(), uuid.uuid4()),
+            milestones=[ms1],
+            applied_run=_run(plan_v1, completion=date(2027, 6, 23)),
+        ),
+        date(2026, 11, 14),
+    )
+    assert applied.milestones.next is not None
+    assert applied.milestones.next.status == "On track"
+
+
+async def test_milestones_cover_their_wbs_node_and_everything_under_it() -> None:
+    root, deliverable, w1, w2, other = (uuid.uuid4() for _ in range(5))
+    conn = Conn(
+        Rows(
+            [
+                {"name": "MS1", "due_date": date(2027, 4, 30), "wbs_node_id": deliverable},
+                {"name": "Go-live", "due_date": date(2027, 7, 30), "wbs_node_id": None},
+            ]
+        ),
+        Rows(
+            [
+                {"id": root, "parent_id": None},
+                {"id": deliverable, "parent_id": root},
+                {"id": w1, "parent_id": deliverable},
+                {"id": w2, "parent_id": deliverable},
+                {"id": other, "parent_id": root},
+            ]
+        ),
+    )
+    found = await OverviewRepository(conn)._milestones(uuid.uuid4())  # type: ignore[arg-type]
+    assert found == [
+        MilestoneFact("MS1", date(2027, 4, 30), frozenset({str(deliverable), str(w1), str(w2)})),
+        MilestoneFact("Go-live", date(2027, 7, 30)),
+    ]
 
 
 def test_next_step_follows_the_workflow() -> None:
