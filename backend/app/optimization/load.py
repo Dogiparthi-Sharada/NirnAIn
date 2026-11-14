@@ -43,6 +43,11 @@ def daily_capacity_tenths(weekly_hours: float, per_week: int) -> int:
     return round(weekly_hours * TENTHS / per_week)
 
 
+def flex_capacity_tenths(capacity_tenths: int) -> int:
+    """Daily load allowed under "Can flex": up to 25% over contracted hours (round-2 D2)."""
+    return capacity_tenths + capacity_tenths // 4
+
+
 @dataclass(frozen=True, slots=True)
 class Mode:
     """How long a task takes with one candidate, and the load it puts on them per day."""

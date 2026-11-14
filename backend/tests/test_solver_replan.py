@@ -14,7 +14,7 @@ from datetime import date
 from app.optimization.explain import build_report
 from app.optimization.inputs import inputs_hash
 from app.optimization.model import PlanningInput
-from app.optimization.overrides import apply_overrides, with_applied_dates
+from app.optimization.overrides import apply_overrides, with_plan_in_force
 from app.optimization.solver import solve
 from tests.test_optimization_solver import FAST, MONDAY, make_input
 
@@ -23,9 +23,10 @@ TODAY = date(2026, 10, 21)  # a Wednesday: working day 12 of a project started M
 
 def _replan(**overrides: object) -> PlanningInput:
     """Design (5 d) then Build (10 d), both Mark's; the plan in force had them back to back."""
-    applied = with_applied_dates(
+    applied = with_plan_in_force(
         dataclasses.replace(make_input(), today=TODAY),
         {"a": (MONDAY, date(2026, 10, 9)), "b": (date(2026, 10, 12), date(2026, 10, 23))},
+        None,
     )
     return apply_overrides(applied, overrides)
 

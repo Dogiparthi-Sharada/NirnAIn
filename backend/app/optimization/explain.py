@@ -31,6 +31,7 @@ from app.optimization.model import (
     qualified,
 )
 from app.optimization.report_context import ReportContext, critical_chain, planned_days
+from app.optimization.resources import CONTRACTOR_ID
 from app.optimization.run_summary import run_summary, timeline
 
 
@@ -328,7 +329,8 @@ def build_report(inp: PlanningInput, outcome: SolveOutcome) -> Report:
                     None,
                     None,
                     resource.name,
-                    f"Skill gap: about {hours:g} hours, est. "
+                    f"{'Late work' if resource.id == CONTRACTOR_ID else 'Skill gap'}: "
+                    f"about {hours:g} hours, est. "
                     f"{fmt.money(round(hours * resource.rate_cents))}",
                     len(recs),
                 )

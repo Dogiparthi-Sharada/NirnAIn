@@ -30,8 +30,8 @@ from app.optimization.model import (
     SkillRequirement,
     SnapshotError,
     Task,
-    build_resources,
 )
+from app.optimization.resources import build_resources
 from app.optimization.solver import (
     SOLVER_NAME,
     SolveControl,
@@ -174,16 +174,22 @@ def test_snapshot_sanitises_penalties() -> None:
 
 
 # --------------------------------------------------------------------------- resources
-def test_contractors_only_for_unstaffable_skills() -> None:
+def test_contractors_only_for_unstaffable_skills_unless_any_work() -> None:
     task = Task("x", "1.2", "SAP Integration", 5, skills=(SkillRequirement("abap", "ABAP", 3),))
     inp = make_input(tasks=(task,))
     assert len(build_resources(inp)) == 2  # no contractor rate
     inp = with_constraints(inp, contractor_rate_cents=20_000)
     contractor = build_resources(inp)[-1]
-    assert contractor.kind == "contractor"
-    assert contractor.name == "Contractor: ABAP specialist"
+    assert (contractor.id, contractor.name, contractor.kind) == (
+        "contractor:abap",
+        "Contractor: ABAP specialist",
+        "contractor",
+    )
     assert contractor.rate_cents == 20_000
     assert len(build_resources(with_constraints(inp, allow_contractors=False))) == 2
+    # "Bring in a contractor" (D2) adds one generic contractor for the other work.
+    generic = build_resources(with_constraints(inp, contractor_any_work=True))[-1]
+    assert (generic.id, generic.name) == ("contractor", "Contractor")
 
 
 def test_unknown_rate_uses_the_default_rate() -> None:

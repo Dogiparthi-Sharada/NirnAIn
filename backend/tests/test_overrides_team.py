@@ -25,9 +25,9 @@ from app.optimization.model import (
     PlanningInput,
     SkillRequirement,
     Task,
-    build_resources,
 )
 from app.optimization.overrides import NEW_MEMBER_PROFICIENCY, apply_overrides
+from app.optimization.resources import build_resources
 from app.optimization.solver import SolveOptions, solve
 
 MONDAY = date(2026, 10, 5)

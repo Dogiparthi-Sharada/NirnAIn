@@ -1,9 +1,10 @@
 """Optimization run schemas: the stored result, the run request and the inputs sheet.
 
 `RunResult` mirrors `optimization_runs.result` as written by
-`app/optimization/explain.py` (and, for infeasible runs, the priced
-remedies). `RunCreate` is the optional body of `POST …/optimization/runs`;
-it is stored as the run's `options`. `OptimizationInputs` is the
+`app/optimization/explain.py` (plus the priced remedies when the run is
+infeasible or finishes after its target date). `RunCreate` is the
+optional body of `POST …/optimization/runs`; it is stored as the run's
+`options`. `OptimizationInputs` is the
 confirmation sheet ("Check the inputs the solver will use").
 """
 
@@ -18,7 +19,7 @@ from pydantic import Field
 from app.domain.changes import MAX_NEW_MEMBERS, AddedMember
 from app.domain.common import CamelModel, InputModel, SolverStatus
 
-RemedyId = Literal["specialist", "move_deadline"]
+RemedyId = Literal["specialist", "overtime", "move_deadline"]
 InputSource = Literal["stated", "confirmed", "needs_you", "default", "assumed", "yours"]
 
 
@@ -92,6 +93,10 @@ class RunSummary(CamelModel):
     deadline: date | None
     deadline_mode: str
     days_late: int
+    # The date this plan tries to keep (the plan in force's completion for a re-plan,
+    # else the deadline) and the working days it finishes after it (0 = on time).
+    target_date: date | None = None
+    slip_days: int = 0
     cost_cents: int
     budget_cents: int | None
     peak_utilization: PeakUtilization | None
@@ -100,7 +105,12 @@ class RunSummary(CamelModel):
 
 
 class Remedy(CamelModel):
-    """A priced way out of an infeasible run ("What it would take")."""
+    """A priced way to keep the target date, or out of an infeasible run.
+
+    `costCents` is the extra cost against this run's plan (0 for move_deadline
+    when the plan slips); for an infeasible run, with no plan to compare with,
+    it is the whole relaxed plan's cost.
+    """
 
     id: RemedyId
     title: str

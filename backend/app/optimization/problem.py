@@ -23,6 +23,7 @@ from app.optimization.load import (
     Mode,
     allocation_blocks,
     daily_capacity_tenths,
+    flex_capacity_tenths,
     task_mode,
 )
 from app.optimization.model import (
@@ -32,9 +33,10 @@ from app.optimization.model import (
     Resource,
     ScheduledTask,
     Task,
-    build_resources,
     qualified,
+    target_of,
 )
+from app.optimization.resources import build_resources, candidates_for
 
 
 @dataclass(slots=True)
@@ -53,8 +55,11 @@ class Problem:
     blocks: dict[str, list[Block]]
     candidates: dict[str, list[Resource]]  # everyone who may ever take the task
     modes: dict[tuple[str, str], Mode]  # (task id, resource id) -> duration and daily load
+    # The same at up to 25% over the person's hours, for "Can flex" (employees only).
+    flex_modes: dict[tuple[str, str], Mode]
     cost: dict[tuple[str, str], int]  # (task id, resource id) -> cents
     deadline: int | None  # max exclusive end index
+    target: int | None  # exclusive end index of the date to keep (`model.target_of`)
     milestone_ends: dict[str, int] = field(default_factory=dict)
 
     def finish_date(self, end: int) -> date:
@@ -80,26 +85,24 @@ def prepare(inp: PlanningInput) -> Problem:
     baseline = baseline_plan(inp)
     release = planning_start(inp)
     work = [task for task in inp.tasks if not task.done]
+    target = target_of(inp)
     capacity = {
         resource.id: daily_capacity_tenths(resource.weekly_capacity_hours, per_week)
         for resource in resources
         if resource.kind == "employee"
     }
-    # Every employee may be considered (skills are checked by the model); contractor
-    # profiles only for the tasks whose skills they were created for.
-    candidates = {
-        task.id: [
-            resource
-            for resource in resources
-            if resource.kind == "employee" or qualified(resource, task)
-        ]
-        for task in work
-    }
+    candidates = candidates_for(work, resources)
     # Contractor profiles have no capacity entry, so they keep the WBS duration.
     modes = {
         (task.id, resource.id): task_mode(task, capacity.get(resource.id))
         for task in work
         for resource in candidates[task.id]
+    }
+    flex_modes = {
+        (task.id, resource.id): task_mode(task, flex_capacity_tenths(capacity[resource.id]))
+        for task in work
+        for resource in candidates[task.id]
+        if resource.id in capacity
     }
     # With each task at its longest candidate duration a serial schedule always fits.
     longest = sum(
@@ -129,6 +132,7 @@ def prepare(inp: PlanningInput) -> Problem:
         blocks=blocks,
         candidates=candidates,
         modes=modes,
+        flex_modes=flex_modes,
         cost={
             (task.id, resource.id): round(task.hours * resource.rate_cents)
             for task in work
@@ -139,6 +143,7 @@ def prepare(inp: PlanningInput) -> Problem:
             if constraints.must_finish_by is not None
             else None
         ),
+        target=None if target is None else workdays_through(inp.start_date, target, per_week),
         milestone_ends={
             milestone.id: workdays_through(inp.start_date, milestone.due_date, per_week)
             for milestone in inp.milestones

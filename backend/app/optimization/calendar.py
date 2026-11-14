@@ -42,6 +42,12 @@ def workdays_through(start: date, until: date, per_week: int) -> int:
     return weeks * per_week + min(until.weekday() + 1, per_week) - first.weekday()
 
 
+def workdays_late(start: date, due: date, finish: date, per_week: int) -> int:
+    """Working days `finish` falls after `due` (0 when it is on or before it)."""
+    late = workdays_through(start, finish, per_week) - workdays_through(start, due, per_week)
+    return max(0, late)
+
+
 def week_index(start: date, d: date) -> int:
     """0-based calendar week of `d`, counting from the week containing the start."""
     return (_monday(d) - _monday(start)).days // 7

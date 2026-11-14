@@ -50,7 +50,7 @@ def _with_duration(task: Task, days: int) -> Task:
 def _newcomer(entry: Mapping[str, Any], skill_ids: Mapping[str, str]) -> Employee:
     """A person joining the project as a resource. Skills are matched to the work
     packages' required skills by name; a missing rate stays null, so the optimizer prices
-    them by `model.planned_rate_cents` (the standard rate for an employee)."""
+    them by `resources.planned_rate_cents` (the standard rate for an employee)."""
     rate = entry.get("hourlyRateCents")
     return Employee(
         id=str(entry["employeeId"]),
@@ -148,13 +148,16 @@ def with_baseline(inp: PlanningInput, owners: Mapping[str, str]) -> PlanningInpu
     return replace(inp, tasks=tasks)
 
 
-def with_applied_dates(inp: PlanningInput, dates: Mapping[str, tuple[date, date]]) -> PlanningInput:
-    """Remember each work package's dates in the plan in force (WBS node id -> first and
-    last day), so work that is done stays where it happened."""
+def with_plan_in_force(
+    inp: PlanningInput, dates: Mapping[str, tuple[date, date]], completion: date | None
+) -> PlanningInput:
+    """Remember the plan in force: each work package's dates (WBS node id -> first and
+    last day), so finished work stays where it happened, and its completion date,
+    the target a re-plan tries to keep (round-2 D2)."""
     tasks = tuple(
         replace(task, applied_start=dates[task.id][0], applied_end=dates[task.id][1])
         if task.id in dates
         else task
         for task in inp.tasks
     )
-    return replace(inp, tasks=tasks)
+    return replace(inp, tasks=tasks, target_date=completion or inp.target_date)

@@ -18,8 +18,8 @@ from app.optimization.model import (
     Constraints,
     Employee,
     Task,
-    build_resources,
 )
+from app.optimization.resources import build_resources
 from app.optimization.solver import solve
 from tests.test_optimization_solver import FAST, make_input
 

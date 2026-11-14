@@ -521,16 +521,39 @@ def test_done_work_package_replans_from_the_plan_in_force(
         "start": "2026-10-05",
         "end": "2026-10-09",
     }
-    run_store.runs[uuid.UUID(applied)].update(status="optimal", result={"schedule": [schedule]})
-    body = {"overrides": {"durationDays": {str(task_id): 0}}, "baselineRunId": applied}
+    summary = {
+        "startDate": "2026-10-05",
+        "completionDate": "2026-10-09",
+        "deadline": None,
+        "deadlineMode": "hard",
+        "daysLate": 0,
+        "costCents": 0,
+        "budgetCents": None,
+        "peakUtilization": None,
+        "specialists": [],
+        "softViolations": [],
+    }
+    run_store.runs[uuid.UUID(applied)].update(
+        status="optimal", result={"schedule": [schedule], "summary": summary}
+    )
+    body = {
+        "overrides": {"durationDays": {str(task_id): 0}},
+        "baselineRunId": applied,
+        "remedy": "overtime",
+    }
     response = opt_client.post(_url(pid), json=body, headers=auth(user))
     assert response.status_code == 202, response.text
-    (task,) = run_store.runs[uuid.UUID(response.json()["id"])]["snapshot"]["tasks"]
+    snapshot = run_store.runs[uuid.UUID(response.json()["id"])]["snapshot"]
+    (task,) = snapshot["tasks"]
     assert (task["done"], task["applied_start"], task["applied_end"]) == (
         True,
         "2026-10-05",
         "2026-10-09",
     )
+    # The re-plan keeps the plan in force's date; the overtime option tries hard to.
+    assert snapshot["target_date"] == "2026-10-09"
+    assert snapshot["constraints"]["capacity_mode"] == "soft"
+    assert snapshot["constraints"]["target_penalty_per_day"] > 0
 
 
 def test_run_records_the_inputs_sheet_hash(

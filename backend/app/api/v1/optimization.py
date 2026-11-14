@@ -24,7 +24,7 @@ from app.jobs.optimizer import RESTART_ERROR
 from app.optimization.input_sheet import Blocker, Sheet, blocking_detail, build_sheet
 from app.optimization.inputs import inputs_hash
 from app.optimization.model import PlanningInput
-from app.optimization.overrides import apply_overrides, with_applied_dates, with_baseline
+from app.optimization.overrides import apply_overrides, with_baseline, with_plan_in_force
 from app.optimization.remedies import apply_remedy
 from app.repositories.optimization import ActiveRunExistsError, ProjectContext
 
@@ -44,14 +44,16 @@ async def _project(runs: OptimizationRuns, project_id: uuid.UUID) -> ProjectCont
     return project
 
 
-async def _applied_dates(
+async def _plan_in_force(
     runs: OptimizationRuns, project_id: uuid.UUID, run_id: uuid.UUID
-) -> dict[str, tuple[date, date]]:
-    """WBS node id -> first and last day of each work package in an earlier run's plan."""
+) -> tuple[dict[str, tuple[date, date]], date | None]:
+    """An earlier run's plan: each work package's first and last day, and its completion."""
     run = await runs.get(project_id, run_id)
     if run is None or run.result is None:
-        return {}
-    return {item.wbs_node_id: (item.start, item.end) for item in run.result.schedule}
+        return {}, None
+    dates = {item.wbs_node_id: (item.start, item.end) for item in run.result.schedule}
+    summary = run.result.summary
+    return dates, summary.completion_date if summary is not None else None
 
 
 async def _sheet(runs: OptimizationRuns, project: ProjectContext) -> tuple[PlanningInput, Sheet]:
@@ -133,7 +135,7 @@ async def create_run(
         if owners is None:
             raise NotFoundError("Baseline run not found")
         inp = with_baseline(inp, owners)
-        inp = with_applied_dates(inp, await _applied_dates(runs, project_id, body.baseline_run_id))
+        inp = with_plan_in_force(inp, *await _plan_in_force(runs, project_id, body.baseline_run_id))
 
     # The body exactly as sent (camelCase, ids and dates as strings): the run's setup.
     options = body.model_dump(mode="json", by_alias=True, exclude_none=True)

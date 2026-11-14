@@ -2,10 +2,11 @@
 
 `explain.build_report` adds these to `optimization_runs.result` as
 `schedule` (one row per work package, for the Gantt grouped by deliverable)
-and `summary` (completion, cost, deadline, specialists and the soft
-constraints the plan bends). The Optimization Results screen builds its
-headline and advice from them, so everything here is a fact read off the
-plan: nothing is estimated or invented.
+and `summary` (completion, cost, deadline, the target date and the slip
+after it, specialists and the soft constraints the plan bends). The
+Optimization Results screen builds its headline and advice from them, so
+everything here is a fact read off the plan: nothing is estimated or
+invented.
 """
 
 from __future__ import annotations
@@ -14,8 +15,8 @@ from datetime import date
 from typing import TYPE_CHECKING, Any
 
 from app.optimization import formatting as fmt
-from app.optimization.calendar import workdays_through
-from app.optimization.model import Task, qualified
+from app.optimization.calendar import workdays_late, workdays_through
+from app.optimization.model import Task, qualified, target_of
 
 if TYPE_CHECKING:
     from app.optimization.report_context import ReportContext
@@ -125,12 +126,19 @@ def run_summary(
         else constraints.labor_cap_cents
     )
     deadline = constraints.must_finish_by
+    target = target_of(ctx.inp)
     return {
         "startDate": ctx.date_of(0).isoformat(),
         "completionDate": finish.isoformat(),
         "deadline": deadline.isoformat() if deadline else None,
         "deadlineMode": constraints.deadline_mode,
         "daysLate": max(0, (finish - deadline).days) if deadline is not None else 0,
+        # The date to keep (the plan in force's completion for a re-plan, else the
+        # deadline) and how many working days this plan finishes after it (D2).
+        "targetDate": target.isoformat() if target else None,
+        "slipDays": (
+            workdays_late(ctx.inp.start_date, target, finish, ctx.per_week) if target else 0
+        ),
         "costCents": cost,
         "budgetCents": budget,
         "peakUtilization": (

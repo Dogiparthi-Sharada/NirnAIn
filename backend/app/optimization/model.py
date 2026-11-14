@@ -27,10 +27,6 @@ DEFAULT_HOURS_PER_DAY = 8.0
 # they would make every budget meaningless and attract all the work. The
 # confirmation sheet lists who is planned at this default.
 DEFAULT_HOURLY_RATE_CENTS = 8_500
-# Overtime is billed at 1.5x an employee's cost and at a contractor's own rate (D1).
-EMPLOYEE_OVERTIME_MULTIPLIER = 1.5
-CONTRACTOR_WEEKLY_HOURS = 40.0
-MAX_PROFICIENCY = 5
 
 
 class SnapshotError(ValueError):
@@ -128,6 +124,13 @@ class Constraints:
     skill_mode: ConstraintMode = "hard"
     allow_contractors: bool = True
     contractor_rate_cents: int | None = None
+    # The "Bring in a contractor" option (round-2 D2): a contractor may also take work
+    # the team is qualified for, not only skills nobody on the team has
+    # (`resources.build_resources`).
+    contractor_any_work: bool = False
+    # Objective cost per working day the plan finishes after its target date (0 = off).
+    # Set by the remedies that try to keep the date (round-2 D2).
+    target_penalty_per_day: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +149,9 @@ class PlanningInput:
     # The day the plan is made: unfinished work never starts before it (None: no anchor,
     # the plan may start on the start date even if that has passed).
     today: date | None = None
+    # The date a re-plan tries to keep: the plan in force's completion (None: the
+    # must-finish-by date; see `target_of`).
+    target_date: date | None = None
 
     # ------------------------------------------------------------------ snapshot
     def to_snapshot(self) -> dict[str, Any]:
@@ -157,6 +163,7 @@ class PlanningInput:
             "project_name": self.project_name,
             "start_date": self.start_date.isoformat(),
             "today": _iso(self.today),
+            "target_date": _iso(self.target_date),
             "tasks": [
                 {
                     "id": task.id,
@@ -213,6 +220,8 @@ class PlanningInput:
                 "skill_mode": constraints.skill_mode,
                 "allow_contractors": constraints.allow_contractors,
                 "contractor_rate_cents": constraints.contractor_rate_cents,
+                "contractor_any_work": constraints.contractor_any_work,
+                "target_penalty_per_day": constraints.target_penalty_per_day,
             },
             "milestones": [
                 {
@@ -313,6 +322,8 @@ def _parse_snapshot(data: Mapping[str, Any]) -> PlanningInput:
         skill_mode=_mode(stored.get("skill_mode", "hard")),
         allow_contractors=bool(stored.get("allow_contractors", True)),
         contractor_rate_cents=_opt_int(stored.get("contractor_rate_cents")),
+        contractor_any_work=bool(stored.get("contractor_any_work", False)),
+        target_penalty_per_day=_penalty(stored.get("target_penalty_per_day"), 0.0),
     )
     tasks = tuple(_parse_task(entry) for entry in data["tasks"])
     if any(task.duration_days <= 0 for task in tasks):
@@ -373,16 +384,23 @@ def _parse_snapshot(data: Mapping[str, Any]) -> PlanningInput:
             str(code): str(name) for code, name in (data.get("deliverables") or {}).items()
         },
         today=_opt_date(data.get("today")),
+        target_date=_opt_date(data.get("target_date")),
     )
+
+
+def target_of(inp: PlanningInput) -> date | None:
+    """The date a plan tries to keep: the plan in force's completion for a re-plan,
+    else the must-finish-by date (round-2 D2)."""
+    return inp.target_date or inp.constraints.must_finish_by
 
 
 # --------------------------------------------------------------------------- resources
 @dataclass(frozen=True, slots=True)
 class Resource:
-    """Something a task can be assigned to: an employee or a generic contractor profile.
+    """Something a task can be assigned to: a team member or a contractor profile.
 
-    A contractor resource stands for "as many specialists of this profile as
-    needed", so it has no capacity limit.
+    A contractor resource stands for "as many people of this profile as
+    needed", so it has no capacity limit (`resources.build_resources`).
     """
 
     id: str
@@ -405,78 +423,6 @@ class Resource:
 
 def qualified(resource: Resource, task: Task) -> bool:
     return resource.skill_gap(task) == 0
-
-
-def planned_rate_cents(employee: Employee, contractor_rate_cents: int | None = None) -> int:
-    """The hourly rate the optimizer plans this person at.
-
-    Their own rate (an employee's company rate, a contractor's contracted one);
-    else, for a contractor, the project's contractor rate; else the standard rate.
-    """
-    if employee.hourly_rate_cents is not None:
-        return employee.hourly_rate_cents
-    if employee.is_contractor and contractor_rate_cents is not None:
-        return contractor_rate_cents
-    return DEFAULT_HOURLY_RATE_CENTS
-
-
-def overtime_rate_cents(employee: Employee, rate_cents: int) -> int:
-    """What an hour above their capacity costs: 1.5x for employees, the rate for contractors."""
-    if employee.is_contractor:
-        return rate_cents
-    return round(rate_cents * EMPLOYEE_OVERTIME_MULTIPLIER)
-
-
-def build_resources(inp: PlanningInput) -> tuple[Resource, ...]:
-    """Employees, plus one contractor profile per group of tasks nobody can staff.
-
-    Contractors are added only when `allow_contractors` is on, a contractor
-    rate is set, and some task has no fully qualified employee. Tasks are
-    grouped by the set of skills they need; each group gets one profile with
-    proficiency 5 in those skills. Team members are priced by
-    `planned_rate_cents` and `overtime_rate_cents`.
-    """
-    constraints = inp.constraints
-    resources: list[Resource] = []
-    for employee in inp.employees:
-        rate = planned_rate_cents(employee, constraints.contractor_rate_cents)
-        resources.append(
-            Resource(
-                id=employee.id,
-                name=employee.name,
-                kind="employee",
-                weekly_capacity_hours=employee.weekly_capacity_hours,
-                rate_cents=rate,
-                skills=dict(employee.skills),
-                employee_id=employee.id,
-                overtime_rate_cents=overtime_rate_cents(employee, rate),
-            )
-        )
-    if not constraints.allow_contractors or constraints.contractor_rate_cents is None:
-        return tuple(resources)
-
-    groups: dict[tuple[str, ...], dict[str, str]] = {}
-    for task in inp.tasks:
-        if not task.skills or any(qualified(resource, task) for resource in resources):
-            continue
-        key = tuple(sorted(requirement.skill_id for requirement in task.skills))
-        names = groups.setdefault(key, {})
-        for requirement in task.skills:
-            names[requirement.skill_id] = requirement.skill_name
-    for key, names in groups.items():
-        label = " / ".join(names[skill_id] for skill_id in key)
-        resources.append(
-            Resource(
-                id="contractor:" + "+".join(key),
-                name=f"Contractor: {label} specialist",
-                kind="contractor",
-                weekly_capacity_hours=CONTRACTOR_WEEKLY_HOURS,
-                rate_cents=constraints.contractor_rate_cents,
-                skills=dict.fromkeys(key, MAX_PROFICIENCY),
-                overtime_rate_cents=constraints.contractor_rate_cents,
-            )
-        )
-    return tuple(resources)
 
 
 # --------------------------------------------------------------------------- output

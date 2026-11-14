@@ -18,8 +18,8 @@ from app.optimization.model import (
     SkillRequirement,
     SolveOutcome,
     Task,
-    build_resources,
 )
+from app.optimization.resources import build_resources
 from app.optimization.solver import solve
 from tests.test_optimization_solver import FAST, MONDAY, SAP, make_input, with_constraints
 
@@ -192,13 +192,13 @@ def test_contractor_hire_recommendation() -> None:
     result = report.result
     assert result is not None
     assert result["reassignments"][0]["current"] == "Unassigned"
-    assert result["reassignments"][0]["recommended"].startswith("Contractor: SAP specialist")
+    assert result["reassignments"][0]["recommended"] == "Contractor: SAP specialist (40h/wk)"
     assert result["reassignments"][0]["reason"] == "Skill gap"
-    util = {u["name"]: u for u in result["utilization"]}
+    util = {row["name"]: row for row in result["utilization"]}
     assert util["Contractor: SAP specialist"]["before"] == 0
-    hire = [r for r in report.recommendations if r.type == "hire"]
+    hire = [rec for rec in report.recommendations if rec.type == "hire"]
     assert hire[0].after_value == "Contractor: SAP specialist"
-    assert "$6,000" in hire[0].reason
+    assert hire[0].reason == "Skill gap: about 40 hours, est. $6,000"
     row = report.assignments[0]
     assert row.employee_id is None
     assert row.contractor_label == "Contractor: SAP specialist"
