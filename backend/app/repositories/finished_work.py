@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from datetime import date
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, distinct_on
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.repositories.tables import optimization_runs
@@ -47,7 +47,7 @@ async def finished_work(
             sa.func.jsonb_typeof(runs.c.result["schedule"]) == "array",
             node_id.in_([str(candidate) for candidate in candidates]),
         )
-        .distinct(node_id)
+        .ext(distinct_on(node_id))
         .order_by(node_id, runs.c.applied_at.desc())
     )
     return {
