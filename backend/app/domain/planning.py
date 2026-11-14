@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import math
 import uuid
-from collections.abc import Mapping
+from collections import defaultdict, deque
+from collections.abc import Iterable, Mapping
 from datetime import date, timedelta
 from typing import Annotated, Any, Literal
 
@@ -240,3 +241,33 @@ def skill_coverage(
     ]
     out.sort(key=lambda c: (not c.required, c.name.casefold(), str(c.skill_id)))
     return out
+
+
+def cycle_path(
+    links: Iterable[tuple[uuid.UUID, uuid.UUID]], predecessor: uuid.UUID, successor: uuid.UUID
+) -> list[uuid.UUID] | None:
+    """The cycle a new link `predecessor` → `successor` would close, as nodes from the
+    predecessor back to it ([W05, W01, W05]); None when the link closes none.
+
+    `links` are the existing (predecessor, successor) pairs. Breadth-first, so the cycle
+    named is a shortest one.
+    """
+    following: dict[uuid.UUID, list[uuid.UUID]] = defaultdict(list)
+    for before, after in links:
+        following[before].append(after)
+    reached_from: dict[uuid.UUID, uuid.UUID | None] = {successor: None}
+    queue = deque([successor])
+    while queue:
+        current = queue.popleft()
+        if current == predecessor:
+            path: list[uuid.UUID] = []
+            step: uuid.UUID | None = current
+            while step is not None:
+                path.append(step)
+                step = reached_from[step]
+            return [predecessor, *reversed(path)]
+        for after in following[current]:
+            if after not in reached_from:
+                reached_from[after] = current
+                queue.append(after)
+    return None

@@ -25,6 +25,7 @@ from app.domain.planning import (
     Milestone,
     PoolEmployee,
     average_weekly_hours,
+    cycle_path,
     planning_weeks,
     skill_coverage,
 )
@@ -448,6 +449,42 @@ def test_dependency_nodes_must_be_this_projects(
         f"/api/v1/dependencies/{smuggled}", json={"lagDays": 3}, headers=auth(stranger)
     )
     assert (patched.status_code, plan_store.deps[smuggled]["lag_days"]) == (404, 0)
+
+
+def test_a_cycle_is_refused_with_its_path(
+    plan_client: TestClient, store: Store, plan_store: PlanStore, auth: Auth
+) -> None:
+    """WBS-009: the 422 names the packages that would form the cycle."""
+    user, _, pid = _project(plan_client, store, auth)
+    first, second, third = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    plan_store.nodes = {
+        first: (uuid.UUID(pid), "1.1.3 W03 Ingestion"),
+        second: (uuid.UUID(pid), "1.2.1 W05 Mapping"),
+        third: (uuid.UUID(pid), "1.2.2 W06 Reports"),
+    }
+    url = f"/api/v1/projects/{pid}/dependencies"
+    for before, after in ((first, second), (second, third)):
+        body = {"predecessorId": str(before), "successorId": str(after)}
+        assert plan_client.post(url, json=body, headers=auth(user)).status_code == 201
+
+    body = {"predecessorId": str(third), "successorId": str(first)}
+    refused = plan_client.post(url, json=body, headers=auth(user))
+
+    assert (refused.status_code, refused.json()["detail"]) == (
+        422,
+        "Dependency would create a cycle: 1.2.2 W06 Reports → 1.1.3 W03 Ingestion → "
+        "1.2.1 W05 Mapping → 1.2.2 W06 Reports",
+    )
+    assert len(plan_store.deps) == 2
+
+
+def test_cycle_path() -> None:
+    first, second, third, other = (uuid.uuid4() for _ in range(4))
+    links = [(first, second), (second, third), (other, first)]
+    assert cycle_path(links, second, first) == [second, first, second]
+    assert cycle_path(links, third, first) == [third, first, second, third]
+    assert cycle_path(links, first, third) is None
+    assert cycle_path([], first, second) is None
 
 
 # --------------------------------------------------------------------------- computations

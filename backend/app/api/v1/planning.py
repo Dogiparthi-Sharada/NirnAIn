@@ -17,6 +17,7 @@ from app.domain.planning import (
     DependencyUpdate,
     PoolEmployee,
     SkillCoverage,
+    cycle_path,
     planning_weeks,
     skill_coverage,
 )
@@ -119,6 +120,23 @@ async def _ensure_project_nodes(
         raise NotFoundError(NODE_NOT_IN_PROJECT)
 
 
+async def _ensure_no_cycle(
+    planning: Planning, project_id: uuid.UUID, body: DependencyCreate
+) -> None:
+    """422 naming the cycle the new link would close ("1.1 A → 1.2 B → 1.1 A", WBS-009).
+
+    The database refuses cycles too (without naming them), for links added concurrently."""
+    existing = await planning.dependencies(project_id)
+    links = [(link.predecessor_id, link.successor_id) for link in existing]
+    cycle = cycle_path(links, body.predecessor_id, body.successor_id)
+    if cycle is None:
+        return
+    labels = {link.predecessor_id: link.predecessor_label for link in existing}
+    labels |= {link.successor_id: link.successor_label for link in existing}
+    named = " → ".join(labels.get(node_id) or str(node_id) for node_id in cycle)
+    raise UnprocessableError(f"Dependency would create a cycle: {named}")
+
+
 @router.get(
     "/projects/{projectId}/dependencies",
     response_model=list[Dependency],
@@ -141,6 +159,7 @@ async def create_dependency(
     """Link two work packages of the project (404 when one isn't the project's)."""
     await _writable_project(planning, project_id)
     await _ensure_project_nodes(planning, project_id, {body.predecessor_id, body.successor_id})
+    await _ensure_no_cycle(planning, project_id, body)
     dependency_id = await planning.create_dependency(project_id, body)
     dependency = await planning.dependency(dependency_id)
     if dependency is None:
