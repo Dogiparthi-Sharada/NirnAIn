@@ -354,7 +354,7 @@ def build_report(inp: PlanningInput, outcome: SolveOutcome) -> Report:
         "scheduleChanges": schedule,
         "utilization": utilization,
         "schedule": timeline(ctx, ordered),
-        "summary": run_summary(ctx, cost, finish, utilization),
+        "summary": run_summary(ctx, cost, finish),
     }
     return Report(
         **common,

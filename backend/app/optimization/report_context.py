@@ -1,8 +1,9 @@
 """Lookups behind the report of a solved plan (`explain.build_report`).
 
 `ReportContext` answers what the report needs about a plan: dates and weeks
-of working-day indices, hours and utilization per person, whether someone
-is over their daily capacity, labor cost, and which dependencies bind.
+of working-day indices, hours, utilization and the busiest day per person,
+whether someone is over their daily capacity, labor cost, and which
+dependencies bind.
 `critical_chain` walks the binding chain back from the last task. Durations
 are read off the plan (a part-timer's task runs longer than its WBS
 duration), so the report states what the solver actually scheduled.
@@ -93,6 +94,15 @@ class ReportContext:
         capacity = daily_capacity_tenths(res.weekly_capacity_hours, self.per_week)
         load = daily_load(self.inp, plan, res, self.blocks, self.paced(plan))
         return any(tenths > capacity for tenths in load)
+
+    def peak_percent(self, plan: Plan, res: Resource) -> int:
+        """The person's busiest working day in `plan`: that day's load, bookings on other
+        projects included, as a percent of their daily hours (0 without hours)."""
+        capacity = daily_capacity_tenths(res.weekly_capacity_hours, self.per_week)
+        if capacity <= 0:
+            return 0
+        load = daily_load(self.inp, plan, res, self.blocks, self.paced(plan))
+        return round(100 * max(load, default=0) / capacity)
 
     def name(self, resource_id: str | None) -> str:
         if resource_id is None:

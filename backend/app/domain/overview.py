@@ -189,9 +189,14 @@ def _utilization(result: dict[str, Any] | None) -> list[tuple[str, int]]:
 
 
 def peak_utilization(result: dict[str, Any] | None) -> int | None:
-    """Highest planned utilization (%) of anyone in the plan; None when the plan has none."""
-    values = [after for _, after in _utilization(result)]
-    return max(values) if values else None
+    """The plan's peak utilization (%), as its run reported it (`summary.peakUtilization`):
+    the busiest day of anyone on the team, not an average. None when it reports none."""
+    summary = (result or {}).get("summary")
+    peak = summary.get("peakUtilization") if isinstance(summary, dict) else None
+    percent = peak.get("percent") if isinstance(peak, dict) else None
+    if isinstance(percent, int | float) and not isinstance(percent, bool):
+        return round(percent)
+    return None
 
 
 def soft_violations(result: dict[str, Any] | None) -> int:

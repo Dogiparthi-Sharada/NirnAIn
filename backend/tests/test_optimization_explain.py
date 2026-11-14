@@ -95,7 +95,8 @@ def test_skill_reassignment_report() -> None:
         "done": False,
     }
     assert result["summary"]["completionDate"] == "2026-10-22"
-    assert result["summary"]["peakUtilization"] == {"name": "Lisa Park", "percent": 64}
+    # Both work full days, so the busiest day is at 100% (Mark is listed first).
+    assert result["summary"]["peakUtilization"] == {"name": "Mark Chen", "percent": 100}
     assert result["summary"]["softViolations"] == []
 
     rows = {a.wbs_node_id: a for a in report.assignments}
@@ -104,6 +105,29 @@ def test_skill_reassignment_report() -> None:
     assert (rows["b"].start_week, rows["b"].end_week) == (1, 2)
     assert rows["b"].hours_per_week == 40.0
     assert [rec.type for rec in report.recommendations] == ["reassignment", "schedule_change"]
+
+
+def test_peak_utilization_is_the_busiest_day_not_an_average() -> None:
+    """QA pack RES-021: five people at 40 h/week, a chain of five 1-day tasks, one each.
+    Each works 8 h on one day: a 100% peak, though only 20% of their plan on average."""
+    people = [f"e{number}" for number in range(1, 6)]
+    inp = make_input(
+        tasks=tuple(
+            Task(f"t{number}", f"1.1.{number}", f"Step {number}", 1, owner_id=person)
+            for number, person in enumerate(people, start=1)
+        ),
+        employees=tuple(
+            Employee(person, f"Chain {number}", hourly_rate_cents=10_000)
+            for number, person in enumerate(people, start=1)
+        ),
+        dependencies=tuple(Dependency(f"t{number}", f"t{number + 1}") for number in range(1, 5)),
+    )
+    result = build_report(inp, solve(inp, FAST)).result
+    assert result is not None
+    assert {row["after"] for row in result["utilization"]} == {20}
+    kpis = {kpi["label"]: kpi for kpi in result["kpis"]}
+    assert kpis["Resource Utilization"]["value"] == "20%"  # labelled as the average
+    assert result["summary"]["peakUtilization"] == {"name": "Chain 1", "percent": 100}
 
 
 def test_over_budget_and_late_kpis() -> None:

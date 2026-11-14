@@ -42,6 +42,8 @@ RESULT: dict[str, Any] = {
         {"name": "Sara Kim", "before": 90, "after": 110},
         {"name": "Contractor", "before": 0, "after": "n/a"},
     ],
+    # Sara's busiest day, not her 110% average over the plan (QA pack RES-021).
+    "summary": {"peakUtilization": {"name": "Sara Kim", "percent": 125}},
 }
 
 
@@ -62,8 +64,9 @@ READY = ProgressFacts(scope_items=5, wbs_nodes=8)
 
 # --------------------------------------------------------------------------- derivations
 def test_peak_utilization_and_soft_violations_read_the_run_result() -> None:
-    assert peak_utilization(RESULT) == 110
-    assert peak_utilization({"utilization": []}) is None
+    assert peak_utilization(RESULT) == 125
+    assert peak_utilization({"utilization": RESULT["utilization"]}) is None  # no averages
+    assert peak_utilization({"summary": {"peakUtilization": None}}) is None
     assert peak_utilization(None) is None
     assert soft_violations(RESULT) == 0
     assert soft_violations({"violations": {"soft": 2}}) == 2
@@ -197,7 +200,7 @@ def test_build_overview_with_an_applied_plan() -> None:
     plan = body["plan"]
     assert body["appliedVersion"] == 2
     assert plan["version"] == 2
-    assert plan["peakUtilization"] == 110
+    assert plan["peakUtilization"] == 125
     assert plan["violations"] == {"hard": 0, "soft": 0}
     assert [k["label"] for k in plan["kpis"]] == ["Go-live"]
     assert body["risks"] == [
