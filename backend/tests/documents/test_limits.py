@@ -10,51 +10,33 @@ How it fits: the upload runs against the in-memory documents of test_documents.
 from __future__ import annotations
 
 import io
-from collections.abc import Iterator
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pypdf import PdfReader, PdfWriter
 
 from app.ai import documents as extraction_module
 from app.ai.documents import MAX_CHARS, extract_text
-from app.api import deps
-from app.core.security import CurrentPrincipal
 from app.domain.common import DocumentKind
-from tests.support.store import Store
-from tests.test_documents import (
-    Auth,
-    DocumentData,
-    FakeDocuments,
-    _project,
-    _upload,
+from tests.support.documents import (
     pdf_with_text,
+    upload_file,
 )
-
-
-@pytest.fixture
-def documents_client(app: FastAPI, store: Store) -> Iterator[TestClient]:
-    data = DocumentData()
-
-    def documents(principal: CurrentPrincipal) -> FakeDocuments:
-        return FakeDocuments(store, data, principal.user_id)
-
-    app.dependency_overrides[deps.get_document_repo] = documents
-    with TestClient(app, raise_server_exceptions=False) as test_client:
-        yield test_client
+from tests.support.projects import create_project
+from tests.support.store import Store
+from tests.support.tokens import Auth
 
 
 def test_a_long_upload_says_only_its_first_part_was_read(
     documents_client: TestClient, store: Store, auth: Auth
 ) -> None:
-    user, _, project_id = _project(documents_client, store, auth)
+    user, _, project_id = create_project(documents_client, store, auth)
     transcript = ("Status update. " * 20_000).encode()  # 300,000 characters
 
-    long_one = _upload(
+    long_one = upload_file(
         documents_client, project_id, auth(user), "long.txt", transcript, "text/plain"
     )
-    short_one = _upload(
+    short_one = upload_file(
         documents_client, project_id, auth(user), "short.txt", b"Budget $410,000", "text/plain"
     )
 

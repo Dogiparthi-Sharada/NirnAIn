@@ -10,35 +10,21 @@ How it fits: the upload runs against the in-memory documents of test_documents.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.ai.documents import UNREADABLE_ERROR, extract_text
-from app.api import deps
-from app.core.security import CurrentPrincipal
 from app.domain.common import DocumentKind
 from app.drafts.reader import DraftReader
+from tests.support.documents import upload_file
+from tests.support.drafts import FakeDraftLLM
+from tests.support.projects import create_project
 from tests.support.store import Store
-from tests.test_documents import Auth, DocumentData, FakeDocuments, _project, _upload
-from tests.test_drafts import FakeLLM
+from tests.support.tokens import Auth
 
 SECRET = "Hunter2-QA-FAKE"
 CORRUPT_PDF = f"Kickoff notes. Admin password: {SECRET}\n%PDF-1.4 1 0 obj << /Length x >>".encode()
-
-
-@pytest.fixture
-def documents_client(app: FastAPI, store: Store) -> Iterator[TestClient]:
-    data = DocumentData()
-
-    def documents(principal: CurrentPrincipal) -> FakeDocuments:
-        return FakeDocuments(store, data, principal.user_id)
-
-    app.dependency_overrides[deps.get_document_repo] = documents
-    with TestClient(app, raise_server_exceptions=False) as test_client:
-        yield test_client
 
 
 def _logged(caplog: pytest.LogCaptureFixture) -> str:
@@ -51,9 +37,9 @@ def test_a_corrupt_upload_is_logged_without_its_content(
     documents_client: TestClient, store: Store, auth: Auth, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.DEBUG)
-    user, _, project_id = _project(documents_client, store, auth)
+    user, _, project_id = create_project(documents_client, store, auth)
 
-    upload = _upload(
+    upload = upload_file(
         documents_client, project_id, auth(user), "secret-plan.pdf", CORRUPT_PDF, "application/pdf"
     )
 
@@ -84,7 +70,7 @@ async def test_a_failed_ai_draft_logs_the_error_class_only(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.DEBUG)
-    reader = DraftReader(FakeLLM(ValueError(f"could not parse: {SECRET}")), 5)
+    reader = DraftReader(FakeDraftLLM(ValueError(f"could not parse: {SECRET}")), 5)
 
     draft = await reader.read(f"Budget notes {SECRET}", "notes.txt")
 

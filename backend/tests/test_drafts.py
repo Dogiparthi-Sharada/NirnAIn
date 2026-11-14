@@ -14,7 +14,6 @@ from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
 from app.ai.documents import TOO_LARGE_DETAIL, VIDEO_DETAIL
-from app.ai.llm import LLM, Usage
 from app.api.v1 import documents as documents_api
 from app.domain.common import OrgRole
 from app.drafts import ai as draft_ai
@@ -27,6 +26,7 @@ from app.drafts.extract_text import (
 )
 from app.drafts.reader import DraftReader, get_draft_reader
 from app.drafts.rules import rules_draft
+from tests.support.drafts import FakeDraftLLM
 from tests.support.store import Store
 from tests.support.tokens import Auth
 
@@ -220,22 +220,6 @@ def test_ai_prompt_keeps_notes_as_data() -> None:
     assert "&lt;/project_data&gt;" in prompt
 
 
-# --------------------------------------------------------------------------- endpoint
-class FakeLLM(LLM):
-    def __init__(self, answer: draft_ai.AiDraft | Exception) -> None:
-        super().__init__(client=None, model="claude-test")
-        self.answer = answer
-
-    @property
-    def configured(self) -> bool:
-        return True
-
-    def parse(self, **kwargs: object) -> tuple[draft_ai.AiDraft, Usage]:  # type: ignore[override]
-        if isinstance(self.answer, Exception):
-            raise self.answer
-        return self.answer, Usage(10, 10)
-
-
 @pytest.fixture
 def reader_box() -> dict[str, DraftReader]:
     return {"reader": DraftReader(None, 5)}
@@ -317,13 +301,13 @@ def test_extract_uses_ai_and_falls_back_to_rules(
     answer = _ai_answer(
         name={"value": "EDP", "quote": "Enterprise Data Platform", "status": "stated"}
     )
-    reader_box["reader"] = DraftReader(FakeLLM(answer), 5)
+    reader_box["reader"] = DraftReader(FakeDraftLLM(answer), 5)
     response = draft_client.post(_url(org), json={"text": KICKOFF}, headers=auth(user))
     assert response.json()["model"] == "claude-test"
     assert response.json()["fields"]["name"]["value"] == "EDP"
     assert response.json()["fields"]["budgetCents"]["status"] == "missing"
 
-    reader_box["reader"] = DraftReader(FakeLLM(ValueError("no structured output")), 5)
+    reader_box["reader"] = DraftReader(FakeDraftLLM(ValueError("no structured output")), 5)
     response = draft_client.post(_url(org), json={"text": KICKOFF}, headers=auth(user))
     assert response.json()["model"] == "rules"
     assert response.json()["fields"]["name"]["value"] == "Enterprise Data Platform"

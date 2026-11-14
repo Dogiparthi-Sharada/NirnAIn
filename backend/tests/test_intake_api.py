@@ -30,6 +30,7 @@ from app.domain.intake import IntakeRun, ScopeItem
 from app.repositories.intake import ActiveRun, ActiveRunExistsError, IntakeRepository
 from app.repositories.intake_jobs import ClaimedRun, IntakeJobStore
 from tests.support.connections import Conn, Result, Rows
+from tests.support.projects import create_project
 from tests.support.store import Store
 from tests.support.tokens import Auth
 
@@ -152,18 +153,11 @@ def intake_client(app: FastAPI, store: Store, intake_data: IntakeStore) -> Itera
         yield c
 
 
-def _project(client: TestClient, store: Store, auth: Auth) -> tuple[uuid.UUID, uuid.UUID, str]:
-    user = store.add_user("Jane Doe")
-    org = store.add_org(user, "Acme")
-    r = client.post(f"/api/v1/orgs/{org}/projects", json={"name": "CRM"}, headers=auth(user))
-    return user, org, r.json()["id"]
-
-
 # --------------------------------------------------------------------------- API
 def test_get_run_by_id_follows_location(
     intake_client: TestClient, store: Store, auth: Auth
 ) -> None:
-    user, _, pid = _project(intake_client, store, auth)
+    user, _, pid = create_project(intake_client, store, auth)
     r = intake_client.post(
         f"/api/v1/projects/{pid}/intake/runs", json={"text": "notes"}, headers=auth(user)
     )
@@ -182,7 +176,7 @@ def test_get_run_by_id_follows_location(
 def test_run_needs_notes_or_a_readable_upload(
     intake_client: TestClient, store: Store, intake_data: IntakeStore, auth: Auth
 ) -> None:
-    user, _, project_id = _project(intake_client, store, auth)
+    user, _, project_id = create_project(intake_client, store, auth)
     url = f"/api/v1/projects/{project_id}/intake/runs"
     for body in ({}, {"text": "   "}):
         response = intake_client.post(url, json=body, headers=auth(user))
@@ -195,7 +189,7 @@ def test_run_needs_notes_or_a_readable_upload(
 
 
 def test_list_runs_newest_first(intake_client: TestClient, store: Store, auth: Auth) -> None:
-    user, _, project_id = _project(intake_client, store, auth)
+    user, _, project_id = create_project(intake_client, store, auth)
     url = f"/api/v1/projects/{project_id}/intake/runs"
     first = intake_client.post(url, json={"text": "a"}, headers=auth(user)).json()["id"]
     second = intake_client.post(url, json={"text": "b"}, headers=auth(user)).json()["id"]
@@ -210,7 +204,7 @@ def test_list_runs_newest_first(intake_client: TestClient, store: Store, auth: A
 def test_create_run_conflict_on_race(
     intake_client: TestClient, store: Store, intake_data: IntakeStore, auth: Auth
 ) -> None:
-    user, _, pid = _project(intake_client, store, auth)
+    user, _, pid = create_project(intake_client, store, auth)
     intake_data.race = True
     r = intake_client.post(
         f"/api/v1/projects/{pid}/intake/runs", json={"text": "notes"}, headers=auth(user)
@@ -220,7 +214,7 @@ def test_create_run_conflict_on_race(
 
 
 def test_create_scope_item(intake_client: TestClient, store: Store, auth: Auth) -> None:
-    user, org, pid = _project(intake_client, store, auth)
+    user, org, pid = create_project(intake_client, store, auth)
     url = f"/api/v1/projects/{pid}/scope-items"
     r = intake_client.post(
         url, json={"category": "deliverable", "text": "  Data warehouse  "}, headers=auth(user)
@@ -278,7 +272,7 @@ class RaisingConn(Conn):
 def test_removed_scope_items_are_listed_only_when_asked(
     intake_client: TestClient, intake_data: IntakeStore, store: Store, auth: Auth
 ) -> None:
-    user, _, pid = _project(intake_client, store, auth)
+    user, _, pid = create_project(intake_client, store, auth)
     url = f"/api/v1/projects/{pid}/scope-items"
     created = intake_client.post(
         url, json={"category": "risk", "text": "Vendor delay"}, headers=auth(user)

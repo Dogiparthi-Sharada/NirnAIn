@@ -21,8 +21,9 @@ from fastapi.testclient import TestClient
 from app.api import deps
 from app.core.security import CurrentPrincipal
 from app.optimization.model import Employee, PlanningInput, Task
+from tests.support.optimization_runs import FakeRunner, FakeRuns, RunStore
 from tests.support.store import Store
-from tests.test_optimization_api import Auth, FakeRunner, FakeRuns, RunStore
+from tests.support.tokens import Auth
 
 STALE = "The inputs changed since this plan was computed. Run the optimizer again before applying."
 

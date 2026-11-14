@@ -25,16 +25,16 @@ from app.optimization.model import Task
 from app.repositories.optimization import OptimizationRepository
 from app.repositories.work_packages import packages_without_duration
 from tests.support.connections import Conn, Rows
-from tests.support.store import Store
-from tests.test_optimization_api import (
-    Auth,
+from tests.support.optimization_runs import (
     FakeRunner,
     FakeRuns,
     RunStore,
-    _project,
-    _ready,
-    _url,
+    mark_ready,
+    runs_url,
 )
+from tests.support.projects import create_project
+from tests.support.store import Store
+from tests.support.tokens import Auth
 
 MAPPING = "1.2.1 W06 Data mapping has no duration: enter one on step 4"
 
@@ -69,8 +69,8 @@ def _inputs_url(project_id: str) -> str:
 def test_a_package_without_duration_blocks_the_sheet_and_the_run(
     opt_client: TestClient, store: Store, run_store: RunStore, runner: FakeRunner, auth: Auth
 ) -> None:
-    user, _, project_id = _project(opt_client, store, auth)
-    _ready(run_store, project_id)
+    user, _, project_id = create_project(opt_client, store, auth)
+    mark_ready(run_store, project_id)
     run_store.without_duration[uuid.UUID(project_id)] = ["1.2.1 W06 Data mapping"]
 
     sheet = opt_client.get(_inputs_url(project_id), headers=auth(user)).json()
@@ -83,7 +83,7 @@ def test_a_package_without_duration_blocks_the_sheet_and_the_run(
     assert work_row["source"] == "needs_you"
     assert work_row["value"].endswith("· 1 without a duration")
 
-    refused = opt_client.post(_url(project_id), headers=auth(user))
+    refused = opt_client.post(runs_url(project_id), headers=auth(user))
     assert refused.status_code == 422
     assert refused.json()["detail"] == f"{MAPPING} before running the optimizer."
     assert refused.json()["missing"] == ["durations"]
@@ -93,8 +93,8 @@ def test_a_package_without_duration_blocks_the_sheet_and_the_run(
 def test_many_packages_without_duration_are_named_once(
     opt_client: TestClient, store: Store, run_store: RunStore, auth: Auth
 ) -> None:
-    user, _, project_id = _project(opt_client, store, auth)
-    _ready(run_store, project_id)
+    user, _, project_id = create_project(opt_client, store, auth)
+    mark_ready(run_store, project_id)
     labels = [f"1.1.{number} Package {number}" for number in range(1, 8)]
     run_store.without_duration[uuid.UUID(project_id)] = labels
 
@@ -109,15 +109,17 @@ def test_a_run_starts_only_from_the_inputs_the_pm_reviewed(
     opt_client: TestClient, store: Store, run_store: RunStore, runner: FakeRunner, auth: Auth
 ) -> None:
     """CON-019: approving a sheet whose inputs changed since is refused with 409."""
-    user, _, project_id = _project(opt_client, store, auth)
-    _ready(run_store, project_id)
+    user, _, project_id = create_project(opt_client, store, auth)
+    mark_ready(run_store, project_id)
     reviewed = opt_client.get(_inputs_url(project_id), headers=auth(user)).json()["hash"]
     saved = run_store.inputs[uuid.UUID(project_id)]
     run_store.inputs[uuid.UUID(project_id)] = dataclasses.replace(
         saved, tasks=(Task("t1", "1.1.1", "Design", 9),)
     )
 
-    stale = opt_client.post(_url(project_id), json={"reviewedHash": reviewed}, headers=auth(user))
+    stale = opt_client.post(
+        runs_url(project_id), json={"reviewedHash": reviewed}, headers=auth(user)
+    )
     assert (stale.status_code, stale.json()["detail"]) == (
         409,
         "The inputs changed since you reviewed them. Review again.",
@@ -125,10 +127,14 @@ def test_a_run_starts_only_from_the_inputs_the_pm_reviewed(
     assert (runner.submitted, run_store.runs) == ([], {})
 
     current = opt_client.get(_inputs_url(project_id), headers=auth(user)).json()["hash"]
-    started = opt_client.post(_url(project_id), json={"reviewedHash": current}, headers=auth(user))
+    started = opt_client.post(
+        runs_url(project_id), json={"reviewedHash": current}, headers=auth(user)
+    )
     assert started.status_code == 202
     assert started.json()["options"]["reviewedHash"] == current
-    malformed = opt_client.post(_url(project_id), json={"reviewedHash": "abc"}, headers=auth(user))
+    malformed = opt_client.post(
+        runs_url(project_id), json={"reviewedHash": "abc"}, headers=auth(user)
+    )
     assert malformed.status_code == 422
 
 
@@ -136,11 +142,11 @@ def test_a_second_start_while_one_is_starting_is_refused(
     opt_client: TestClient, store: Store, run_store: RunStore, runner: FakeRunner, auth: Auth
 ) -> None:
     """NFR-005: a double-click's second request is refused, not queued as a second run."""
-    user, _, project_id = _project(opt_client, store, auth)
-    _ready(run_store, project_id)
+    user, _, project_id = create_project(opt_client, store, auth)
+    mark_ready(run_store, project_id)
     run_store.starting.add(uuid.UUID(project_id))
 
-    second = opt_client.post(_url(project_id), headers=auth(user))
+    second = opt_client.post(runs_url(project_id), headers=auth(user))
 
     assert (second.status_code, second.json()["detail"]) == (
         409,

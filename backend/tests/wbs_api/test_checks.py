@@ -18,9 +18,10 @@ from app.api import deps
 from app.core.security import CurrentPrincipal
 from app.domain.common import OrgRole
 from app.repositories.wbs_checks import read_validation_input, wbs_changed_at
+from tests.support.projects import create_project
 from tests.support.store import Store
 from tests.support.tokens import Auth
-from tests.test_wbs_api import FakeWbs, WbsStore, _add, _project
+from tests.support.wbs import FakeWbs, WbsStore, add_node
 
 CHANGED = datetime(2026, 11, 14, 21, 5, tzinfo=UTC)
 
@@ -67,7 +68,7 @@ def checks_client(app: FastAPI, store: Store, checks_store: WbsStore) -> Iterato
 def test_checks_follow_the_current_wbs(
     checks_client: TestClient, store: Store, checks_store: WbsStore, auth: Auth
 ) -> None:
-    user, org, pid = _project(checks_client, store, auth)
+    user, org, pid = create_project(checks_client, store, auth)
     headers = auth(user)
     url = f"/api/v1/projects/{pid}/wbs/checks"
     empty = checks_client.get(url, headers=headers).json()
@@ -75,9 +76,9 @@ def test_checks_follow_the_current_wbs(
     assert empty["wbsChangedAt"] is None
     assert [issue["type"] for issue in empty["issues"]] == ["missing"]
 
-    root = _add(checks_client, pid, headers, name="CRM")
-    deliverable = _add(checks_client, pid, headers, parentId=root["id"], name="Build")
-    package = _add(checks_client, pid, headers, parentId=deliverable["id"], name="API")
+    root = add_node(checks_client, pid, headers, name="CRM")
+    deliverable = add_node(checks_client, pid, headers, parentId=root["id"], name="Build")
+    package = add_node(checks_client, pid, headers, parentId=deliverable["id"], name="API")
     body = checks_client.get(url, headers=headers).json()
     assert body["issues"] == [{"type": "warning", "text": "1.1.1 API has no duration."}]
     assert body["wbsChangedAt"] == "2026-11-14T21:05:00Z"
@@ -97,7 +98,7 @@ def test_checks_follow_the_current_wbs(
 
 
 def test_checks_need_a_visible_project(checks_client: TestClient, store: Store, auth: Auth) -> None:
-    _, org, pid = _project(checks_client, store, auth)
+    _, org, pid = create_project(checks_client, store, auth)
     url = f"/api/v1/projects/{pid}/wbs/checks"
     viewer = store.add_user("Vic Viewer")
     store.members[(org, viewer)] = OrgRole.VIEWER

@@ -20,6 +20,7 @@ from app.domain.team import ProjectSkill, TeamMember, clean_skill_names
 from app.repositories.access import ProjectRef
 from app.repositories.team import TeamRepository
 from tests.support.connections import Conn, Rows
+from tests.support.projects import create_project
 from tests.support.store import Store
 from tests.support.tokens import Auth
 
@@ -233,24 +234,15 @@ def team_client(app: FastAPI, store: Store, team_store: TeamStore) -> Iterator[T
         yield c
 
 
-def _project(client: TestClient, store: Store, auth: Auth) -> tuple[uuid.UUID, uuid.UUID, str]:
-    user = store.add_user("Jane Doe")
-    org = store.add_org(user, "Acme")
-    r = client.post(
-        f"/api/v1/orgs/{org}/projects",
-        json={"name": "CRM", "startDate": "2026-11-16", "targetEndDate": "2027-01-29"},
-        headers=auth(user),
-    )
-    return user, org, r.json()["id"]
-
-
+# The planning window of the team tests' project.
+DATES = {"startDate": "2026-11-16", "targetEndDate": "2027-01-29"}
 SARA = {"fullName": "Sara Kim", "roleTitle": "Lead Architect", "hoursPerWeek": 40, "skills": []}
 
 
 def test_team_crud(
     team_client: TestClient, store: Store, team_store: TeamStore, auth: Auth
 ) -> None:
-    user, org, pid = _project(team_client, store, auth)
+    user, org, pid = create_project(team_client, store, auth, **DATES)
     headers = auth(user)
     url = f"/api/v1/projects/{pid}/team"
     assert team_client.get(url, headers=headers).json() == []
@@ -327,7 +319,7 @@ def test_team_crud(
 def test_team_worker_types_and_rates(
     team_client: TestClient, store: Store, team_store: TeamStore, auth: Auth
 ) -> None:
-    user, org, pid = _project(team_client, store, auth)
+    user, org, pid = create_project(team_client, store, auth, **DATES)
     headers = auth(user)
     url = f"/api/v1/projects/{pid}/team"
 
@@ -388,7 +380,7 @@ def test_team_worker_types_and_rates(
 def test_skills_crud(
     team_client: TestClient, store: Store, team_store: TeamStore, auth: Auth
 ) -> None:
-    user, org, pid = _project(team_client, store, auth)
+    user, org, pid = create_project(team_client, store, auth, **DATES)
     h = auth(user)
     url = f"/api/v1/projects/{pid}/skills"
     sap = uuid.uuid4()
