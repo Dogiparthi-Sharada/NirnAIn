@@ -118,13 +118,14 @@ def scope_action(text: str) -> tuple[ChangeAction, str]:
     if parsing.has(text, _DESCOPE):
         return (
             "remove",
-            "Scope reduction noted. Re-planning doesn't remove work: mark the work packages "
-            "it covers as done or shorter in a progress update or an edit.",
+            "Scope reduction noted. Re-planning plans the work in the WBS: remove its work "
+            "packages in WBS Builder (step 4), or mark them done in a progress update.",
         )
     return (
         "add",
         "New requirement noted. It joins the project's scope when you approve. Re-planning "
-        "doesn't add work: if it needs effort, give its work package more time.",
+        "plans the work in the WBS: add a work package for it in WBS Builder (step 4) "
+        "before you re-plan, or give an existing one more time.",
     )
 
 
