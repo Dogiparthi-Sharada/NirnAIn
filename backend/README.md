@@ -87,7 +87,7 @@ All endpoints are under `/api/v1` except health. JSON uses camelCase. Errors are
 | GET | `/api/v1/notifications` | `unread=true/false`, `limit`, `cursor` |
 | POST | `/api/v1/notifications/{id}/read` | Idempotent. Returns the notification. |
 | GET | `/api/v1/projects/{projectId}/optimization/inputs` | Confirmation sheet: `{rows: [{key, label, value, source, from}], ready, blocking, missing, hash, appliedHash}` (`appliedHash`: the inputs hash of the plan in force, or null) |
-| POST | `/api/v1/projects/{projectId}/optimization/runs` | Optional body `{remedy?: 'specialist'\|'overtime'\|'move_deadline'\|'combined', overrides?: {budgetTotalCents?, mustFinishBy?, deadlineMode?, budgetMode?, durationDays?, hoursPerWeek?, addMembers?, removeMembers?}, changeRequestId?, baselineRunId?}` (stored as `options`, plus `inputsHash` = the inputs sheet's `hash` for the saved inputs). Without `baselineRunId`, a run while a plan is in force starts from that plan (its owners are the current owners). Inputs stay editable after a plan is applied. 202 + `OptimizationRun` (`queued`), solved in the background. 403 not a writer, 404 project / change request / baseline run not visible, 409 a run is already queued/running or the change was decided, 422 inputs not ready (`missing`: `workPackages`, `estimates`, `deadline`, `specialist`, `team`). |
+| POST | `/api/v1/projects/{projectId}/optimization/runs` | Optional body `{remedy?: 'specialist'\|'overtime'\|'move_deadline'\|'combined', overrides?: {budgetTotalCents?, mustFinishBy?, deadlineMode?, budgetMode?, durationDays?, hoursPerWeek?, addMembers?, removeMembers?}, changeRequestId?, baselineRunId?}` (stored as `options`, plus `inputsHash` = the inputs sheet's `hash` for the saved inputs, and `solverSettings` = `{solver, version, timeLimitS, workers, seed, weights}`). Without `baselineRunId`, a run while a plan is in force starts from that plan (its owners are the current owners). Inputs stay editable after a plan is applied. 202 + `OptimizationRun` (`queued`), solved in the background. 403 not a writer, 404 project / change request / baseline run not visible, 409 a run is already queued/running or the change was decided, 422 inputs not ready (`missing`: `workPackages`, `estimates`, `deadline`, `specialist`, `team`). |
 | GET | `/api/v1/projects/{projectId}/optimization/runs/latest` | Latest run, or 404 when there are none |
 | GET | `/api/v1/projects/{projectId}/optimization/runs/{runId}` | One run |
 
@@ -126,7 +126,9 @@ contractor rate or $175/h), `overtime` (the people on the late work up to 25% ov
 their hours, 1.5x for employees) and `move_deadline` (accept the new date, 0 extra).
 Options are offered only when they finish earlier; `costCents` is the extra cost
 against this plan (the whole relaxed plan's cost for an infeasible run). "Can flex"
-capacity never exceeds 125% of contracted hours.
+capacity never exceeds 125% of contracted hours, and a plan keeps overtime only when it
+keeps a date (deadline, milestone, target) or saves money: otherwise it is solved
+again without it (`polish.py`).
 
 An infeasible run's `iis` names every independent blocker (e.g. a deadline and two
 missing skills): explain, relax that conflict's headline constraint, explain again, up

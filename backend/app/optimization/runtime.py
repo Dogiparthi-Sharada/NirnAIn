@@ -1,9 +1,12 @@
-"""How CP-SAT runs: the solve options and stopping a solve.
+"""How CP-SAT runs: the solve options, stopping a solve, and the settings a run records.
 
 `solver.solve` (the plan), `blockers.explain_infeasibility` (why there is
 none) and `remedies.price_remedies` (the ways out) all run CP-SAT through
 `new_solver` and `run_model`, so one `SolveControl` can stop any of them on
-server shutdown.
+server shutdown. `solver_settings` is what a run stores in
+`options.solverSettings` (round 3, R7): the solver and its version, the
+time limit, workers and seed, and the objective weights in cents, so a run
+can be reproduced and compared.
 """
 
 from __future__ import annotations
@@ -11,8 +14,12 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 from importlib.metadata import version
+from typing import Any
 
 from ortools.sat.python import cp_model
+
+from app.optimization import builder
+from app.optimization.model import Constraints
 
 SOLVER_VERSION: str = version("ortools")
 SOLVER_NAME = f"OR-Tools CP-SAT {SOLVER_VERSION}"
@@ -83,3 +90,24 @@ def run_model(
     finally:
         if control is not None:
             control.detach()
+
+
+def solver_settings(options: SolveOptions, constraints: Constraints) -> dict[str, Any]:
+    """`options.solverSettings`: the solver, how it runs, and the run's objective weights."""
+    return {
+        "solver": "OR-Tools CP-SAT",
+        "version": SOLVER_VERSION,
+        "timeLimitS": options.time_limit_s,
+        "workers": options.workers,
+        "seed": options.random_seed,
+        "weights": {
+            "makespanPerDayCents": builder.MAKESPAN_CENTS_PER_DAY,
+            "startDriftPerDayCents": builder.SHIFT_CENTS_PER_DAY,
+            "ownerChangeCents": builder.CHANGE_OWNER_CENTS,
+            "skillGapPerLevelCents": builder.SKILL_GAP_CENTS_PER_LEVEL,
+            "lateDayCents": round(constraints.deadline_penalty_per_day * 100),
+            "overBudgetPer1000Cents": round(constraints.budget_penalty * 100),
+            "overtimePerHourCents": round(constraints.capacity_penalty * 100),
+            "pastTargetPerDayCents": round(constraints.target_penalty_per_day * 100),
+        },
+    }

@@ -36,7 +36,9 @@ constraints below (each person's modes and capacity in `workload.py`),
   overlap. A part-timer may also take a "flex" mode, stretched at 25% over
   their hours. The full load never exceeds 125% of capacity (round-2 D2).
   Overtime is then chosen only when it saves more than stretching, waiting
-  or reassigning. Bookings elsewhere make a task wait rather than stretch.
+  or reassigning, and kept only when it keeps a date or saves money: a
+  plan whose overtime buys neither is solved again without it (R7,
+  `polish.py`). Bookings elsewhere make a task wait rather than stretch.
   Contractor profiles have no capacity limit: they stand for as many
   people as needed.
 * Skills: in hard mode only qualified resources are candidates; in soft mode
@@ -85,13 +87,8 @@ from ortools.sat.python import cp_model
 from app.optimization import formatting as fmt
 from app.optimization.blockers import explain_infeasibility
 from app.optimization.builder import ModelBuilder
-from app.optimization.model import (
-    Plan,
-    PlanningInput,
-    RunStatus,
-    ScheduledTask,
-    SolveOutcome,
-)
+from app.optimization.model import PlanningInput, RunStatus, SolveOutcome
+from app.optimization.polish import books_overtime, without_overtime
 from app.optimization.problem import prepare
 from app.optimization.runtime import (
     SOLVER_NAME,
@@ -153,25 +150,24 @@ def solve(
     mapped = map_status(run_model(builder.model, solver, control))
 
     if mapped in ("optimal", "feasible"):
-        plan: dict[str, ScheduledTask] = dict(problem.done)
-        for task_id, choices in variables.assign.items():
-            chosen = next(
-                resource_id
-                for resource_id, assigned in choices.items()
-                if solver.boolean_value(assigned)
-            )
-            plan[task_id] = ScheduledTask(
-                task_id,
-                solver.value(variables.start[task_id]),
-                solver.value(variables.end[task_id]),
-                chosen,
-            )
+        plan = variables.read(solver, problem.done)
+        objective, bound = solver.objective_value, solver.best_objective_bound
+        optimal = mapped == "optimal"
+        # Overtime that keeps no date and saves no money is dropped (R7, `polish.py`).
+        if inp.constraints.capacity_mode == "soft" and books_overtime(problem, plan):
+            spent = time.perf_counter() - began
+            # As long again as the plan took, within the run's time limit (at least 1 s).
+            budget = min(spent, options.time_limit_s - spent)
+            polished = without_overtime(problem, plan, options, control, budget)
+            if polished is not None:
+                plan, objective, bound = polished.plan, polished.objective, polished.best_bound
+                optimal = optimal and polished.optimal
         return outcome(
-            mapped,
-            plan=Plan(plan),
-            objective=solver.objective_value,
-            best_bound=solver.best_objective_bound,
-            hit_time_limit=mapped == "feasible",
+            "optimal" if optimal else "feasible",
+            plan=plan,
+            objective=objective,
+            best_bound=bound,
+            hit_time_limit=not optimal,
         )
     if mapped == "infeasible":
         found = explain_infeasibility(problem, options, control) if explain else ()

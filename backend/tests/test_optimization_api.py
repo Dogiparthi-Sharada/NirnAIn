@@ -13,12 +13,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import deps
+from app.core.config import Settings
 from app.core.security import CurrentPrincipal
 from app.domain.common import OrgRole, SolverStatus
 from app.domain.optimization import OptimizationRun
 from app.jobs.optimizer import RESTART_ERROR
 from app.optimization.inputs import InputFacts, facts_from_input
 from app.optimization.model import Employee, PlanningInput, Task
+from app.optimization.runtime import SOLVER_VERSION
 from app.repositories.optimization import (
     ActiveRun,
     ActiveRunExistsError,
@@ -498,7 +500,11 @@ def test_run_body_is_applied_and_stored_as_options(
     response = opt_client.post(_url(pid), json=body, headers=auth(user))
     assert response.status_code == 202, response.text
     run = response.json()
-    assert run["options"] == {**body, "inputsHash": run["options"]["inputsHash"]}
+    assert run["options"] == {
+        **body,
+        "inputsHash": run["options"]["inputsHash"],
+        "solverSettings": run["options"]["solverSettings"],
+    }
     assert (run["version"], run["appliedAt"]) == (None, None)
     snapshot = run_store.runs[uuid.UUID(run["id"])]["snapshot"]
     constraints = snapshot["constraints"]
@@ -572,8 +578,8 @@ def test_done_work_package_replans_from_the_plan_in_force(
     assert snapshot["constraints"]["target_penalty_per_day"] > 0
 
 
-def test_run_records_the_inputs_sheet_hash(
-    opt_client: TestClient, store: Store, run_store: RunStore, auth: Auth
+def test_run_records_the_inputs_sheet_hash_and_solver_settings(
+    opt_client: TestClient, store: Store, run_store: RunStore, auth: Auth, settings: Settings
 ) -> None:
     user, _, pid = _project(opt_client, store, auth)
     _ready(run_store, pid)
@@ -581,14 +587,24 @@ def test_run_records_the_inputs_sheet_hash(
     sheet_hash = inputs.json()["hash"]
 
     plain = opt_client.post(_url(pid), headers=auth(user)).json()
+    recorded = plain["options"].pop("solverSettings")
     assert plain["options"] == {"inputsHash": sheet_hash}
+    # How the worker solves it (pack SOLVE-011), with this run's objective weights.
+    assert (recorded["solver"], recorded["version"]) == ("OR-Tools CP-SAT", SOLVER_VERSION)
+    assert (recorded["timeLimitS"], recorded["workers"], recorded["seed"]) == (
+        settings.optimizer_time_limit_s,
+        settings.optimizer_workers,
+        0,
+    )
+    assert recorded["weights"]["makespanPerDayCents"] == 20_000
 
     run_store.runs[uuid.UUID(plain["id"])]["status"] = "optimal"
     # Overrides and remedies change the snapshot, not the saved inputs' fingerprint.
     what_if = {"remedy": "move_deadline", "overrides": {"budgetTotalCents": 1}}
     response = opt_client.post(_url(pid), json=what_if, headers=auth(user))
     assert response.status_code == 202, response.text
-    assert response.json()["options"] == {**what_if, "inputsHash": sheet_hash}
+    options = response.json()["options"]
+    assert options == {**what_if, "inputsHash": sheet_hash, "solverSettings": recorded}
 
 
 def test_run_body_references_are_checked(

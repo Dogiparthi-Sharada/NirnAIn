@@ -8,7 +8,8 @@ RLS: this is a trusted system job, and `planned_assignments` /
 
 Infeasible runs, and plans that finish after their target date, also get
 priced remedies (ways to keep the date, round-2 D2): relaxed copies of the
-input re-solved on the same worker thread budget.
+input re-solved on the same worker thread budget. The API stores how runs
+are solved (`run_settings`) in each run's `options.solverSettings`.
 
 Railway restarts the process on every deploy, so runs can be orphaned:
 `recover_stale` (on startup) and the API (before answering 409) mark runs
@@ -23,6 +24,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import replace
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -30,6 +32,7 @@ from app.core.config import Settings
 from app.optimization.explain import Report, build_report
 from app.optimization.model import PlanningInput, SnapshotError, SolveOutcome
 from app.optimization.remedies import price_remedies
+from app.optimization.runtime import solver_settings
 from app.optimization.solver import SolveControl, SolveOptions, solve
 from app.repositories.optimization import OptimizationJobStore
 
@@ -51,6 +54,18 @@ def engine_store(engine: AsyncEngine) -> StoreFactory:
     return factory
 
 
+def solve_options(settings: Settings) -> SolveOptions:
+    """How every run is solved (`OPTIMIZER_TIME_LIMIT_S`, `OPTIMIZER_WORKERS`)."""
+    return SolveOptions(
+        time_limit_s=settings.optimizer_time_limit_s, workers=settings.optimizer_workers
+    )
+
+
+def run_settings(settings: Settings, inp: PlanningInput) -> dict[str, Any]:
+    """`options.solverSettings` of a run of `inp` (round 3, R7)."""
+    return solver_settings(solve_options(settings), inp.constraints)
+
+
 def _slips(report: Report) -> bool:
     """Whether the plan finishes after its target date (`summary.slipDays`)."""
     summary = (report.result or {}).get("summary") or {}
@@ -60,9 +75,7 @@ def _slips(report: Report) -> bool:
 class OptimizationRunner:
     def __init__(self, store: StoreFactory | None, settings: Settings) -> None:
         self._store = store
-        self._options = SolveOptions(
-            time_limit_s=settings.optimizer_time_limit_s, workers=settings.optimizer_workers
-        )
+        self._options = solve_options(settings)
         self._stale_after_s = settings.optimizer_stale_after_s
         # Strong references: the event loop only keeps weak ones to tasks.
         self._tasks: set[asyncio.Task[None]] = set()

@@ -7,9 +7,11 @@ in-process worker (`app/jobs/optimizer.py`) solves after the response. The
 run's `options` are the body as sent plus `inputsHash`: the hash the inputs
 sheet showed for the saved inputs, so the screen can tell when the latest
 plan is out of date (the sheet's `appliedHash` is that hash for the plan in
-force). With `changeRequestId` this is also the re-plan of a change on step 7.
-Inputs stay editable after a plan is applied; a run then starts from the plan
-in force (its baseline) unless the body names another `baselineRunId`.
+force), and `solverSettings`: how the worker solves it (solver, version,
+time limit, workers, seed, objective weights). With `changeRequestId` this
+is also the re-plan of a change on step 7. Inputs stay editable after a
+plan is applied; a run then starts from the plan in force (its baseline)
+unless the body names another `baselineRunId`.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from fastapi import APIRouter, BackgroundTasks, Request, Response, status
 from app.api.deps import OptimizationRuns, Optimizer, ProjectId, RunId
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableError
 from app.domain.optimization import InputRow, OptimizationInputs, OptimizationRun, RunCreate
-from app.jobs.optimizer import RESTART_ERROR
+from app.jobs.optimizer import RESTART_ERROR, run_settings
 from app.optimization.input_sheet import Blocker, Sheet, blocking_detail, build_sheet
 from app.optimization.inputs import inputs_hash
 from app.optimization.model import PlanningInput
@@ -178,6 +180,7 @@ async def create_run(
     options = body.model_dump(mode="json", by_alias=True, exclude_none=True)
     inp = apply_remedy(apply_overrides(inp, options.get("overrides")), body.remedy)
     options["inputsHash"] = saved_inputs_hash
+    options["solverSettings"] = run_settings(request.app.state.settings, inp)
 
     try:
         run_id = await runs.create(project_id, inp.to_snapshot(), options)

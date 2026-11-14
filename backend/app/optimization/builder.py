@@ -11,7 +11,7 @@ modes and capacity are in `workload.py`; the conflict texts come from
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
 
@@ -19,7 +19,7 @@ from ortools.sat.python import cp_model
 
 from app.optimization import conflicts
 from app.optimization.costing import spend_limit_cents
-from app.optimization.model import Conflict, Task
+from app.optimization.model import Conflict, Plan, ScheduledTask, Task
 from app.optimization.problem import Problem
 from app.optimization.workload import Workload
 
@@ -38,6 +38,20 @@ class Variables:
     start: dict[str, cp_model.IntVar]  # task id -> first working day
     end: dict[str, cp_model.LinearExprT]  # task id -> exclusive end, set by the chosen candidate
     assign: dict[str, dict[str, cp_model.IntVar]]  # task id -> resource id -> chosen?
+
+    def read(self, solver: cp_model.CpSolver, done: Mapping[str, ScheduledTask]) -> Plan:
+        """The solution as a plan: finished work where it happened, the rest as solved."""
+        plan = dict(done)
+        for task_id, choices in self.assign.items():
+            chosen = next(
+                resource_id
+                for resource_id, assigned in choices.items()
+                if solver.boolean_value(assigned)
+            )
+            plan[task_id] = ScheduledTask(
+                task_id, solver.value(self.start[task_id]), solver.value(self.end[task_id]), chosen
+            )
+        return Plan(plan)
 
 
 class ModelBuilder:

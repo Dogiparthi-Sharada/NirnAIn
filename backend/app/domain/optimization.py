@@ -157,7 +157,9 @@ class OptimizationRun(CamelModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
-    # Plan vN once the run is applied; options = how the run was set up.
+    # Plan vN once the run is applied; options = how the run was set up: the body as
+    # sent, `inputsHash` and `solverSettings` ({solver, version, timeLimitS, workers,
+    # seed, weights}).
     version: int | None = None
     applied_at: datetime | None = None
     options: dict[str, Any] = Field(default_factory=dict)
