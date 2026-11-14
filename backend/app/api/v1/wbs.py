@@ -7,7 +7,6 @@ from fastapi import APIRouter, Body, Response, status
 
 from app.api.deps import NodeId, ProjectId, Wbs
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableError
-from app.domain.team import ensure_unlocked
 from app.domain.wbs import (
     WbsConfirmEstimates,
     WbsMove,
@@ -34,7 +33,6 @@ async def _writable_node(wbs: Wbs, node_id: uuid.UUID) -> NodeRef:
         raise NotFoundError("WBS node not found")
     if not await wbs.can_write(node.project_id):
         raise ForbiddenError("You do not have permission to edit this WBS")
-    ensure_unlocked(await wbs.applied_version(node.project_id))
     return node
 
 
@@ -61,7 +59,6 @@ async def create_node(project_id: ProjectId, body: WbsNodeCreate, wbs: Wbs) -> W
         raise NotFoundError("Project not found")
     if not await wbs.can_write(project_id):
         raise ForbiddenError("You do not have permission to edit this WBS")
-    ensure_unlocked(await wbs.applied_version(project_id))
 
     if body.parent_id is None:
         if await wbs.has_root(project_id):
@@ -97,7 +94,6 @@ async def confirm_estimates(
         raise NotFoundError("Project not found")
     if not await wbs.can_write(project_id):
         raise ForbiddenError("You do not have permission to edit this WBS")
-    ensure_unlocked(await wbs.applied_version(project_id))
     await wbs.confirm_estimates(project_id, body.node_ids if body else None)
     return await wbs.tree(project_id)
 

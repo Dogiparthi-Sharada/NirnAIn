@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.domain.common import ItemOrigin
 from app.domain.wbs import WbsNode, WbsSkill, estimate_state
-from app.repositories import access, plan_lock
+from app.repositories import access
 from app.repositories.access import ProjectRef
 from app.repositories.tables import (
     employees,
@@ -65,9 +65,6 @@ class WbsRepository:
 
     async def is_active_employee(self, org_id: uuid.UUID, employee_id: uuid.UUID) -> bool:
         return await access.is_active_employee(self._conn, org_id, employee_id)
-
-    async def applied_version(self, project_id: uuid.UUID) -> int | None:
-        return await plan_lock.applied_version(self._conn, project_id)
 
     async def tree(self, project_id: uuid.UUID) -> list[WbsNode]:
         w = wbs_nodes_with_code

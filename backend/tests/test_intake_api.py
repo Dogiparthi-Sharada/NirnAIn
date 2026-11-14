@@ -16,7 +16,6 @@ from sqlalchemy.exc import IntegrityError
 from app.ai.evidence import ScopeSuggestion
 from app.ai.intake import Source
 from app.api import deps
-from app.api.v1 import intake as intake_api
 from app.core.security import CurrentPrincipal
 from app.domain.common import (
     DocumentKind,
@@ -45,8 +44,6 @@ class IntakeStore:
     texts: dict[uuid.UUID, str] = field(default_factory=dict)
     race: bool = False
     readable_upload: bool = False
-    # Plan version in force (None: the requirements are still editable).
-    applied_version: int | None = None
 
 
 class FakeIntakes:
@@ -121,17 +118,6 @@ class FakeIntakes:
         return item
 
 
-class FakePlanLock:
-    def __init__(self, data: IntakeStore) -> None:
-        self.data = data
-
-    async def version(self, project_id: uuid.UUID) -> int | None:
-        return self.data.applied_version
-
-    async def scope_item_version(self, item_id: uuid.UUID) -> int | None:
-        return self.data.applied_version
-
-
 class FakeIntaker:
     def __init__(self) -> None:
         self.submitted: list[uuid.UUID] = []
@@ -153,7 +139,6 @@ def intake_client(app: FastAPI, store: Store, intake_data: IntakeStore) -> Itera
     intaker = FakeIntaker()
     app.dependency_overrides[deps.get_intake_repo] = intakes
     app.dependency_overrides[deps.get_intake_runner] = lambda: intaker
-    app.dependency_overrides[intake_api.get_plan_lock] = lambda: FakePlanLock(intake_data)
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c
 

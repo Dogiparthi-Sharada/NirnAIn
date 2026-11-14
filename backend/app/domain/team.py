@@ -1,4 +1,4 @@
-"""The team on a project, the skills it needs, and the plan lock on its inputs."""
+"""The team on a project and the skills it needs."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from typing import Annotated, Any
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
-from app.core.errors import ConflictError
 from app.domain.common import CamelModel, InputModel
 
 PersonName = Annotated[str, StringConstraints(min_length=1, max_length=200)]
@@ -29,15 +28,6 @@ def clean_skill_names(names: list[str]) -> list[str]:
             seen.add(name.casefold())
             out.append(name)
     return out
-
-
-def ensure_unlocked(version: int | None) -> None:
-    """Inputs are frozen once a plan version is in force; changes go through step 7."""
-    if version is not None:
-        raise ConflictError(
-            f"Plan v{version} is in force; record a change on step 7",
-            extra={"version": version},
-        )
 
 
 # --------------------------------------------------------------------------- team

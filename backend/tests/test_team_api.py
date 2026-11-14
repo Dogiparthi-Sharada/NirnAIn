@@ -35,7 +35,6 @@ class TeamStore:
     project_skills: dict[tuple[uuid.UUID, uuid.UUID], bool] = field(default_factory=dict)
     wbs_skills: dict[uuid.UUID, list[uuid.UUID]] = field(default_factory=dict)  # project
     booked: dict[uuid.UUID, float] = field(default_factory=dict)
-    applied: dict[uuid.UUID, int] = field(default_factory=dict)
     weeks: list[Sequence[date]] = field(default_factory=list)
 
 
@@ -55,9 +54,6 @@ class FakeTeam:
 
     async def can_write(self, project_id: uuid.UUID) -> bool:
         return self._role(project_id) not in (None, OrgRole.VIEWER)
-
-    async def applied_version(self, project_id: uuid.UUID) -> int | None:
-        return self.t.applied.get(project_id)
 
     async def window(self, project: ProjectRef) -> tuple[date | None, date | None]:
         return project.start_date, project.target_end_date
@@ -306,11 +302,6 @@ def test_team_crud(
     assert [listed["fullName"] for listed in team_client.get(url, headers=headers).json()] == [
         "Mark Chen"
     ]
-
-    team_store.applied[uuid.UUID(pid)] = 1
-    response = team_client.post(url, json=SARA, headers=headers)
-    assert response.status_code == 409
-    assert response.json()["detail"] == "Plan v1 is in force; record a change on step 7"
     outsider = store.add_user("Eve")
     assert team_client.get(url, headers=auth(outsider)).status_code == 404
 
@@ -402,9 +393,6 @@ def test_skills_crud(
     assert team_client.delete(f"{url}/{sap}", headers=h).status_code == 404
     names = [s["name"] for s in team_client.get(url, headers=h).json()]
     assert sorted(names) == ["Spark / Kafka", "Terraform Cloud"]
-
-    team_store.applied[uuid.UUID(pid)] = 3
-    assert team_client.delete(f"{url}/{spark}", headers=h).status_code == 409
 
 
 def test_clean_skill_names() -> None:

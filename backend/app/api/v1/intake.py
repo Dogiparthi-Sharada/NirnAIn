@@ -1,20 +1,14 @@
 """AI intake endpoints: start / poll analysis runs and review the extracted scope items.
 
 All queries run under the caller's RLS session; only the background worker
-(`app.jobs.intake`) writes results on a service connection. Once a plan version is applied
-the requirements are frozen like every other input (409 "Plan vN is in force; record a
-change on step 7"): new intake runs and scope-item edits wait for step 7, where an approved
-change adds the requirements its notes bring.
+(`app.jobs.intake`) writes results on a service connection.
 """
 
 from __future__ import annotations
 
-from typing import Annotated
-
-from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Request, Response, status
 
 from app.api.deps import Intaker, Intakes, ItemId, ProjectId, RunId
-from app.core.db import UserDB
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableError
 from app.domain.intake import (
     IntakeRun,
@@ -23,20 +17,10 @@ from app.domain.intake import (
     ScopeItemCreate,
     ScopeItemUpdate,
 )
-from app.domain.team import ensure_unlocked
 from app.jobs.intake import RESTART_ERROR
 from app.repositories.intake import ActiveRunExistsError
-from app.repositories.plan_lock import PlanLock
 
 router = APIRouter(tags=["intake"])
-
-
-def get_plan_lock(connection: UserDB) -> PlanLock:
-    """The plan lock on the caller's RLS session (tests override this)."""
-    return PlanLock(connection)
-
-
-Locks = Annotated[PlanLock, Depends(get_plan_lock)]
 
 ACTIVE_RUN_DETAIL = "AI intake is already running for this project."
 NOTHING_TO_ANALYZE_DETAIL = "Paste project notes or upload a document first."
@@ -56,14 +40,12 @@ async def create_run(
     background: BackgroundTasks,
     runs: Intakes,
     intaker: Intaker,
-    locks: Locks,
 ) -> IntakeRun:
     """Queue a run over the pasted `text` plus every upload whose text was read."""
     if not await runs.project_exists(project_id):
         raise NotFoundError("Project not found")
     if not await runs.can_write(project_id):
         raise ForbiddenError("You do not have permission to analyze this project")
-    ensure_unlocked(await locks.version(project_id))
     if not body.text and not await runs.has_readable_upload(project_id):
         raise UnprocessableError(NOTHING_TO_ANALYZE_DETAIL)
 
@@ -147,14 +129,13 @@ async def list_scope_items(project_id: ProjectId, runs: Intakes) -> list[ScopeIt
     summary="Add a scope item by hand (accepted, appended to its category)",
 )
 async def create_scope_item(
-    project_id: ProjectId, body: ScopeItemCreate, runs: Intakes, locks: Locks
+    project_id: ProjectId, body: ScopeItemCreate, runs: Intakes
 ) -> ScopeItem:
     """Add the user's own item: accepted, origin manual, no evidence ("Yours")."""
     if not await runs.project_exists(project_id):
         raise NotFoundError("Project not found")
     if not await runs.can_write(project_id):
         raise ForbiddenError("You do not have permission to edit this project's scope")
-    ensure_unlocked(await locks.version(project_id))
     item = await runs.create_item(project_id, body.category, body.text)
     if item is None:
         raise ForbiddenError("The scope item was created but is not visible to you")
@@ -166,11 +147,8 @@ async def create_scope_item(
     response_model=ScopeItem,
     summary="Accept, edit, or remove a scope item",
 )
-async def update_scope_item(
-    item_id: ItemId, body: ScopeItemUpdate, runs: Intakes, locks: Locks
-) -> ScopeItem:
+async def update_scope_item(item_id: ItemId, body: ScopeItemUpdate, runs: Intakes) -> ScopeItem:
     """Partial update; text equal to `suggestedText` resolves a flagged item to stated."""
-    ensure_unlocked(await locks.scope_item_version(item_id))
     patch = body.model_dump(exclude_unset=True)
     item = await runs.update_item(item_id, patch)
     if item is None:

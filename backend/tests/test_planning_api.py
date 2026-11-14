@@ -55,7 +55,6 @@ class PlanStore:
     required: dict[uuid.UUID, tuple[str, int]] = field(default_factory=dict)
     held: dict[uuid.UUID, tuple[str, int]] = field(default_factory=dict)
     weeks: list[Sequence[date]] = field(default_factory=list)
-    applied: dict[uuid.UUID, int] = field(default_factory=dict)
 
 
 class FakePlanning:
@@ -74,9 +73,6 @@ class FakePlanning:
 
     async def can_write(self, project_id: uuid.UUID) -> bool:
         return self._role(project_id) not in (None, OrgRole.VIEWER)
-
-    async def applied_version(self, project_id: uuid.UUID) -> int | None:
-        return self.ps.applied.get(project_id)
 
     async def constraints(self, project: ProjectRef) -> ConstraintSet:
         return self.ps.constraints.get(project.id) or ConstraintSet(
@@ -515,11 +511,3 @@ def test_constraint_answers(
     assert (saved["allowContractors"], saved["contractorRateCents"]) == (True, 15_000)
     bad = {**CONSTRAINTS, "deadlineAnswer": "maybe"}
     assert plan_client.put(url, json=bad, headers=h).status_code == 422
-
-    plan_store.applied[uuid.UUID(pid)] = 1
-    r = plan_client.put(url, json=CONSTRAINTS, headers=h)
-    assert r.status_code == 409
-    assert "Plan v1 is in force" in r.json()["detail"]
-    deps_url = f"/api/v1/projects/{pid}/dependencies"
-    body = {"predecessorId": str(uuid.uuid4()), "successorId": str(uuid.uuid4())}
-    assert plan_client.post(deps_url, json=body, headers=h).status_code == 409

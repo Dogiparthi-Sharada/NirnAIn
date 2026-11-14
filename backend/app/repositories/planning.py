@@ -26,7 +26,7 @@ from app.domain.planning import (
     PoolEmployee,
     average_weekly_hours,
 )
-from app.repositories import access, plan_lock
+from app.repositories import access
 from app.repositories.access import ProjectRef
 from app.repositories.tables import (
     allocations,
@@ -83,9 +83,6 @@ class PlanningRepository:
 
     async def can_write(self, project_id: uuid.UUID) -> bool:
         return await access.can_write_project(self._conn, project_id)
-
-    async def applied_version(self, project_id: uuid.UUID) -> int | None:
-        return await plan_lock.applied_version(self._conn, project_id)
 
     # ------------------------------------------------------------------ constraints
     async def constraints(self, project: ProjectRef) -> ConstraintSet:

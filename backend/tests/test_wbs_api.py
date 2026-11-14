@@ -27,7 +27,6 @@ Auth = Callable[[uuid.UUID], dict[str, str]]
 class WbsStore:
     nodes: dict[uuid.UUID, dict[str, Any]] = field(default_factory=dict)
     employees: dict[uuid.UUID, tuple[uuid.UUID, str, bool]] = field(default_factory=dict)
-    applied: dict[uuid.UUID, int] = field(default_factory=dict)
     seq: int = 0
 
 
@@ -51,9 +50,6 @@ class FakeWbs:
     async def is_active_employee(self, org_id: uuid.UUID, employee_id: uuid.UUID) -> bool:
         e = self.w.employees.get(employee_id)
         return e is not None and e[0] == org_id and e[2]
-
-    async def applied_version(self, project_id: uuid.UUID) -> int | None:
-        return self.w.applied.get(project_id)
 
     async def confirm_estimates(
         self, project_id: uuid.UUID, node_ids: list[uuid.UUID] | None
@@ -465,25 +461,6 @@ def test_confirm_estimates(
     assert wbs_client.post(url, json={}, headers=auth(viewer)).status_code == 403
     missing = f"/api/v1/projects/{uuid.uuid4()}/wbs/confirm-estimates"
     assert wbs_client.post(missing, json={}, headers=h).status_code == 404
-
-
-def test_inputs_lock_once_a_plan_is_applied(
-    wbs_client: TestClient, store: Store, wbs_store: WbsStore, auth: Auth
-) -> None:
-    user, _, pid = _project(wbs_client, store, auth)
-    h = auth(user)
-    root = _add(wbs_client, pid, h, name="CRM")
-    wbs_store.applied[uuid.UUID(pid)] = 2
-    r = wbs_client.patch(f"/api/v1/wbs/nodes/{root['id']}", json={"name": "X"}, headers=h)
-    assert r.status_code == 409
-    assert r.json()["detail"] == "Plan v2 is in force; record a change on step 7"
-    assert r.json()["version"] == 2
-    r = wbs_client.post(f"/api/v1/projects/{pid}/wbs/nodes", json={"name": "Y"}, headers=h)
-    assert r.status_code == 409
-    url = f"/api/v1/projects/{pid}/wbs/confirm-estimates"
-    assert wbs_client.post(url, json={}, headers=h).status_code == 409
-    assert wbs_client.delete(f"/api/v1/wbs/nodes/{root['id']}", headers=h).status_code == 409
-    assert wbs_client.get(f"/api/v1/projects/{pid}/wbs", headers=h).status_code == 200
 
 
 @pytest.mark.parametrize(

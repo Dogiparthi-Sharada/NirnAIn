@@ -15,7 +15,6 @@ from app.domain.team import (
     TeamMember,
     TeamMemberCreate,
     TeamMemberUpdate,
-    ensure_unlocked,
 )
 from app.repositories.access import ProjectRef
 
@@ -33,7 +32,6 @@ async def _editable_project(team: Team, project_id: uuid.UUID) -> ProjectRef:
     project = await _project(team, project_id)
     if not await team.can_write(project_id):
         raise ForbiddenError("You do not have permission to edit this project's team")
-    ensure_unlocked(await team.applied_version(project_id))
     return project
 
 
