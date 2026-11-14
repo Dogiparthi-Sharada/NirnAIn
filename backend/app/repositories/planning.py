@@ -26,7 +26,7 @@ from app.domain.planning import (
     PoolEmployee,
     average_weekly_hours,
 )
-from app.repositories import access
+from app.repositories import access, plan_lock
 from app.repositories.access import ProjectRef
 from app.repositories.tables import (
     allocations,
@@ -64,6 +64,11 @@ def _default_constraints(project: ProjectRef) -> dict[str, Any]:
         "working_days_per_week": 5,
         "capacity_mode": ConstraintMode.SOFT,
         "skill_mode": ConstraintMode.HARD,
+        "specialist_answer": None,
+        "deadline_answer": None,
+        "specialist_rate_confirmed": False,
+        "contractor_rate_cents": None,
+        "allow_contractors": True,
     }
 
 
@@ -78,6 +83,9 @@ class PlanningRepository:
 
     async def can_write(self, project_id: uuid.UUID) -> bool:
         return await access.can_write_project(self._conn, project_id)
+
+    async def applied_version(self, project_id: uuid.UUID) -> int | None:
+        return await plan_lock.applied_version(self._conn, project_id)
 
     # ------------------------------------------------------------------ constraints
     async def constraints(self, project: ProjectRef) -> ConstraintSet:
@@ -96,6 +104,11 @@ class PlanningRepository:
                     cs.c.working_days_per_week,
                     cs.c.capacity_mode,
                     cs.c.skill_mode,
+                    cs.c.specialist_answer,
+                    cs.c.deadline_answer,
+                    cs.c.specialist_rate_confirmed,
+                    cs.c.contractor_rate_cents,
+                    cs.c.allow_contractors,
                 ).where(cs.c.project_id == project.id)
             )
         ).first()

@@ -55,6 +55,7 @@ class PlanStore:
     required: dict[uuid.UUID, tuple[str, int]] = field(default_factory=dict)
     held: dict[uuid.UUID, tuple[str, int]] = field(default_factory=dict)
     weeks: list[Sequence[date]] = field(default_factory=list)
+    applied: dict[uuid.UUID, int] = field(default_factory=dict)
 
 
 class FakePlanning:
@@ -73,6 +74,9 @@ class FakePlanning:
 
     async def can_write(self, project_id: uuid.UUID) -> bool:
         return self._role(project_id) not in (None, OrgRole.VIEWER)
+
+    async def applied_version(self, project_id: uuid.UUID) -> int | None:
+        return self.ps.applied.get(project_id)
 
     async def constraints(self, project: ProjectRef) -> ConstraintSet:
         return self.ps.constraints.get(project.id) or ConstraintSet(
@@ -94,8 +98,10 @@ class FakePlanning:
         return {i for i in ids if i in self.ps.nodes and self.ps.nodes[i][0] == project_id}
 
     async def save_constraints(self, project_id: uuid.UUID, body: ConstraintSetInput) -> None:
+        previous = self.ps.constraints.get(project_id)
         self.ps.constraints[project_id] = ConstraintSet.model_validate(
             {
+                **(previous.model_dump(by_alias=False) if previous else {}),
                 **body.values(),
                 "milestones": [
                     Milestone.model_validate(
@@ -484,3 +490,36 @@ async def test_repo_capacity_averages_other_projects() -> None:
     assert "allocations.project_id != " in conn.sql[0]
     assert conn.params[0]["week_start_1"] == date(2026, 11, 16)
     assert conn.params[0]["week_start_2"] == date(2026, 12, 28)
+
+
+def test_constraint_answers(
+    plan_client: TestClient, store: Store, plan_store: PlanStore, auth: Auth
+) -> None:
+    user, _, pid = _project(plan_client, store, auth)
+    h = auth(user)
+    url = f"/api/v1/projects/{pid}/constraints"
+    body = plan_client.get(url, headers=h).json()
+    assert (body["specialistAnswer"], body["deadlineAnswer"]) == (None, None)
+    assert (body["allowContractors"], body["specialistRateConfirmed"]) == (True, False)
+
+    answered = {**CONSTRAINTS, "specialistAnswer": "unknown", "deadlineAnswer": "soft"}
+    saved = plan_client.put(url, json=answered, headers=h).json()
+    assert (saved["specialistAnswer"], saved["deadlineAnswer"]) == ("unknown", "soft")
+    assert (saved["deadlineMode"], saved["allowContractors"]) == ("soft", False)
+
+    # An older client that doesn't send the answers keeps them.
+    saved = plan_client.put(url, json=CONSTRAINTS, headers=h).json()
+    assert (saved["specialistAnswer"], saved["deadlineAnswer"]) == ("unknown", "soft")
+    answered = {**CONSTRAINTS, "specialistAnswer": "yes", "contractorRateCents": 15_000}
+    saved = plan_client.put(url, json=answered, headers=h).json()
+    assert (saved["allowContractors"], saved["contractorRateCents"]) == (True, 15_000)
+    bad = {**CONSTRAINTS, "deadlineAnswer": "maybe"}
+    assert plan_client.put(url, json=bad, headers=h).status_code == 422
+
+    plan_store.applied[uuid.UUID(pid)] = 1
+    r = plan_client.put(url, json=CONSTRAINTS, headers=h)
+    assert r.status_code == 409
+    assert "Plan v1 is in force" in r.json()["detail"]
+    deps_url = f"/api/v1/projects/{pid}/dependencies"
+    body = {"predecessorId": str(uuid.uuid4()), "successorId": str(uuid.uuid4())}
+    assert plan_client.post(deps_url, json=body, headers=h).status_code == 409

@@ -4,7 +4,7 @@ import math
 import uuid
 from collections.abc import Mapping
 from datetime import date, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, StringConstraints, model_validator
 
@@ -20,6 +20,19 @@ LagDays = Annotated[int, Field(ge=-365, le=365)]
 
 
 # --------------------------------------------------------------------------- constraints
+SpecialistAnswer = Literal["yes", "no", "unknown"]
+DeadlineAnswer = Literal["hard", "soft", "unknown"]
+
+# Answers to the questions that change the plan (null = not answered yet) and contractor terms.
+ANSWER_FIELDS = (
+    "specialist_answer",
+    "deadline_answer",
+    "specialist_rate_confirmed",
+    "contractor_rate_cents",
+    "allow_contractors",
+)
+
+
 class Milestone(CamelModel):
     id: uuid.UUID
     name: str
@@ -41,6 +54,11 @@ class ConstraintSet(CamelModel):
     capacity_mode: ConstraintMode
     skill_mode: ConstraintMode
     milestones: list[Milestone]
+    specialist_answer: SpecialistAnswer | None = None
+    deadline_answer: DeadlineAnswer | None = None
+    specialist_rate_confirmed: bool = False
+    contractor_rate_cents: int | None = None
+    allow_contractors: bool = True
 
 
 class MilestoneInput(InputModel):
@@ -64,6 +82,12 @@ class ConstraintSetInput(InputModel):
     capacity_mode: ConstraintMode
     skill_mode: ConstraintMode
     milestones: Annotated[list[MilestoneInput], Field(max_length=200)]
+    # Optional so older clients keep working: fields left out keep their saved values.
+    specialist_answer: SpecialistAnswer | None = None
+    deadline_answer: DeadlineAnswer | None = None
+    specialist_rate_confirmed: bool | None = None
+    contractor_rate_cents: BudgetCents | None = None
+    allow_contractors: bool | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> ConstraintSetInput:
@@ -79,7 +103,22 @@ class ConstraintSetInput(InputModel):
         return self
 
     def values(self) -> dict[str, Any]:
-        return self.model_dump(exclude={"milestones"}, by_alias=False)
+        """Columns to save. The deadline policy follows the deadline answer once it is given,
+        and the specialist answer decides whether outside contractors may be used."""
+        values = self.model_dump(exclude={"milestones", *ANSWER_FIELDS}, by_alias=False)
+        for name in ANSWER_FIELDS:
+            if name in self.model_fields_set:
+                values[name] = getattr(self, name)
+        if values.get("specialist_rate_confirmed") is None:
+            values.pop("specialist_rate_confirmed", None)
+        if values.get("allow_contractors") is None:
+            values.pop("allow_contractors", None)
+        if self.deadline_answer is not None:
+            soft = self.deadline_answer == "soft"
+            values["deadline_mode"] = ConstraintMode.SOFT if soft else ConstraintMode.HARD
+        if self.specialist_answer is not None and "allow_contractors" not in values:
+            values["allow_contractors"] = self.specialist_answer == "yes"
+        return values
 
 
 # --------------------------------------------------------------------------- resources
