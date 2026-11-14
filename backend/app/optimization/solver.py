@@ -52,9 +52,10 @@ constraints below (each person's modes and capacity in `workload.py`),
   rate, else the standard $85/h; team contractors at their own rate, else
   the project's contractor rate (`resources.planned_rate_cents`). The overtime
   premium is in the objective and the reported cost, not in this cap.
-  `budget_total_cents` and `labor_cap_cents` both cap it (infra cost isn't
-  modelled). Hard -> a constraint, soft ->
-  `budget_penalty` per $1,000 over.
+  `budget_total_cents` less its contingency reserve (`contingency_pct`,
+  held back: cost + reserve <= budget) and `labor_cap_cents` both cap it
+  (infra cost isn't modelled). Hard -> a constraint, soft ->
+  `budget_penalty` per $1,000 over the budget less the reserve.
 * Objective, in cents: labor cost + $200 per working day of makespan + soft
   penalties + $500 per task moved off its current owner (keeps
   recommendations few and explainable, plan.md §6.1) + $10 per working day a

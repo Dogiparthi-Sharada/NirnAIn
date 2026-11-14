@@ -19,7 +19,8 @@ applied while reading (approved NirnAIn workflow, step 5):
 * Hourly rates are read as stored; people without one are planned at the
   $85/h default (`model.DEFAULT_HOURLY_RATE_CENTS`) and the confirmation
   sheet says so.
-* Budget, capacity and skill policies are used as stored.
+* Budget, capacity and skill policies are used as stored. The contingency
+  reserve is held back from the budget: the plan may spend the rest.
 
 `input_facts.py` gathers what the confirmation sheet needs beyond the input.
 """
@@ -105,6 +106,7 @@ def build_constraints(
             labor_cap_cents=constraint_set.labor_cap_cents,
             budget_mode=str(constraint_set.budget_mode),  # type: ignore[arg-type]
             budget_penalty=float(constraint_set.budget_penalty),
+            contingency_pct=float(constraint_set.contingency_pct),
             must_finish_by=constraint_set.must_finish_by or project.target_end_date,
             deadline_mode="soft" if constraint_set.deadline_answer == "soft" else "hard",
             deadline_penalty_per_day=float(constraint_set.deadline_penalty_per_day),

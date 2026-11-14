@@ -139,7 +139,9 @@ inputs sheet. Unconfirmed AI estimates and unanswered questions that matter bloc
 run (422). A person's skill level sets their pace on a work package: each level above
 its minimum is 10% faster (at most 30%), each level below ("Can flex" skills only) 25%
 slower; the hours, and so the duration and cost, scale with it, on top of a
-part-timer's stretch (`speed.py`).
+part-timer's stretch (`speed.py`). The contingency reserve is held back from the
+budget: a hard budget caps the plan's cost at the budget less the reserve, and a soft
+budget is penalized from there on (inputs sheet: "Reserve · 10% = $110,000 held back").
 
 `POST .../optimization/runs` loads the plan under the caller's RLS session, freezes it
 into `input_snapshot` and commits. A background task then solves it in-process

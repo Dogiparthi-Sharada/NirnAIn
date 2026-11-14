@@ -115,6 +115,8 @@ class Constraints:
     labor_cap_cents: int | None = None
     budget_mode: ConstraintMode = "hard"
     budget_penalty: float = 1000.0  # objective cost per $1,000 over budget
+    # Percent of the budget held back as a reserve: the plan may spend the rest (R5).
+    contingency_pct: float = 0.0
     must_finish_by: date | None = None
     deadline_mode: ConstraintMode = "hard"
     deadline_penalty_per_day: float = 500.0  # objective cost per working day late
@@ -211,6 +213,7 @@ class PlanningInput:
                 "labor_cap_cents": constraints.labor_cap_cents,
                 "budget_mode": constraints.budget_mode,
                 "budget_penalty": constraints.budget_penalty,
+                "contingency_pct": constraints.contingency_pct,
                 "must_finish_by": _iso(constraints.must_finish_by),
                 "deadline_mode": constraints.deadline_mode,
                 "deadline_penalty_per_day": constraints.deadline_penalty_per_day,
@@ -313,6 +316,7 @@ def _parse_snapshot(data: Mapping[str, Any]) -> PlanningInput:
         labor_cap_cents=_opt_int(stored.get("labor_cap_cents")),
         budget_mode=_mode(stored.get("budget_mode", "hard")),
         budget_penalty=_penalty(stored.get("budget_penalty"), 1000.0),
+        contingency_pct=min(_penalty(stored.get("contingency_pct"), 0.0), 100.0),
         must_finish_by=_opt_date(stored.get("must_finish_by")),
         deadline_mode=_mode(stored.get("deadline_mode", "hard")),
         deadline_penalty_per_day=_penalty(stored.get("deadline_penalty_per_day"), 500.0),

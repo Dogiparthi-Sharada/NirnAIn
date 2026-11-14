@@ -70,8 +70,9 @@ def milestone(problem: Problem, due: Milestone, tasks: Sequence[Task]) -> Confli
     )
 
 
-def budget(problem: Problem, label: str, cap: int) -> Conflict:
-    """A hard budget or labor cap, with the cheapest qualified staffing when that is over."""
+def budget(problem: Problem, label: str, amount: int, held: int = 0) -> Conflict:
+    """A hard budget (less the reserve `held` back) or labor cap, with the cheapest
+    qualified staffing when that is over."""
     cheapest = sum(
         min(
             (problem.cost[task.id, resource.id] for resource in problem.allowed(task)),
@@ -79,16 +80,23 @@ def budget(problem: Problem, label: str, cap: int) -> Conflict:
         )
         for task in problem.tasks.values()
     )
-    name = f"{label}: {fmt.money(cap)}"
+    name = f"{label}: {fmt.money(amount)}"
+    cap = amount - held
+    room = (
+        f"the {fmt.money(cap)} left after holding back the {fmt.money(held)} reserve"
+        if held
+        else "the cap"
+    )
     if cheapest > cap:
         return Conflict(
             name,
             f"Even the cheapest qualified staffing costs about {fmt.money(cheapest)}, "
-            f"{fmt.money(cheapest - cap)} more than the cap.",
+            f"{fmt.money(cheapest - cap)} more than {room}.",
         )
+    within = f" (the budget less its {fmt.money(held)} reserve)" if held else ""
     return Conflict(
         name,
-        f"Staying within {fmt.money(cap)} needs cheaper people than the other "
+        f"Staying within {fmt.money(cap)}{within} needs cheaper people than the other "
         "constraints listed here allow.",
     )
 

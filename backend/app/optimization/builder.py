@@ -18,6 +18,7 @@ from functools import partial
 from ortools.sat.python import cp_model
 
 from app.optimization import conflicts
+from app.optimization.costing import spend_limit_cents
 from app.optimization.model import Conflict, Task
 from app.optimization.problem import Problem
 from app.optimization.workload import Workload
@@ -237,17 +238,20 @@ class ModelBuilder:
             max((problem.cost[task_id, resource.id] for resource in candidates), default=0)
             for task_id, candidates in problem.candidates.items()
         )
-        for key, label, cap in (
-            ("budget", "Budget cap", self.constraints.budget_total_cents),
-            ("labor", "Labor cap", self.constraints.labor_cap_cents),
+        limit, labor_cap = spend_limit_cents(self.constraints), self.constraints.labor_cap_cents
+        # The reserve is held back (R5): the hard cap, and the soft penalty's start, is
+        # the budget less the reserve. The labor cap has no reserve.
+        for key, label, amount, cap in (
+            ("budget", "Budget cap", self.constraints.budget_total_cents, limit),
+            ("labor", "Labor cap", labor_cap, labor_cap),
         ):
-            if cap is None:
+            if amount is None or cap is None:
                 continue
             if self.constraints.budget_mode == "hard":
                 self.guard(
                     model.add(cost <= cap),
                     (key,),
-                    partial(conflicts.budget, problem, label, cap),
+                    partial(conflicts.budget, problem, label, amount, amount - cap),
                 )
             elif not self.explain:
                 over = model.new_int_var(0, worst // BUDGET_UNIT_CENTS + 1, f"over[{key}]")

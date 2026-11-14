@@ -151,7 +151,11 @@ def test_facts_from_input_and_org_fallback_team() -> None:
     assert rows["team"].source == "default"
     assert rows["team"].value.startswith("No project team yet, so everyone active")
     assert (rows["budget"].value, rows["budget"].from_) == ("$20,000 · must hold", "Step 1")
-    assert (rows["contingency"].value, rows["contingency"].source) == ("10%", "yours")
+    assert (rows["contingency"].label, rows["contingency"].value) == (
+        "Reserve",
+        "10% = $2,000 held back",
+    )
+    assert rows["contingency"].source == "yours"
     assert (rows["workingDays"].value, rows["workingDays"].source) == ("6 per week", "yours")
     assert rows["specialists"].source == "needs_you"
 
@@ -206,6 +210,7 @@ def test_inputs_hash_ignores_other_projects_bookings() -> None:
     booked = dataclasses.replace(inp, allocations=(Allocation("e1", date(2026, 10, 12), 8),))
     assert inputs_hash(inp) == inputs_hash(booked)
     assert inputs_hash(inp) != inputs_hash(with_constraints(inp, budget_total_cents=1))
+    assert inputs_hash(inp) != inputs_hash(with_constraints(inp, contingency_pct=10))
     first, second = inp.employees
     repriced = dataclasses.replace(
         inp, employees=(dataclasses.replace(first, hourly_rate_cents=None), second)

@@ -273,6 +273,7 @@ async def test_load_input_with_constraint_set_and_no_data() -> None:
         "labor_cap_cents": 100,
         "budget_mode": "soft",
         "budget_penalty": 10.0,
+        "contingency_pct": Decimal("12.50"),
         "start_date": date(2026, 11, 2),
         "must_finish_by": None,
         "deadline_mode": "soft",
@@ -298,6 +299,7 @@ async def test_load_input_with_constraint_set_and_no_data() -> None:
     assert c.must_finish_by == ctx.target_end_date
     assert (c.labor_cap_cents, c.budget_mode, c.working_days_per_week) == (100, "soft", 6)
     assert (c.capacity_mode, c.skill_mode, c.deadline_mode) == ("hard", "soft", "soft")
+    assert c.contingency_pct == 12.5
     assert (c.allow_contractors, c.contractor_rate_cents) == (True, 17_500)  # default rate
     assert "project_team_members" in conn.sql[1]
     assert "employees.active IS true" in conn.sql[2]  # no project team: whole org
@@ -325,6 +327,7 @@ def test_answers_set_deadline_and_specialist_policy(
         labor_cap_cents=None,
         budget_mode="soft",
         budget_penalty=1.0,
+        contingency_pct=0,
         must_finish_by=date(2026, 12, 18),
         deadline_mode="soft",  # ignored: the answer decides
         deadline_penalty_per_day=1.0,
