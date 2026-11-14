@@ -5,25 +5,21 @@ It fills a field only when the text says it, keeping the sentence it came from
 as the quote; everything else stays missing for the PM. Nothing is guessed:
 "by Q3 2025" becomes an *inferred* end date the PM has to confirm.
 
-Pure functions over the source text; `app.drafts.reader.DraftReader` calls
-`rules_draft` for `POST /orgs/{orgId}/project-drafts/extract`.
+Pure functions over the source text (date parsing lives in `app.drafts.dates`);
+`app.drafts.reader.DraftReader` calls `rules_draft` for
+`POST /orgs/{orgId}/project-drafts/extract`.
 """
 
 from __future__ import annotations
 
-import calendar
 import re
 from collections.abc import Iterator
-from dataclasses import dataclass
-from datetime import date
 from decimal import Decimal
-from typing import Literal
 
 from app.ai.prompting import one_line
 from app.domain.drafts import DateField, MoneyField, ProjectDraftFields, TextField
 from app.domain.projects import MAX_SAFE_CENTS
-
-Role = Literal["start", "end"]
+from app.drafts.dates import Role, date_hits, date_role, strip_trailing_date
 
 NAME_LIMIT = 200
 DESCRIPTION_LIMIT = 1000
@@ -31,36 +27,6 @@ DEPARTMENT_LIMIT = 120
 SPONSOR_LIMIT = 200
 TITLE_MAX_WORDS = 12
 TITLE_MAX_CHARS = 150
-ROLE_AFTER_CHARS = 40
-
-_MONTH = (
-    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?"
-    r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
-)
-_MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
-
-_ISO_DATE = re.compile(r"\b(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})\b")
-_MONTH_DAY_YEAR = re.compile(
-    rf"\b(?P<month_name>{_MONTH})\.?\s+(?P<day>\d{{1,2}})(?:st|nd|rd|th)?,?\s+(?P<year>\d{{4}})\b",
-    re.IGNORECASE,
-)
-_DAY_MONTH_YEAR = re.compile(
-    rf"\b(?P<day>\d{{1,2}})(?:st|nd|rd|th)?\s+(?P<month_name>{_MONTH})\.?,?\s+(?P<year>\d{{4}})\b",
-    re.IGNORECASE,
-)
-_QUARTER = re.compile(r"\bQ(?P<quarter>[1-4])\s*(?:FY\s*)?(?P<year>\d{4})\b", re.IGNORECASE)
-_MONTH_YEAR = re.compile(rf"\b(?P<month_name>{_MONTH})\.?\s+(?P<year>\d{{4}})\b", re.IGNORECASE)
-
-_DEADLINE_BEFORE = re.compile(
-    r"\b(?:by|until|before|no\s+later\s+than|not\s+later\s+than)\s+(?:the\s+)?(?:end\s+of\s+)?$",
-    re.IGNORECASE,
-)
-_ROLE_WORDS = re.compile(
-    r"(?P<start>\bstart\w*|\bkick[\s-]?off\w*|\bbegin\w*|\bcommenc\w*)"
-    r"|(?P<end>\bgo[\s-]?live\b|\blaunch\w*|\bdeadline\w*|\bdue\b|\bdeliver\w*|\bfinish\w*"
-    r"|\bcomplet\w*|\bend(?:s|ing)?\b(?!-)|\btarget\w*|\bwrap\w*\s+up)",
-    re.IGNORECASE,
-)
 
 _AMOUNT = r"\d{1,3}(?:,\d{3})+|\d+"
 _SCALE = r"k|mm|mn|m|bn|thousand|million|billion"
@@ -124,17 +90,6 @@ _TITLE_SUFFIX = re.compile(
 _SPEAKER_LABEL = re.compile(r"^[^:]{1,40}:\s")
 
 
-@dataclass(frozen=True, slots=True)
-class _DateHit:
-    """A date mention in a sentence; a quarter or month spans `first`..`last`."""
-
-    start: int
-    end: int
-    first: date
-    last: date
-    exact: bool
-
-
 # --------------------------------------------------------------------------- text helpers
 def lines(text: str) -> Iterator[str]:
     """Non-empty lines without their bullet / list markers."""
@@ -159,19 +114,11 @@ def _clean_title(line: str) -> str:
     name = _TITLE_PREFIX.sub("", line, count=1)
     for _ in range(4):
         before = name
-        name = _strip_trailing_date(name)
+        name = strip_trailing_date(name, _SEPARATORS)
         name = _TITLE_SUFFIX.sub("", name)
         if name == before:
             break
     return name.strip(_SEPARATORS + ")")
-
-
-def _strip_trailing_date(text: str) -> str:
-    for pattern in (_ISO_DATE, _MONTH_DAY_YEAR, _DAY_MONTH_YEAR, _QUARTER, _MONTH_YEAR):
-        found = [match for match in pattern.finditer(text) if not text[match.end() :].strip(" )")]
-        if found:
-            return text[: found[-1].start()].rstrip(_SEPARATORS)
-    return text
 
 
 def _looks_like_title(line: str) -> bool:
@@ -261,61 +208,6 @@ def find_budget(text: str) -> MoneyField:
 
 
 # --------------------------------------------------------------------------- dates
-def _month(name: str) -> int:
-    return _MONTHS.index(name[:3].lower()) + 1
-
-
-def _date_hits(sentence: str) -> list[_DateHit]:
-    hits: list[_DateHit] = []
-
-    def is_free(match: re.Match[str]) -> bool:
-        """Not inside a more precise date found earlier ("15 January 2025" vs "January 2025")."""
-        return all(match.end() <= hit.start or match.start() >= hit.end for hit in hits)
-
-    for pattern in (_ISO_DATE, _MONTH_DAY_YEAR, _DAY_MONTH_YEAR):
-        for match in pattern.finditer(sentence):
-            if not is_free(match):
-                continue
-            month = (
-                int(match["month"])
-                if "month" in pattern.groupindex
-                else _month(match["month_name"])
-            )
-            try:
-                day = date(int(match["year"]), month, int(match["day"]))
-            except ValueError:
-                continue
-            hits.append(_DateHit(match.start(), match.end(), day, day, exact=True))
-    for match in _QUARTER.finditer(sentence):
-        if is_free(match):
-            year, quarter = int(match["year"]), int(match["quarter"])
-            first = date(year, 3 * quarter - 2, 1)
-            last_month = 3 * quarter
-            last = date(year, last_month, calendar.monthrange(year, last_month)[1])
-            hits.append(_DateHit(match.start(), match.end(), first, last, exact=False))
-    for match in _MONTH_YEAR.finditer(sentence):
-        if is_free(match):
-            year, month = int(match["year"]), _month(match["month_name"])
-            last = date(year, month, calendar.monthrange(year, month)[1])
-            hits.append(
-                _DateHit(match.start(), match.end(), date(year, month, 1), last, exact=False)
-            )
-    return sorted(hits, key=lambda hit: hit.start)
-
-
-def _role(before: str, after: str) -> Role | None:
-    """What a date is for, from the nearest cue word before it (else just after it)."""
-    if _DEADLINE_BEFORE.search(before):
-        return "end"
-    cues = list(_ROLE_WORDS.finditer(before))
-    if cues:
-        return "start" if cues[-1]["start"] else "end"
-    cue = _ROLE_WORDS.search(after[:ROLE_AFTER_CHARS])
-    if cue:
-        return "start" if cue["start"] else "end"
-    return None
-
-
 def find_dates(text: str) -> tuple[DateField, DateField]:
     """(start, target end) from dates next to start / deadline words.
 
@@ -325,11 +217,11 @@ def find_dates(text: str) -> tuple[DateField, DateField]:
     """
     found: dict[tuple[Role, bool], DateField] = {}
     for sentence in sentences(text):
-        hits = _date_hits(sentence)
+        hits = date_hits(sentence)
         for index, hit in enumerate(hits):
             previous_end = hits[index - 1].end if index else 0
             next_start = hits[index + 1].start if index + 1 < len(hits) else len(sentence)
-            role = _role(sentence[previous_end : hit.start], sentence[hit.end : next_start])
+            role = date_role(sentence[previous_end : hit.start], sentence[hit.end : next_start])
             if role is None or (role, hit.exact) in found:
                 continue
             day = hit.first if role == "start" else hit.last
