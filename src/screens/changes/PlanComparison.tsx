@@ -21,10 +21,24 @@ interface CompareQuery {
   refetch: () => unknown
 }
 
-/** A row the user should see in "What moved and why": added, dropped, re-dated or re-owned. */
-function isChanged(row: CompareRow): boolean {
-  if (row.before === null || row.after === null || row.ownerChanged) return true
+/**
+ * Work the change marks done (a progress update at 100%, or "done" in the notes). The backend
+ * gives it the reason "Done, nothing left to plan"; it may keep its bar, since finished work
+ * stays where it was (contract R2).
+ */
+function isDone(row: CompareRow): boolean {
+  return row.why?.startsWith('Done') ?? false
+}
+
+/** The two plans give it different dates. */
+function isMoved(row: CompareRow): boolean {
+  if (row.before === null || row.after === null) return false
   return row.before.start !== row.after.start || row.before.end !== row.after.end
+}
+
+/** A row the user should see in "What moved and why": added, done, dropped, re-dated or re-owned. */
+function isChanged(row: CompareRow): boolean {
+  return row.before === null || row.after === null || row.ownerChanged || isDone(row) || isMoved(row)
 }
 
 /** People the change brings onto the project and names of those who leave it. */
@@ -78,10 +92,11 @@ export function PlanComparison({
 
   const { base, proposed, rows } = query.data
   const changed = rows.filter(isChanged)
-  const moved = changed.filter((row) => row.before && row.after && (row.before.start !== row.after.start || row.before.end !== row.after.end)).length
+  const moved = changed.filter((row) => isMoved(row) && !isDone(row)).length
   const owners = rows.filter((row) => row.ownerChanged).length
   const added = rows.filter((row) => row.before === null).length
-  const gone = rows.filter((row) => row.after === null).length
+  // Done work counts as done whether or not it keeps its bar; dropped work has no bar left.
+  const gone = rows.filter((row) => row.before !== null && (isDone(row) || row.after === null)).length
   const unchanged = rows.length - changed.length
 
   const baseCost = base.expectedCostCents
@@ -200,7 +215,8 @@ function Kpi({ label, value, detail }: { label: string; value: string; detail: s
 function MovedRow({ row }: { row: CompareRow }) {
   let change: string
   if (row.before === null) change = 'Added'
-  else if (row.after === null) change = row.why?.startsWith('Done') ? 'Done' : 'Dropped'
+  else if (isDone(row)) change = 'Done'
+  else if (row.after === null) change = 'Dropped'
   else if (row.shiftDays) change = signedWeeks(row.shiftDays)
   else change = row.ownerChanged ? 'Owner' : 'Start moved'
   let owner = row.before?.owner ?? '—'
