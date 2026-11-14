@@ -103,6 +103,8 @@ export interface RunOptions {
   remedy?: RemedyId | null
   /** Hash of the inputs the run was approved with, when the backend records it. */
   inputsHash?: string | null
+  /** What-if changes for a change-request re-plan (shape owned by the Changes step). */
+  overrides?: Record<string, unknown> | null
   changeRequestId?: string | null
   baselineRunId?: string | null
 }
@@ -255,6 +257,18 @@ export function usesSpecialist(run: PlanRun): boolean {
 /** "3f9a1c…e21b": enough of the inputs hash to recognise it. */
 export function shortHash(hash: string | null | undefined): string | null {
   return hash ? `${hash.slice(0, 6)}\u2026${hash.slice(-4)}` : null
+}
+
+/**
+ * The inputs hash to compare with the sheet, to tell whether the latest run is out of date.
+ * Only plain proposals qualify: an applied plan is the locked baseline, and a remedy or
+ * change-request run deliberately differs from the saved inputs.
+ */
+export function comparableInputsHash(run: PlanRun | null): string | null {
+  const options = run?.options
+  if (!run || run.version != null || !options) return null
+  if (options.remedy || options.changeRequestId || options.overrides) return null
+  return options.inputsHash ?? null
 }
 
 /** A step-4/5 input the run endpoint reported missing (422 `missing` extension), with where to fix it. */

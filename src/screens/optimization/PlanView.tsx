@@ -26,7 +26,7 @@ import {
 import { useApplyRun, useSaveConstraints } from '@/lib/queries'
 import { stepPath, useStepNav } from '@/lib/steps'
 import { ConstraintCheckCard } from './ConstraintCheck'
-import { shortDay } from './dates'
+import { daysBetween, shortDay } from './dates'
 import { PlanDetails } from './PlanDetails'
 import { PlanGantt } from './PlanGantt'
 import { ProblemAlert, QuietNote } from './ui'
@@ -107,7 +107,9 @@ export function PlanView({ projectId, run, constraints, constraintsError, onRetr
   }
 
   const inputsHash = shortHash(run.options?.inputsHash)
-  const lateDays = summary?.daysLate ?? 0
+  // Measured against the saved deadline: a move_deadline run's own summary deadline is the moved one.
+  const lateDays = summary && deadline ? daysBetween(deadline, summary.completionDate) : 0
+  const lateReason = run.options?.remedy === 'move_deadline' ? 'you chose to move the date' : 'the date was allowed to move'
 
   return (
     <div id="opt-plan">
@@ -154,9 +156,9 @@ export function PlanView({ projectId, run, constraints, constraintsError, onRetr
         <ProblemAlert title="Couldn't check the specialist rate" error={constraintsError} onRetry={onRetryConstraints} />
       )}
 
-      {lateDays > 0 && summary?.deadline ? (
+      {lateDays > 0 && deadline ? (
         <div className="alert warn">
-          Best plan found within your constraints. It finishes after {shortDay(summary.deadline)} because the date was allowed to move.
+          Best plan found within your constraints. It finishes after {shortDay(deadline)} because {lateReason}.
         </div>
       ) : (
         run.status === 'feasible' && <div className="alert warn">Best plan found within the time limit. It may not be the absolute optimum.</div>

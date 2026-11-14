@@ -13,6 +13,7 @@ import { useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { policyRisks } from '@/lib/constraintPolicy'
 import {
+  comparableInputsHash,
   policyInputsOf,
   shortHash,
   useOptimizationInputs,
@@ -57,11 +58,12 @@ export default function OptimizationResults() {
   const status = run?.status ?? null
   const solving = startRun.isPending || status === 'queued' || status === 'running'
   const constraints = constraintsQuery.data as ConstraintAnswers | undefined
-  const policy = constraints ? policyInputsOf(constraints, skills.data, inputs.data) : null
+  // Wait for the skill list so the skill-gap warning doesn't pop in late; if it fails, skip that check.
+  const policy = constraints && !skills.isPending ? policyInputsOf(constraints, skills.data, inputs.data) : null
   const risks = policy ? policyRisks(policy) : []
-  // An applied plan is the baseline; its inputs are locked, so only proposals can go stale.
-  const runHash = run?.options?.inputsHash
-  const inputsChanged = Boolean(run && run.version == null && runHash && inputs.data?.hash && runHash !== inputs.data.hash)
+  const runHash = comparableInputsHash(run)
+  const checkingStaleness = Boolean(runHash && inputs.isPending)
+  const inputsChanged = Boolean(runHash && inputs.data?.hash && runHash !== inputs.data.hash)
   const showSheet = !run || sheetRequested || (inputsChanged && !stalePlanAccepted)
   const planShown = !solving && !showSheet && (status === 'optimal' || status === 'feasible')
 
@@ -86,13 +88,13 @@ export default function OptimizationResults() {
   }
 
   let body: ReactNode
-  if (latest.isPending) {
+  if (latest.isPending || checkingStaleness) {
     body = <QuietNote busy>Loading the optimization status&hellip;</QuietNote>
   } else if (latest.isError && !run) {
     body = <ProblemAlert title="Couldn't load the optimization status" error={latest.error} onRetry={() => void latest.refetch()} />
   } else if (solving) {
     // While the start request is in flight `run` is still the previous one, so use the sheet's hash.
-    const lockedHash = startRun.isPending ? inputs.data?.hash : (runHash ?? inputs.data?.hash)
+    const lockedHash = startRun.isPending ? inputs.data?.hash : (run?.options?.inputsHash ?? inputs.data?.hash)
     body = <SolvingState running={!startRun.isPending && status === 'running'} inputsHash={shortHash(lockedHash)} />
   } else if (showSheet) {
     body = (
