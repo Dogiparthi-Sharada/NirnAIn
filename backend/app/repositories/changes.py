@@ -2,8 +2,10 @@
 
 Writes: recording a change, saving answers, the decision, and on approval applying the
 proposed run (`public.apply_optimization_run`, security definer, checks write access) and
-writing the change's values into the project's inputs so every later run uses them.
-RLS on change_requests (migration 20261113000050) limits all of this to project writers.
+writing the change's values into the project's inputs so every later run uses them: the
+constraint set, WBS durations, the team (hours, who joins, who leaves) and new requirements.
+RLS on change_requests (migration 20261113000050) limits all of this to project writers;
+adding people also needs the organization role that may add employees (owner, admin, pm).
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from app.domain.changes import (
 )
 from app.domain.common import SolverStatus
 from app.repositories.access import ProjectRef
-from app.repositories.change_plans import ChangePlanReads
+from app.repositories.change_team import ChangeTeamWrites
 from app.repositories.tables import (
     change_requests,
     constraint_sets,
@@ -89,8 +91,9 @@ def _select() -> sa.Select[Any]:
     )
 
 
-class ChangeRepository(ChangePlanReads):
-    """Change requests plus the plan reads they need (see ChangePlanReads)."""
+class ChangeRepository(ChangeTeamWrites):
+    """Change requests plus the plan reads (ChangePlanReads) and team writes
+    (ChangeTeamWrites) they need."""
 
     # ------------------------------------------------------------------ change requests
     async def create(
@@ -211,6 +214,8 @@ class ChangeRepository(ChangePlanReads):
                     estimate_confirmed_by=sa.func.auth.uid(),
                 )
             )
+        if overrides.add_members or overrides.remove_members:
+            await self.materialize_team(project)
         # 0 hours = off the project; hours_per_week must stay within 1..80, so the row goes.
         # People only in the org-wide fallback pool (no project team yet) have no row to update.
         for employee_id, hours in (overrides.hours_per_week or {}).items():
@@ -226,3 +231,4 @@ class ChangeRepository(ChangePlanReads):
                     .where(*where)
                     .values(hours_per_week=max(hours, 1))
                 )
+        await self.write_team(project, overrides)

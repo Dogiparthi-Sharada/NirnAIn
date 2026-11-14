@@ -1,5 +1,6 @@
-"""Step 7 change logic without a database: the rule-based notes reader, questions and
-overrides, structured edits, the checks on Claude's output, and the plan comparison.
+"""Step 7 change logic without a database: the rule-based notes reader (including QA's
+mid-project meeting with a specialist and someone's hours), questions and overrides,
+structured edits, the checks on Claude's output, and the plan comparison.
 
 Shared fixtures (the Steering Committee notes from the approved mockup and a small project
 context) live in tests/changes_fixtures.py.
@@ -20,9 +21,28 @@ from app.changes.derive import InvalidEditError, build_impact, derive_overrides,
 from app.changes.detect import detect
 from app.changes.llm import ChangeDetector, ProposedChange, ProposedChanges, to_changes
 from app.changes.questions import validate_answers
-from app.domain.changes import ChangeEdits, PlanOverrides
+from app.domain.changes import AddedMember, ChangeEdits, NewMember, PlanOverrides
 from app.domain.common import SolverStatus
-from tests.changes_fixtures import ETL, MARK, NOTES, SALESFORCE, SAP, project_context
+from tests.changes_fixtures import (
+    ANA,
+    ETL,
+    LEO,
+    MARK,
+    NOTES,
+    QA_NOTES,
+    SALESFORCE,
+    SAP,
+    project_context,
+    qa_context,
+)
+
+SPECIALIST = NewMember(
+    full_name="Security Specialist",
+    role_title="Security Specialist",
+    hours_per_week=40,
+    skills=["Security & Compliance Review"],
+    is_contractor=True,
+)
 
 
 # --------------------------------------------------------------------------- rules
@@ -56,6 +76,79 @@ def test_rules_never_invent() -> None:
         ("capacity", MARK, 0),
         ("deadline", None, "2025-10-17"),
     ]
+
+
+def test_rules_read_qa_meeting_specialist_hours_deadline_and_budget() -> None:
+    context = qa_context()
+    found = detect(QA_NOTES, context)
+    assert [(change.kind, change.action, change.target, change.to) for change in found] == [
+        ("team", "add", None, None),  # hours not stated: asked
+        ("capacity", None, LEO, 16),
+        ("budget", None, None, 50_000_000),
+        ("deadline", None, None, "2027-07-31"),
+    ]
+    assert (found[0].member, found[0].speaker, found[1].speaker) == (
+        SPECIALIST,
+        "Jane Doe",
+        "Raj Patel",
+    )
+
+    # The API reserves an employee for the newcomer before the impact is built.
+    reserved = uuid.uuid4()
+    found[0] = found[0].model_copy(update={"target": reserved})
+    impact = build_impact(found, "notes", context, "rules")
+    by_id = {question.id: question for question in impact.questions}
+    assert set(by_id) == {"team:c1", "capacity:c2", "budget", "deadline"}
+    assert [option.value for option in by_id["team:c1"].options] == ["16", "24", "40", "keep"]
+    assert "Security Specialist" in [person.name for person in impact.affects.people]
+    answers = {"capacity:c2": "new", "budget": "50000000", "deadline": "2027-07-31"}
+    assert derive_overrides(impact, answers) is None  # the specialist's hours are open
+    overrides = derive_overrides(impact, {**answers, "team:c1": "24"})
+    assert overrides == PlanOverrides(
+        budget_total_cents=50_000_000,
+        must_finish_by=date(2027, 7, 31),
+        hours_per_week={str(LEO): 16},
+        add_members=[
+            AddedMember(
+                employee_id=reserved,
+                **SPECIALIST.model_copy(update={"hours_per_week": 24}).model_dump(by_alias=False),
+            )
+        ],
+    )
+    declined = derive_overrides(impact, {**answers, "team:c1": "keep"})
+    assert declined is not None
+    assert declined.add_members is None
+
+
+@pytest.mark.parametrize(
+    ("sentence", "expected"),
+    [
+        ("ana will be at 20 hours per week.", ("capacity", ANA, 20, None)),
+        ("Leo Martins can only give 16 hours a week.", ("capacity", LEO, 16, None)),
+        (
+            "We need to hire a contractor for the data migration.",
+            ("team", None, None, ("Data Migration Contractor", "Data Migration Contractor", True)),
+        ),
+        (
+            "Bring in Dana Lee as a security specialist at 24 hours a week.",
+            ("team", None, 24, ("Dana Lee", "Security Specialist", True)),
+        ),
+        (
+            "We will hire a data engineer.",
+            ("team", None, None, ("Data Engineer", "Data Engineer", False)),
+        ),
+        ("We will hire Ana Souza, a data engineer.", None),  # already on the team
+    ],
+)
+def test_rules_read_people_phrases(sentence: str, expected: tuple[Any, ...] | None) -> None:
+    found = detect(sentence, qa_context())
+    if expected is None:
+        assert found == []
+        return
+    [change] = found
+    member = change.member
+    newcomer = (member.full_name, member.role_title, member.is_contractor) if member else None
+    assert (change.kind, change.target, change.to, newcomer) == expected
 
 
 def test_questions_and_overrides_from_notes() -> None:
@@ -143,6 +236,60 @@ def test_claude_changes_are_checked_against_notes_and_project() -> None:
         ("budget", None, 36_500_000),
         ("duration", SAP, 30),
     ]
+
+
+class _FakeLLM(LLM):
+    """Answers every call with `out` and records the prompts; never calls Claude."""
+
+    def __init__(self, out: ProposedChanges) -> None:
+        super().__init__(client=None, model="claude-sonnet-5-5")
+        self.out = out
+        self.prompts: list[str] = []
+
+    @property
+    def configured(self) -> bool:
+        return True
+
+    def parse(self, **fields: Any) -> Any:
+        self.prompts.append(fields["prompt"])
+        return self.out, None
+
+
+async def test_claude_may_report_a_newcomer_and_hours() -> None:
+    quote = "We agreed to bring in an outside security specialist for the compliance review."
+    llm = _FakeLLM(
+        ProposedChanges(
+            changes=[
+                ProposedChange(
+                    kind="team",
+                    role="Security Specialist",
+                    contractor=True,
+                    skills=["security & compliance review", "Knitting"],
+                    quote=quote,
+                    confidence=0.8,
+                ),
+                ProposedChange(
+                    kind="capacity",
+                    target="Leo Martins",
+                    value="16",
+                    quote="Leo can only give 16 hours a week from February.",
+                    confidence=0.9,
+                ),
+                # Already on the team, or without a role: dropped.
+                ProposedChange(
+                    kind="team", target="Leo Martins", role="Dev", quote=quote, confidence=1
+                ),
+                ProposedChange(kind="team", quote=quote, confidence=1),
+            ]
+        )
+    )
+    found, model = await ChangeDetector(llm).detect(QA_NOTES, qa_context())
+    assert model == "claude-sonnet-5-5"
+    assert [(change.kind, change.action, change.to, change.member) for change in found] == [
+        ("team", "add", None, SPECIALIST),
+        ("capacity", None, 16, None),
+    ]
+    assert "- Security & Compliance Review" in llm.prompts[0]
 
 
 class _BrokenLLM(LLM):

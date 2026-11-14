@@ -8,6 +8,7 @@ from datetime import date, timedelta
 
 from app.changes import parsing
 from app.changes.context import NodeRow, PlanRow, RunMeta
+from app.changes.team import is_addition, is_removal
 from app.domain.changes import (
     Bar,
     ChangeComparison,
@@ -87,13 +88,20 @@ def _hours(value: object) -> str:
     return parsing.format_hours(_as_number(value))
 
 
-def _change_reasons(impact: ChangeImpact | None) -> tuple[dict[str, str], dict[str, str]]:
-    """Why per work package id / per person id, from the change itself."""
+def _change_reasons(
+    impact: ChangeImpact | None,
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """Why per work package id, per person id who changes or leaves, and per newcomer id,
+    from the change itself."""
     tasks: dict[str, str] = {}
     people: dict[str, str] = {}
+    joined: dict[str, str] = {}
     if impact is None:
-        return tasks, people
+        return tasks, people, joined
     for change in impact.changes:
+        if is_addition(change) and change.target is not None and change.member is not None:
+            joined[str(change.target)] = f"{change.member.full_name} joins the team"
+            continue
         targets = (
             [(change.target, change.from_, change.to)]
             if change.target
@@ -112,7 +120,9 @@ def _change_reasons(impact: ChangeImpact | None) -> tuple[dict[str, str], dict[s
                     if after == 0
                     else f"{change.target_label} now gives {_hours(after)} a week"
                 )
-    return tasks, people
+            elif is_removal(change):
+                people[str(target)] = f"{change.target_label} leaves the team"
+    return tasks, people, joined
 
 
 def build_comparison(
@@ -126,8 +136,9 @@ def build_comparison(
 ) -> ChangeComparison:
     """Rows per work package of either plan, in WBS order, with shifts and a reason.
 
-    The reason comes from the change itself when it targets the package (or its owner),
-    else "Follows <predecessor>" when something it waits on moved, else "Re-solved".
+    The reason comes from the change itself when it targets the package, its owner (who
+    changes hours or leaves) or its new owner (who joins the team), else "Follows
+    <predecessor>" when something it waits on moved, else "Re-solved".
     """
     before = _bars(base, base_rows, names)
     after = _bars(proposed, proposed_rows, names)
@@ -139,9 +150,12 @@ def build_comparison(
     by_id = {node.id: node for node in nodes}
     order = {node.id: position for position, node in enumerate(nodes)}
     preds = _preds(proposed)
-    task_why, person_why = _change_reasons(impact)
+    task_why, person_why, joined_why = _change_reasons(impact)
     owner_ids = {
         row.wbs_node_id: row.employee_id for row in base_rows if row.employee_id is not None
+    }
+    new_owner_ids = {
+        row.wbs_node_id: row.employee_id for row in proposed_rows if row.employee_id is not None
     }
 
     ids = sorted(
@@ -170,8 +184,11 @@ def build_comparison(
         why = task_why.get(str(node_id))
         if why is None:
             base_owner = owner_ids.get(node_id)
+            new_owner = new_owner_ids.get(node_id)
             if base_owner is not None and str(base_owner) in person_why:
                 why = person_why[str(base_owner)]
+            elif new_owner is not None and str(new_owner) in joined_why:
+                why = joined_why[str(new_owner)]
             elif moved:
                 moved_preds = [
                     labels.get(predecessor_id, ("", ""))[0]

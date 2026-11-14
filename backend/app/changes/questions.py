@@ -3,7 +3,8 @@
 Business rule ("never invent"): a value from meeting notes that conflicts with one you
 confirmed (budget, deadline, an effort estimate, someone's hours) is asked, never
 overwritten. A change whose work package or person the notes don't name exactly asks
-which one it means. Your own edits and progress updates need no questions.
+which one it means. Someone the notes bring in without saying their hours is asked about
+(16, 24 or 40 h a week, or not at all). Your own edits and progress updates need no questions.
 
 Questions are always built here by rules, also when Claude read the notes, so that each
 answer maps to an override deterministically (see `app.changes.derive`).
@@ -23,6 +24,8 @@ from app.domain.changes import ChangeQuestion, ChangeSource, DetectedChange, Que
 KEEP = "keep"
 NEW = "new"
 NONE = "none"
+# Hours a week offered for a newcomer from the notes who comes without hours.
+HOURS_CHOICES = (16, 24, 40)
 
 
 def build_questions(
@@ -66,6 +69,8 @@ def build_questions(
             )
         )
     for change in changes:
+        if change.kind == "team" and change.action == "add" and change.to is None:
+            questions.append(_team_question(change, context))
         if change.target is None:
             continue
         if change.kind == "duration" and change.to != 0:
@@ -190,6 +195,25 @@ def _capacity_question(change: DetectedChange, context: ChangeContext) -> Change
             QuestionOption(value=NEW, label=f"Use {_hours(change.to)}"),
             QuestionOption(value=KEEP, label=f"Keep {_hours(change.from_)}"),
         ],
+    )
+
+
+def _team_question(change: DetectedChange, context: ChangeContext) -> ChangeQuestion:
+    """How many hours a newcomer from the notes gives the project (the notes don't say)."""
+    name = change.member.full_name if change.member else "them"
+    return ChangeQuestion(
+        id=f"team:{change.id}",
+        kind="team",
+        change_id=change.id,
+        tier="blocking",
+        text=f"Hours per week for {name}",
+        why="The notes bring someone in but don't say how many hours they give the project. "
+        f"{context.plan_label} keeps the team as it is until you approve.",
+        options=[
+            QuestionOption(value=str(hours), label=f"{parsing.format_hours(hours)} a week")
+            for hours in HOURS_CHOICES
+        ]
+        + [QuestionOption(value=KEEP, label="Don't bring them in")],
     )
 
 

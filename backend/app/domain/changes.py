@@ -1,7 +1,8 @@
 """API models of Changes & Versions (step 7): something changed after a plan was applied.
 
 A change request records what changed (from meeting notes, direct edits or a progress
-update), the questions it raises, the answers, and the re-plan it led to. JSON is camelCase
+update), the questions it raises, the answers, and the re-plan it led to. Changes can also
+bring people onto the project or take them off it mid-way (kind "team"). JSON is camelCase
 (CamelModel). Used by app/api/v1/changes.py, the pure logic in app/changes/ and the
 repositories; the frontend mirrors these types in src/lib/changes.ts.
 """
@@ -13,16 +14,21 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.domain.common import CamelModel, InputModel, SolverStatus
+from app.domain.team import HoursPerWeek, PersonName, RoleTitle, SkillNames, clean_skill_names
 
 ChangeSource = Literal["notes", "edits", "progress"]
-ChangeKind = Literal["budget", "deadline", "duration", "capacity", "scope"]
-QuestionKind = Literal["budget", "deadline", "duration", "capacity", "target"]
+ChangeKind = Literal["budget", "deadline", "duration", "capacity", "scope", "team"]
+QuestionKind = Literal["budget", "deadline", "duration", "capacity", "target", "team"]
+# team: someone joins / leaves the project; scope: a requirement is added / removed.
+ChangeAction = Literal["add", "remove"]
 
 MAX_TEXT = 50_000
 MAX_EDITS = 500
+MAX_NEW_MEMBERS = 10
+MAX_HOURLY_RATE_CENTS = 10_000_000
 
 
 class ChangeStatus(StrEnum):
@@ -55,12 +61,47 @@ class TargetOption(CamelModel):
     to: int | float | None
 
 
+class NewMember(InputModel):
+    """Someone who joins the project mid-way: a new hire, a specialist or a contractor.
+
+    A missing hourly rate stays null: the optimizer prices them like the team average.
+    """
+
+    full_name: PersonName
+    role_title: RoleTitle
+    hours_per_week: HoursPerWeek
+    skills: SkillNames = Field(default_factory=list)
+    hourly_rate_cents: int | None = Field(default=None, ge=0, le=MAX_HOURLY_RATE_CENTS)
+    is_contractor: bool = False
+
+    @field_validator("full_name", "role_title")
+    @classmethod
+    def _squash(cls, value: str) -> str:
+        return " ".join(value.split())
+
+    @field_validator("skills")
+    @classmethod
+    def _clean(cls, value: list[str]) -> list[str]:
+        return clean_skill_names(value)
+
+
+class AddedMember(NewMember):
+    """A new member in the re-plan overrides, with the organization employee the change
+    reserved for them (reused by name, or a candidate record activated on approval), so
+    the optimizer's plan can name them."""
+
+    employee_id: uuid.UUID
+
+
 class DetectedChange(CamelModel):
     """One change. Values: budget = cents, deadline = ISO date, duration = working days,
-    capacity = hours per week (0 = leaves the project), scope = the requirement text."""
+    capacity = hours per week (0 = leaves the project), scope = the requirement text,
+    team = hours per week of who joins (`member`; null until the notes say) or leaves."""
 
     id: str
     kind: ChangeKind
+    action: ChangeAction | None = None
+    member: NewMember | None = None
     target: uuid.UUID | None = None
     target_label: str | None = None
     from_: int | float | str | None = Field(default=None, alias="from")
@@ -133,6 +174,8 @@ class PlanOverrides(CamelModel):
     must_finish_by: date | None = Field(default=None, exclude_if=_omit_none)
     duration_days: dict[str, int] | None = Field(default=None, exclude_if=_omit_none)
     hours_per_week: dict[str, float] | None = Field(default=None, exclude_if=_omit_none)
+    add_members: list[AddedMember] | None = Field(default=None, exclude_if=_omit_none)
+    remove_members: list[uuid.UUID] | None = Field(default=None, exclude_if=_omit_none)
 
     @property
     def empty(self) -> bool:
@@ -141,6 +184,8 @@ class PlanOverrides(CamelModel):
             or self.must_finish_by is not None
             or self.duration_days
             or self.hours_per_week
+            or self.add_members
+            or self.remove_members
         )
 
 
@@ -180,6 +225,9 @@ class ChangeEdits(InputModel):
     hours_per_week: dict[uuid.UUID, Hours] | None = Field(default=None, max_length=MAX_EDITS)
     # Percent complete per work package (100 = done): the rest becomes the remaining duration.
     progress: dict[uuid.UUID, Percent] | None = Field(default=None, max_length=MAX_EDITS)
+    # People joining / leaving the project (employee ids of current team members).
+    add_members: list[NewMember] | None = Field(default=None, max_length=MAX_NEW_MEMBERS)
+    remove_members: list[uuid.UUID] | None = Field(default=None, max_length=MAX_EDITS)
 
 
 class ChangeCreate(InputModel):

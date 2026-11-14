@@ -2,21 +2,22 @@
 
 Reads new meeting notes against the project's inputs. It only reports what a sentence
 states (money → budget, a date next to a deadline word → deadline, a work package with
-"N weeks" or "done" → duration, a person with "N hours" or "leaves" → capacity, "has to
-be added" → scope) and never invents values. Anything it can't pin down becomes a
-question (see `app.changes.derive`).
+"N weeks" or "done" → duration, a person with "N hours" or "leaves" → capacity, "bring in
+a specialist" → team, "has to be added" → scope) and never invents values. Anything it
+can't pin down becomes a question (see `app.changes.questions`). People are read by
+`app.changes.detect_people`.
 """
 
 from __future__ import annotations
 
-import math
 import re
 from collections import Counter
 from datetime import date, timedelta
 
 from app.changes import parsing
-from app.changes.context import ChangeContext, PersonRef, TaskRef
-from app.domain.changes import DetectedChange, TargetOption
+from app.changes.context import ChangeContext, TaskRef
+from app.changes.detect_people import capacity_change, newcomer_change
+from app.domain.changes import ChangeAction, DetectedChange, TargetOption
 
 _BUDGET_WORDS = re.compile(r"\b(budget|funding|funds|spend|cap|ceiling|financ)", re.I)
 _DEADLINE_WORDS = re.compile(
@@ -39,16 +40,14 @@ _DONE = re.compile(
     r"|wrapped up)\b",
     re.I,
 )
-_LEAVES = re.compile(
-    r"\b(leav(?:e|es|ing)|left|quit(?:s|ting)?|resign(?:s|ed|ing)?|unavailable|on leave"
-    r"|parental leave|sick leave|out of office|no longer (?:available|on))\b",
-    re.I,
-)
 _SCOPE = re.compile(
     r"\b((?:has|have|needs?|must) to be added|must be added|needs? adding|add(?:s|ed|ing)? .{0,60}"
     r"\b(?:as a|to the scope|requirement)|new requirement|also (?:need|want|require)s?"
     r"|must (?:include|support)|(?:drop|remove|descope|cut)(?:s|ped|d)? .{0,40}\bscope)",
     re.I,
+)
+_DESCOPE = re.compile(
+    r"\b(?:drop|remove|descope|cut)(?:s|ped|d)?\b.{0,40}\bscope|\bdescop|\bout of scope\b", re.I
 )
 _ON_TRACK = re.compile(r"\bon (track|schedule)\b", re.I)
 
@@ -60,8 +59,13 @@ class _Ids:
         self.count = 0
 
     def next(self) -> str:
+        """Take the next id."""
         self.count += 1
         return f"c{self.count}"
+
+    def peek(self) -> str:
+        """The id `next` will hand out, for a change that may not be kept."""
+        return f"c{self.count + 1}"
 
 
 def detect(text: str, context: ChangeContext) -> list[DetectedChange]:
@@ -78,28 +82,50 @@ def detect(text: str, context: ChangeContext) -> list[DetectedChange]:
         found: list[DetectedChange] = []
         found += _budget(sentence, context, ids)
         found += _deadline(sentence, context, ids, year)
-        found += _capacity(sentence, context, ids)
-        if not any(change.kind == "capacity" for change in found):
+        capacity = capacity_change(sentence, context, ids.peek())
+        if capacity is not None:
+            ids.next()
+            found.append(capacity)
+        else:
             found += _duration(sentence, context, ids, rare)
+        newcomer = newcomer_change(sentence, context, ids.peek(), hours_taken=capacity is not None)
+        if newcomer is not None:
+            ids.next()
+            found.append(newcomer)
         if not any(change.kind in ("duration", "deadline") for change in found):
             found += _deadline_shift(sentence, context, ids)
         if not found and parsing.has(sentence.body, _SCOPE):
+            action, note = scope_action(sentence.body)
             found.append(
                 DetectedChange(
                     id=ids.next(),
                     kind="scope",
+                    action=action,
                     to=sentence.body,
                     quote=sentence.body,
                     speaker=sentence.speaker,
                     confidence=0.7,
-                    note=(
-                        "Re-planning doesn't add work. Add it as a work package in WBS Builder, "
-                        "then record the change again."
-                    ),
+                    note=note,
                 )
             )
         out += found
     return out
+
+
+def scope_action(text: str) -> tuple[ChangeAction, str]:
+    """Action and note of a requirement change. Re-planning can't turn text into work: a
+    new requirement joins the project's scope on approval; a removal is only noted."""
+    if parsing.has(text, _DESCOPE):
+        return (
+            "remove",
+            "Scope reduction noted. Re-planning doesn't remove work: mark the work packages "
+            "it covers as done or shorter in a progress update or an edit.",
+        )
+    return (
+        "add",
+        "New requirement noted. It joins the project's scope when you approve. Re-planning "
+        "doesn't add work: if it needs effort, give its work package more time.",
+    )
 
 
 # --------------------------------------------------------------------------- budget / deadline
@@ -295,69 +321,3 @@ def _duration(
 
 def _task_label(task: TaskRef) -> str:
     return f"{task.code} {task.name}"
-
-
-# --------------------------------------------------------------------------- people
-def match_people(sentence: str, people: tuple[PersonRef, ...]) -> list[PersonRef]:
-    """People a sentence names: full name, or a first / last name unique on the team."""
-    words = set(re.findall(r"[a-z0-9']+", sentence.lower()))
-    lower = sentence.lower()
-    full_matches = [person for person in people if person.name.lower() in lower]
-    if full_matches:
-        return full_matches
-    firsts = Counter(parsing.first_name(person.name).lower() for person in people)
-    lasts = Counter(
-        person.name.split()[-1].lower() for person in people if len(person.name.split()) > 1
-    )
-    out = []
-    for person in people:
-        first = parsing.first_name(person.name).lower()
-        last = person.name.split()[-1].lower() if len(person.name.split()) > 1 else None
-        if (first in words and firsts[first] == 1) or (
-            last is not None and last in words and lasts[last] == 1
-        ):
-            out.append(person)
-    return out
-
-
-def _capacity(
-    sentence: parsing.Sentence, context: ChangeContext, ids: _Ids
-) -> list[DetectedChange]:
-    """A person with hours a week, or who leaves / is unavailable → their weekly hours
-    (0 = off the project). A limited absence is noted: a re-plan can only remove them."""
-    people = match_people(sentence.body, context.people)
-    if len(people) != 1:
-        return []
-    person = people[0]
-    leaves = parsing.has(sentence.body, _LEAVES)
-    hour_figures = parsing.hours(sentence.body)
-    if leaves:
-        new: float = 0
-    elif hour_figures:
-        new = hour_figures[0]
-    else:
-        return []
-    if math.isclose(new, person.hours_per_week):
-        return []
-    period = leaves and bool(
-        parsing.spans_days(sentence.body) or parsing.dates(sentence.body, context.today.year)
-    )
-    return [
-        DetectedChange(
-            id=ids.next(),
-            kind="capacity",
-            target=person.id,
-            target_label=person.name,
-            from_=person.hours_per_week,
-            to=new,
-            quote=sentence.body,
-            speaker=sentence.speaker,
-            confidence=0.6 if period else 0.85,
-            note=(
-                "The notes mention a limited period. A re-plan can only take them off the "
-                "whole project."
-                if period
-                else None
-            ),
-        )
-    ]

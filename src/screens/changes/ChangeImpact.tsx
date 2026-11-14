@@ -80,6 +80,11 @@ export function ChangeImpact({
   const notes = change.source === 'notes'
   const count = impact.changes.length
   const lock = decided || answer.isPending
+  // Newcomers as the re-plan staffs them (hours as answered); leavers by name.
+  const team = {
+    joining: change.overrides?.addMembers ?? [],
+    leaving: impact.changes.filter((detected) => detected.kind === 'team' && detected.action === 'remove').map((detected) => detected.targetLabel ?? 'A team member'),
+  }
 
   let hint: string
   if (replan.isError) hint = errorMessage(replan.error)
@@ -176,6 +181,7 @@ export function ChangeImpact({
           {solved && (
             <PlanComparison
               query={compare}
+              team={team}
               baseVersion={baseVersion}
               nextVersion={nextVersion}
               approved={change.status === 'approved'}

@@ -26,7 +26,9 @@ export function ChangeRow({
   onPick: PickAnswer
 }) {
   const done = change.kind === 'duration' && change.to === 0
-  const showValues = change.kind !== 'scope' && !done && (change.target !== null || change.kind === 'budget' || change.kind === 'deadline')
+  // A newcomer's details are in the title; a removal still shows their hours going to zero.
+  const joins = change.kind === 'team' && change.action === 'add'
+  const showValues = change.kind !== 'scope' && !joins && !done && (change.target !== null || change.kind === 'budget' || change.kind === 'deadline')
   // Low confidence = the reader matched loosely; a question always follows, so flag it for checking.
   const chip =
     change.kind === 'scope' ? (

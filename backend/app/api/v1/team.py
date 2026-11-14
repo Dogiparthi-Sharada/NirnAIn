@@ -77,7 +77,7 @@ async def add_team_member(project_id: ProjectId, body: TeamMemberCreate, team: T
             body.full_name,
             body.role_title,
             body.hours_per_week,
-            body.hourly_rate_cents,
+            hourly_rate_cents=body.hourly_rate_cents,
         )
     elif employee_id in current:
         raise ConflictError(f"{body.full_name} is already on the team")
