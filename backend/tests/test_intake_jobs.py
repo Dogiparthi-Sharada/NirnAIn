@@ -19,14 +19,14 @@ from app.ai.intake_llm import ExtractedItem, ExtractionOutput
 from app.ai.llm import LLM, Usage
 from app.core.config import Settings
 from app.domain.common import Evidence, ScopeCategory
+from app.jobs.background import service_stores
 from app.jobs.intake import (
     EMPTY_ERROR,
     FAILED_ERROR,
     RESTART_ERROR,
     IntakeRunner,
-    engine_store,
 )
-from app.repositories.intake_jobs import ClaimedRun
+from app.repositories.intake_jobs import ClaimedRun, IntakeJobStore
 
 Finished = tuple[uuid.UUID, uuid.UUID, str, list[ScopeSuggestion], int, int]
 
@@ -277,7 +277,7 @@ async def test_engine_store_uses_a_transaction() -> None:
             yield "conn"
             log.append("commit")
 
-    async with engine_store(Engine())() as store:  # type: ignore[arg-type]
+    async with service_stores(Engine(), IntakeJobStore)() as store:  # type: ignore[arg-type]
         assert store._conn == "conn"  # type: ignore[comparison-overlap]
     assert log == ["begin", "commit"]
 

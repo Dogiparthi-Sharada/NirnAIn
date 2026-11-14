@@ -15,15 +15,16 @@ import pytest
 from app.core.config import Settings
 from app.domain.optimization import RunResult
 from app.jobs import optimizer as jobs
+from app.jobs.background import service_stores
 from app.jobs.optimizer import (
     FAILED_ERROR,
     RESTART_ERROR,
     SNAPSHOT_ERROR,
     OptimizationRunner,
-    engine_store,
 )
 from app.optimization.explain import Report
 from app.optimization.solver import SolveControl
+from app.repositories.optimization_store import OptimizationJobStore
 from tests.test_optimization_solver import make_input, with_constraints
 
 
@@ -224,7 +225,7 @@ async def test_engine_store_uses_a_transaction() -> None:
             yield "conn"
             log.append("commit")
 
-    async with engine_store(Engine())() as store:  # type: ignore[arg-type]
+    async with service_stores(Engine(), OptimizationJobStore)() as store:  # type: ignore[arg-type]
         assert store._conn == "conn"  # type: ignore[comparison-overlap]
     assert log == ["begin", "commit"]
 

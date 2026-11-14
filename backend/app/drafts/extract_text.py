@@ -1,11 +1,11 @@
 """Plain text from an uploaded file: PDF, Word (.docx) or a transcript.
 
-Used by `POST /orgs/{orgId}/project-drafts/extract` (`app.api.v1.drafts`) before
-the draft is read. Pure, blocking functions (bytes or a seekable stream in, text
-out) so they are easy to test and can run in a worker thread. Files may be up
-to 100 MB, like intake documents (`app.ai.documents`); a stream is read in
-place, never copied into one big bytes object. Video, audio and anything else
-raise `UnsupportedFileError` (415); files are never stored here.
+Purpose: Read the source of a project draft without storing it: files up to 100 MB (like intake
+documents) are read in place as a stream; video, audio and anything else raise
+`UnsupportedFileError` (415).
+How it fits: Used by `POST /orgs/{orgId}/project-drafts/extract` (app/api/v1/drafts.py) before the
+draft is read; pure, blocking functions run in a worker thread; layer: drafts.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations

@@ -1,9 +1,10 @@
 """Date mentions for the rules reader: exact dates, quarters and months, and what they are for.
 
-`app.drafts.rules.find_dates` uses these to pick a start and a target end date:
-"Kickoff on 2025-03-03" is a start, "go-live by Sep 30, 2025" an end, "by Q3 2025"
-an end on the quarter's last day. A date with no start or deadline word next to it
-(e.g. the meeting's own date) has no role and is ignored, never guessed.
+Purpose: Pick a start and a target end date only from dates the text gives a role: "Kickoff on
+2025-03-03" is a start, "go-live by Sep 30, 2025" an end, "by Q3 2025" an end on the quarter's last
+day; a date with no start or deadline word next to it is ignored, never guessed.
+How it fits: Used by `app.drafts.rules.find_dates`; pure; layer: drafts.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -61,6 +62,7 @@ class DateHit:
 
 
 def _month(name: str) -> int:
+    """Return the month number (1..12) of an English month name or abbreviation."""
     return _MONTHS.index(name[:3].lower()) + 1
 
 

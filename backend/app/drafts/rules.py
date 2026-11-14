@@ -1,13 +1,11 @@
 """Deterministic project-draft reader (model "rules").
 
-The clearly labelled fallback when no AI key is configured or the AI call fails.
-It fills a field only when the text says it, keeping the sentence it came from
-as the quote; everything else stays missing for the PM. Nothing is guessed:
-"by Q3 2025" becomes an *inferred* end date the PM has to confirm.
-
-Pure functions over the source text (date parsing lives in `app.drafts.dates`);
-`app.drafts.reader.DraftReader` calls `rules_draft` for
-`POST /orgs/{orgId}/project-drafts/extract`.
+Purpose: The clearly labelled fallback when no AI key is configured or the AI call fails. It fills a
+field only when the text says it, keeping the sentence as the quote; nothing is guessed: "by Q3
+2025" becomes an inferred end date the PM has to confirm.
+How it fits: `app.drafts.reader.DraftReader` calls `rules_draft`; dates are parsed by
+app/drafts/dates.py; pure; layer: drafts.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -122,6 +120,7 @@ def _clean_title(line: str) -> str:
 
 
 def _looks_like_title(line: str) -> bool:
+    """Tell whether a line is short enough, unpunctuated and not a heading, so it can be a title."""
     words = line.split()
     return (
         len(line) <= TITLE_MAX_CHARS
@@ -150,6 +149,7 @@ def find_name(text: str) -> TextField:
 
 # --------------------------------------------------------------------------- description
 def _first_sentence(line: str) -> str:
+    """Return the line's first sentence (the whole line when it has none)."""
     return next(sentences(line), line)
 
 

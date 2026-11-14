@@ -30,10 +30,12 @@ from app.core.middleware import (
 )
 from app.core.security import TokenVerifier
 from app.jobs.ai_jobs import AiJobRunner
-from app.jobs.ai_jobs import engine_store as ai_engine_store
+from app.jobs.background import service_stores
 from app.jobs.intake import IntakeRunner
-from app.jobs.intake import engine_store as intake_engine_store
-from app.jobs.optimizer import OptimizationRunner, engine_store
+from app.jobs.optimizer import OptimizationRunner
+from app.repositories.ai_jobs import AiJobStore
+from app.repositories.intake_jobs import IntakeJobStore
+from app.repositories.optimization_store import OptimizationJobStore
 
 logger = logging.getLogger("app")
 
@@ -84,14 +86,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.engine = create_engine(settings)
     app.state.token_verifier = TokenVerifier.from_settings(settings)
+    engine = app.state.engine
     app.state.optimizer = OptimizationRunner(
-        engine_store(app.state.engine) if app.state.engine is not None else None, settings
+        service_stores(engine, OptimizationJobStore) if engine is not None else None, settings
     )
     app.state.intaker = IntakeRunner(
-        intake_engine_store(app.state.engine) if app.state.engine is not None else None, settings
+        service_stores(engine, IntakeJobStore) if engine is not None else None, settings
     )
     app.state.ai_runner = AiJobRunner(
-        ai_engine_store(app.state.engine) if app.state.engine is not None else None, settings
+        service_stores(engine, AiJobStore) if engine is not None else None, settings
     )
     app.state.assistant_llm = LLM(make_client(settings), settings.ai_model)
     if app.state.engine is None:
