@@ -124,17 +124,17 @@ def _working_days(snapshot: Mapping[str, Any]) -> int:
 
 def _snapshot_durations(snapshot: Mapping[str, Any]) -> dict[str, int]:
     tasks = snapshot.get("tasks")
-    out: dict[str, int] = {}
-    for t in tasks if isinstance(tasks, list) else []:
-        if isinstance(t, dict) and isinstance(t.get("duration_days"), int):
-            out[str(t.get("id"))] = t["duration_days"]
-    return out
+    durations: dict[str, int] = {}
+    for task in tasks if isinstance(tasks, list) else []:
+        if isinstance(task, dict) and isinstance(task.get("duration_days"), int):
+            durations[str(task.get("id"))] = task["duration_days"]
+    return durations
 
 
 def _rows_of(result: Mapping[str, Any] | None, key: str) -> list[dict[str, str]]:
     rows = result.get(key) if result else None
     return [
-        {k: str(v) for k, v in row.items() if v is not None}
+        {field: str(value) for field, value in row.items() if value is not None}
         for row in (rows if isinstance(rows, list) else [])
         if isinstance(row, dict)
     ]
@@ -178,17 +178,19 @@ def _window(row: PlannedRow, duration_days: int, planning_start: date, per_week:
     )
 
 
-def _links(snapshot: Mapping[str, Any], uids: Mapping[str, int]) -> list[ExportLink]:
+def _links(snapshot: Mapping[str, Any], task_uids: Mapping[str, int]) -> list[ExportLink]:
     links: list[ExportLink] = []
-    deps = snapshot.get("dependencies")
-    for d in deps if isinstance(deps, list) else []:
-        if not isinstance(d, dict):
+    dependencies = snapshot.get("dependencies")
+    for dependency in dependencies if isinstance(dependencies, list) else []:
+        if not isinstance(dependency, dict):
             continue
-        pred, succ = uids.get(str(d.get("predecessor_id"))), uids.get(str(d.get("successor_id")))
-        if pred is not None and succ is not None:
-            lag = d.get("lag_days")
+        predecessor_uid = task_uids.get(str(dependency.get("predecessor_id")))
+        successor_uid = task_uids.get(str(dependency.get("successor_id")))
+        if predecessor_uid is not None and successor_uid is not None:
+            lag = dependency.get("lag_days")
             lag_days = lag if isinstance(lag, int) else 0
-            links.append(ExportLink(pred, succ, str(d.get("type") or "FS"), lag_days))
+            link_type = str(dependency.get("type") or "FS")
+            links.append(ExportLink(predecessor_uid, successor_uid, link_type, lag_days))
     return links
 
 
@@ -196,22 +198,26 @@ def _schedule(
     windows: list[_Window], links: list[ExportLink], per_week: int, completion: date | None
 ) -> list[tuple[date, date]]:
     """Dates per task: as early as its start week allows, after its FS/SS predecessors."""
-    starts = [w.earliest_start for w in windows]
-    finishes = [w.finish(s, per_week, completion) for w, s in zip(windows, starts, strict=True)]
+    starts = [window.earliest_start for window in windows]
+    finishes = [
+        window.finish(start, per_week, completion)
+        for window, start in zip(windows, starts, strict=True)
+    ]
     for _ in range(len(windows)):
         moved = False
         for link in links:
-            p, s = link.predecessor_uid - 1, link.successor_uid - 1
+            predecessor = link.predecessor_uid - 1
+            successor = link.successor_uid - 1
             if link.type == "FS":
-                bound = workday_date(finishes[p], 1 + link.lag_days, per_week)
+                bound = workday_date(finishes[predecessor], 1 + link.lag_days, per_week)
             elif link.type == "SS":
-                bound = workday_date(starts[p], link.lag_days, per_week)
+                bound = workday_date(starts[predecessor], link.lag_days, per_week)
             else:
                 continue
-            new_start = min(bound, windows[s].latest_start)
-            if new_start > starts[s]:
-                starts[s] = new_start
-                finishes[s] = windows[s].finish(new_start, per_week, completion)
+            new_start = min(bound, windows[successor].latest_start)
+            if new_start > starts[successor]:
+                starts[successor] = new_start
+                finishes[successor] = windows[successor].finish(new_start, per_week, completion)
                 moved = True
         if not moved:
             break
@@ -225,18 +231,18 @@ def build_export(header: RunHeader, rows: Sequence[PlannedRow]) -> PlanExport:
     durations = _snapshot_durations(snapshot)
 
     windows: list[_Window] = []
-    uids: dict[str, int] = {}
-    for i, row in enumerate(rows, start=1):
+    task_uids: dict[str, int] = {}
+    for task_uid, row in enumerate(rows, start=1):
         weeks = max(row.end_week - row.start_week + 1, 1)
         duration = durations.get(str(row.wbs_node_id)) or row.duration_days or weeks * per_week
         windows.append(_window(row, duration, planning_start, per_week))
-        uids[str(row.wbs_node_id)] = i
-    links = _links(snapshot, uids)
+        task_uids[str(row.wbs_node_id)] = task_uid
+    links = _links(snapshot, task_uids)
     dates = _schedule(windows, links, per_week, header.completion_date)
 
     tasks = [
         ExportTask(
-            uid=i,
+            uid=task_uid,
             wbs_node_id=str(row.wbs_node_id),
             code=row.code,
             name=row.name,
@@ -250,12 +256,12 @@ def build_export(header: RunHeader, rows: Sequence[PlannedRow]) -> PlanExport:
             hours_per_week=row.hours_per_week,
             weeks=weeks_label(row.start_week, row.end_week),
         )
-        for i, (row, window, (start, finish)) in enumerate(
+        for task_uid, (row, window, (start, finish)) in enumerate(
             zip(rows, windows, dates, strict=True), start=1
         )
     ]
 
-    finish_date = header.completion_date or max((t.finish for t in tasks), default=None)
+    finish_date = header.completion_date or max((task.finish for task in tasks), default=None)
     return PlanExport(
         project_name=header.project_name,
         title=(

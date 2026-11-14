@@ -17,7 +17,7 @@ from app.repositories.tables import (
     wbs_nodes_with_code,
 )
 
-r = optimization_runs
+runs = optimization_runs
 
 
 class PlanRepository:
@@ -31,15 +31,15 @@ class PlanRepository:
     async def versions(self, project_id: uuid.UUID) -> list[PlanVersion]:
         stmt = (
             sa.select(
-                r.c.version,
-                r.c.id,
-                r.c.applied_at,
-                r.c.completion_date,
-                r.c.expected_cost_cents,
-                r.c.solver,
+                runs.c.version,
+                runs.c.id,
+                runs.c.applied_at,
+                runs.c.completion_date,
+                runs.c.expected_cost_cents,
+                runs.c.solver,
             )
-            .where(r.c.project_id == project_id, r.c.version.is_not(None))
-            .order_by(r.c.version)
+            .where(runs.c.project_id == project_id, runs.c.version.is_not(None))
+            .order_by(runs.c.version)
         )
         return [
             PlanVersion(
@@ -59,23 +59,22 @@ class PlanRepository:
         await self._conn.execute(sa.select(sa.func.public.apply_optimization_run(run_id)))
 
     async def export_header(self, project_id: uuid.UUID, run_id: uuid.UUID) -> RunHeader | None:
-        p = projects
         stmt = (
             sa.select(
-                r.c.id,
-                p.c.name,
-                r.c.status,
-                r.c.solver,
-                r.c.version,
-                r.c.applied_at,
-                r.c.completion_date,
-                r.c.expected_cost_cents,
-                r.c.result,
-                r.c.input_snapshot,
-                r.c.created_at,
+                runs.c.id,
+                projects.c.name,
+                runs.c.status,
+                runs.c.solver,
+                runs.c.version,
+                runs.c.applied_at,
+                runs.c.completion_date,
+                runs.c.expected_cost_cents,
+                runs.c.result,
+                runs.c.input_snapshot,
+                runs.c.created_at,
             )
-            .select_from(r.join(p, p.c.id == r.c.project_id))
-            .where(r.c.project_id == project_id, r.c.id == run_id)
+            .select_from(runs.join(projects, projects.c.id == runs.c.project_id))
+            .where(runs.c.project_id == project_id, runs.c.id == run_id)
         )
         row = (await self._conn.execute(stmt)).first()
         if row is None:
@@ -95,25 +94,27 @@ class PlanRepository:
         )
 
     async def export_rows(self, run_id: uuid.UUID) -> list[PlannedRow]:
-        pa, w, e = planned_assignments, wbs_nodes_with_code, employees
+        assignments, nodes = planned_assignments, wbs_nodes_with_code
         stmt = (
             sa.select(
-                pa.c.wbs_node_id,
-                w.c.code,
-                w.c.name,
-                w.c.duration_days,
-                pa.c.employee_id,
-                e.c.full_name,
-                pa.c.contractor_label,
-                pa.c.start_week,
-                pa.c.end_week,
-                pa.c.hours_per_week,
+                assignments.c.wbs_node_id,
+                nodes.c.code,
+                nodes.c.name,
+                nodes.c.duration_days,
+                assignments.c.employee_id,
+                employees.c.full_name,
+                assignments.c.contractor_label,
+                assignments.c.start_week,
+                assignments.c.end_week,
+                assignments.c.hours_per_week,
             )
             .select_from(
-                pa.join(w, w.c.id == pa.c.wbs_node_id).outerjoin(e, e.c.id == pa.c.employee_id)
+                assignments.join(nodes, nodes.c.id == assignments.c.wbs_node_id).outerjoin(
+                    employees, employees.c.id == assignments.c.employee_id
+                )
             )
-            .where(pa.c.run_id == run_id)
-            .order_by(w.c.path, pa.c.start_week)
+            .where(assignments.c.run_id == run_id)
+            .order_by(nodes.c.path, assignments.c.start_week)
         )
         return [
             PlannedRow(

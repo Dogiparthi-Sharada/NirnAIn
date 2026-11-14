@@ -1,3 +1,14 @@
+/**
+ * Data layer of step 7, Changes & Versions: API types and TanStack Query hooks.
+ *
+ * After a plan is applied, a change (meeting notes, direct edits or a progress update) is
+ * analysed by the backend into detected changes and questions; once answered, it is re-planned
+ * with C1's optimizer against the plan in force and approved or rejected. This module mirrors
+ * the backend models (`app/domain/changes.py`, plan versions from `app/domain/plan.py`), wraps
+ * every endpoint the flow uses (plan versions, change requests, team, re-plan run, comparison,
+ * decision, notes extraction) and keeps the cache fresh: approving a plan invalidates every
+ * query it changes. Used by `src/screens/ChangesVersions.tsx` and `src/screens/changes/`.
+ */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch, isApiError } from './api'
 import { queryKeys } from './queries'

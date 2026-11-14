@@ -68,15 +68,15 @@ def _note(pdf: FPDF, text: str) -> None:
 
 
 def _cells(rows: Sequence[dict[str, str]], keys: Sequence[str]) -> list[list[str]]:
-    return [[row.get(k, "") for k in keys] for row in rows]
+    return [[row.get(key, "") for key in keys] for row in rows]
 
 
-def _assignee(t: ExportTask) -> str:
-    if t.resource is None:
+def _assignee(task: ExportTask) -> str:
+    if task.resource is None:
         return "Unassigned"
-    if t.is_contractor and "contractor" not in t.resource.lower():
-        return f"{t.resource} (contractor)"
-    return t.resource
+    if task.is_contractor and "contractor" not in task.resource.lower():
+        return f"{task.resource} (contractor)"
+    return task.resource
 
 
 def _table(
@@ -91,7 +91,7 @@ def _table(
         padding=1.2,
         headings_style=HEADINGS,
     ) as table:
-        table.row([latin1(h) for h in headings])
+        table.row([latin1(heading) for heading in headings])
         for row in rows:
             table.row([latin1(cell) for cell in row])
 
@@ -135,15 +135,15 @@ def render_pdf(plan: PlanExport) -> bytes:
             ("WBS", "Work package", "Assigned to", "Start", "Finish", "Weeks", "Hours/week"),
             [
                 (
-                    t.code,
-                    t.name,
-                    _assignee(t),
-                    day(t.start),
-                    day(t.finish),
-                    t.weeks,
-                    f"{t.hours_per_week:g}",
+                    task.code,
+                    task.name,
+                    _assignee(task),
+                    day(task.start),
+                    day(task.finish),
+                    task.weeks,
+                    f"{task.hours_per_week:g}",
                 )
-                for t in plan.tasks
+                for task in plan.tasks
             ],
             (18, 85, 55, 30, 30, 32, 27),
         )
@@ -159,7 +159,11 @@ def render_pdf(plan: PlanExport) -> bytes:
             (80, 55, 55, 87),
         )
 
-    changed = [c for c in plan.schedule_changes if latin1(c.get("delta", "")) not in ("", "-")]
+    changed = [
+        change
+        for change in plan.schedule_changes
+        if latin1(change.get("delta", "")) not in ("", "-")
+    ]
     if changed:
         _heading(pdf, "Schedule changes")
         _table(

@@ -80,12 +80,12 @@ async def export_run(
     plan = build_export(header, await plans.export_rows(run_id))
     if export_format is ExportFormat.PDF:
         content = await asyncio.to_thread(render_pdf, plan)
-        media_type, ext = "application/pdf", "pdf"
+        media_type, extension = "application/pdf", "pdf"
     else:
         content = render_msproject(plan)
-        media_type, ext = "application/xml", "xml"
+        media_type, extension = "application/xml", "xml"
     return Response(
         content,
         media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{plan.file_stem}.{ext}"'},
+        headers={"Content-Disposition": f'attachment; filename="{plan.file_stem}.{extension}"'},
     )
