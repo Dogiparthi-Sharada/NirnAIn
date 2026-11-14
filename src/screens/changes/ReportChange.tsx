@@ -99,7 +99,7 @@ function NotesPane({ orgId, busy, onSubmit }: { orgId: string | null; busy: bool
     setReading(true)
     try {
       const content = await readNotesFile(file, orgId)
-      setText((prev) => (prev.trim() ? `${prev}\n\n${content}` : content))
+      setText((previous) => (previous.trim() ? `${previous}\n\n${content}` : content))
     } catch (error) {
       setFileError(errorMessage(error))
     } finally {
@@ -120,7 +120,7 @@ function NotesPane({ orgId, busy, onSubmit }: { orgId: string | null; busy: bool
         value={text}
         maxLength={50000}
         placeholder="Paste the notes from the meeting where something changed: a new budget, a moved deadline, work that slips or is done, someone leaving…"
-        onChange={(e) => setText(e.target.value)}
+        onChange={(event) => setText(event.target.value)}
       />
       <div className="row between">
         <div className="hint">Or upload a transcript, PDF, Word or text file, same as Create Project.</div>
@@ -129,7 +129,7 @@ function NotesPane({ orgId, busy, onSubmit }: { orgId: string | null; busy: bool
           type="file"
           hidden
           accept=".txt,.md,.vtt,.srt,.csv,.pdf,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-          onChange={(e) => void onFile(e.target.files?.[0])}
+          onChange={(event) => void onFile(event.target.files?.[0])}
         />
         <button className="btn sm sec mt8" type="button" disabled={reading || busy} onClick={() => fileRef.current?.click()}>
           {reading ? 'Reading file…' : 'Upload a file'}

@@ -30,7 +30,7 @@ _WORDS = {
     "couple of": 2,
     "a few": 3,
 }
-_NUM = (
+_NUMBER = (
     r"\d+(?:\.\d+)?|a couple of|couple of|a few|an?|one|two|three|four|five|six|seven|eight"
     r"|nine|ten|eleven|twelve"
 )
@@ -75,21 +75,21 @@ _UNITS = {
     "bn": 1_000_000_000,
     "billion": 1_000_000_000,
 }
-_ISO = re.compile(r"\b(?P<y>\d{4})-(?P<m>\d{2})-(?P<d>\d{2})\b")
-_MDY = re.compile(
+_ISO_DATE = re.compile(r"\b(?P<y>\d{4})-(?P<m>\d{2})-(?P<d>\d{2})\b")
+_MONTH_DAY_YEAR = re.compile(
     rf"\b(?P<mon>{_MONTH})\.?\s+(?P<d>\d{{1,2}})(?:st|nd|rd|th)?\b(?:,?\s+(?P<y>\d{{4}}))?", re.I
 )
-_DMY = re.compile(
+_DAY_MONTH_YEAR = re.compile(
     rf"\b(?P<d>\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?(?P<mon>{_MONTH})\b\.?(?:,?\s+(?P<y>\d{{4}}))?",
     re.I,
 )
 _SPAN = re.compile(
-    rf"\b(?P<n>{_NUM})\s*(?:more\s+|extra\s+|additional\s+|further\s+)?"
+    rf"\b(?P<count>{_NUMBER})\s*(?:more\s+|extra\s+|additional\s+|further\s+)?"
     r"(?P<unit>weeks?|wks?|(?:working |business |work )?days?|months?)\b",
     re.I,
 )
 _HOURS = re.compile(
-    rf"\b(?P<n>{_NUM})\s*(?:hours?|hrs?|h)\b(?:\s*(?:a|per|/|each)\s*(?:week|wk))?", re.I
+    rf"\b(?P<count>{_NUMBER})\s*(?:hours?|hrs?|h)\b(?:\s*(?:a|per|/|each)\s*(?:week|wk))?", re.I
 )
 _TOKEN = re.compile(r"[a-z0-9]+")
 _STOP = frozenset(
@@ -132,22 +132,25 @@ _STOP = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class Sentence:
+    """A sentence of the notes; `body` is what gets quoted, `speaker` the "Name:" prefix."""
+
     text: str  # the whole sentence, verbatim
     body: str  # without a leading "Name:" speaker prefix, verbatim
     speaker: str | None
 
 
 def sentences(text: str) -> list[Sentence]:
+    """Split notes into sentences (and lines), dropping bullets and keeping text verbatim."""
     out: list[Sentence] = []
     for raw in _SPLIT.split(text):
-        s = _BULLET.sub("", raw).strip()
-        if not s:
+        line = _BULLET.sub("", raw).strip()
+        if not line:
             continue
-        m = _SPEAKER.match(s)
-        if m:
-            out.append(Sentence(s, m["body"].strip(), m["speaker"].strip()))
+        match = _SPEAKER.match(line)
+        if match:
+            out.append(Sentence(line, match["body"].strip(), match["speaker"].strip()))
         else:
-            out.append(Sentence(s, s, None))
+            out.append(Sentence(line, line, None))
     return out
 
 
@@ -164,15 +167,15 @@ def _number(raw: str) -> float | None:
 def money_cents(text: str) -> list[int]:
     """Money amounts in a sentence as integer cents, in order of appearance."""
     found: list[tuple[int, int]] = []
-    for rx in (_MONEY, _MONEY_WORDS):
-        for m in rx.finditer(text):
+    for pattern in (_MONEY, _MONEY_WORDS):
+        for match in pattern.finditer(text):
             try:
-                value = Decimal(m["num"].replace(",", ""))
+                value = Decimal(match["num"].replace(",", ""))
             except InvalidOperation:
                 continue
-            unit = (m["unit"] or "").lower()
+            unit = (match["unit"] or "").lower()
             value *= _UNITS.get(unit, 1)
-            found.append((m.start(), int(value * 100)))
+            found.append((match.start(), int(value * 100)))
     found.sort()
     seen: list[int] = []
     for _, cents in found:
@@ -184,55 +187,57 @@ def money_cents(text: str) -> list[int]:
 def dates(text: str, default_year: int) -> list[date]:
     """Calendar dates in a sentence. A date without a year takes `default_year`."""
     found: list[tuple[int, date]] = []
-    for m in _ISO.finditer(text):
+    for match in _ISO_DATE.finditer(text):
         try:
-            found.append((m.start(), date(int(m["y"]), int(m["m"]), int(m["d"]))))
+            found.append((match.start(), date(int(match["y"]), int(match["m"]), int(match["d"]))))
         except ValueError:
             continue
-    for rx in (_MDY, _DMY):
-        for m in rx.finditer(text):
-            month = _MONTHS[m["mon"][:3].lower()]
-            year = int(m["y"]) if m["y"] else default_year
+    for pattern in (_MONTH_DAY_YEAR, _DAY_MONTH_YEAR):
+        for match in pattern.finditer(text):
+            month = _MONTHS[match["mon"][:3].lower()]
+            year = int(match["y"]) if match["y"] else default_year
             try:
-                found.append((m.start(), date(year, month, int(m["d"]))))
+                found.append((match.start(), date(year, month, int(match["d"]))))
             except ValueError:
                 continue
     found.sort()
     out: list[date] = []
-    for _, d in found:
-        if d not in out:
-            out.append(d)
+    for _, found_date in found:
+        if found_date not in out:
+            out.append(found_date)
     return out
 
 
 def spans_days(text: str) -> list[int]:
     """Durations ("two weeks", "3 days", "1 month") as working days."""
     out: list[int] = []
-    for m in _SPAN.finditer(text):
-        n = _number(m["n"])
-        if n is None or n <= 0:
+    for match in _SPAN.finditer(text):
+        number = _number(match["count"])
+        if number is None or number <= 0:
             continue
-        unit = m["unit"].lower()
+        unit = match["unit"].lower()
         if unit.startswith("w"):
-            days = n * DAYS_PER_WEEK
+            days = number * DAYS_PER_WEEK
         elif unit.startswith("month"):
-            days = n * DAYS_PER_MONTH
+            days = number * DAYS_PER_MONTH
         else:
-            days = n
+            days = number
         out.append(round(days))
     return out
 
 
 def hours(text: str) -> list[float]:
+    """Hour figures ("20 hours a week", "16h") between 0 and 80."""
     out: list[float] = []
-    for m in _HOURS.finditer(text):
-        n = _number(m["n"])
-        if n is not None and 0 <= n <= 80:
-            out.append(n)
+    for match in _HOURS.finditer(text):
+        number = _number(match["count"])
+        if number is not None and 0 <= number <= 80:
+            out.append(number)
     return out
 
 
 def has(text: str, pattern: re.Pattern[str]) -> bool:
+    """Whether `pattern` occurs anywhere in `text`."""
     return pattern.search(text) is not None
 
 
@@ -248,6 +253,7 @@ def tokens(text: str) -> set[str]:
 
 
 def distinctive(name: str) -> set[str]:
+    """Name tokens that identify a work package (generic words like "setup" removed)."""
     return tokens(name) - _STOP
 
 
@@ -258,39 +264,45 @@ def code_in(code: str, text: str) -> bool:
     return re.search(rf"(?<![\d.]){re.escape(code)}(?![\d]|\.\d)", text) is not None
 
 
-def fmt_days(days: float | int | None) -> str:
+def format_days(days: float | int | None) -> str:
+    """Working days as "4w" (whole weeks) or "7d"."""
     if days is None:
         return "—"
-    d = int(days)
-    if d % DAYS_PER_WEEK == 0:
-        return f"{d // DAYS_PER_WEEK}w"
-    return f"{d}d"
+    whole_days = int(days)
+    if whole_days % DAYS_PER_WEEK == 0:
+        return f"{whole_days // DAYS_PER_WEEK}w"
+    return f"{whole_days}d"
 
 
-def fmt_money(cents: int | float | None) -> str:
+def format_money(cents: int | float | None) -> str:
+    """Cents as "$365,000"."""
     if cents is None:
         return "—"
     return f"${int(cents) / 100:,.0f}"
 
 
-def fmt_date(d: date | None) -> str:
-    return "—" if d is None else f"{d:%b} {d.day}, {d.year}"
+def format_date(value: date | None) -> str:
+    """A date as "Sep 30, 2025"."""
+    return "—" if value is None else f"{value:%b} {value.day}, {value.year}"
 
 
-def fmt_hours(h: float | int | None) -> str:
-    if h is None:
+def format_hours(value: float | int | None) -> str:
+    """Hours as "20h"."""
+    if value is None:
         return "—"
-    return f"{float(h):g}h"
+    return f"{float(value):g}h"
 
 
 def unique(items: Iterable[str]) -> list[str]:
+    """Items in first-seen order without repeats."""
     out: list[str] = []
-    for i in items:
-        if i not in out:
-            out.append(i)
+    for item in items:
+        if item not in out:
+            out.append(item)
     return out
 
 
-def first_name(full: str) -> str:
-    parts: Sequence[str] = full.split()
-    return parts[0] if parts else full
+def first_name(full_name: str) -> str:
+    """First word of a full_name name."""
+    parts: Sequence[str] = full_name.split()
+    return parts[0] if parts else full_name

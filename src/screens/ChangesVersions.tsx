@@ -34,8 +34,8 @@ export default function ChangesVersions() {
 
   useEffect(() => {
     if (!toast) return
-    const t = window.setTimeout(() => setToast(null), TOAST_MS)
-    return () => window.clearTimeout(t)
+    const timer = window.setTimeout(() => setToast(null), TOAST_MS)
+    return () => window.clearTimeout(timer)
   }, [toast])
 
   let body: ReactNode
@@ -97,14 +97,14 @@ export default function ChangesVersions() {
  * `#chg-main`: report a change, the version list, and the active change. The active change
  * is the one just recorded, else the newest still-open one; after "Keep Plan vN" none is.
  */
-function ChangeFlow({ projectId, orgId, versions, onToast }: { projectId: string; orgId: string | null; versions: PlanVersion[]; onToast: (msg: string) => void }) {
+function ChangeFlow({ projectId, orgId, versions, onToast }: { projectId: string; orgId: string | null; versions: PlanVersion[]; onToast: (message: string) => void }) {
   const changes = useChanges(projectId)
   const [activeId, setActiveId] = useState<string | null>(null)
   // Re-plan run ids from C1's response, in case the change row isn't linked to its run yet.
   const [localRuns, setLocalRuns] = useState<Record<string, string>>({})
   const current = versions[versions.length - 1]
   const all = changes.data ?? []
-  const active = activeId === null ? all.find((c) => OPEN.includes(c.status)) : all.find((c) => c.id === activeId)
+  const active = activeId === null ? all.find((change) => OPEN.includes(change.status)) : all.find((change) => change.id === activeId)
   const runId = active && active.status !== 'rejected' ? (active.proposedRunId ?? localRuns[active.id] ?? null) : null
   const run = useRun(projectId, runId)
   const draft = Boolean(active && OPEN.includes(active.status) && isSolved(run.data?.status))
@@ -112,7 +112,7 @@ function ChangeFlow({ projectId, orgId, versions, onToast }: { projectId: string
   return (
     <div id="chg-main">
       <div className="g2" style={{ gridTemplateColumns: '1.6fr 1fr' }}>
-        <ReportChange projectId={projectId} orgId={orgId} current={current} onCreated={(c) => setActiveId(c.id)} />
+        <ReportChange projectId={projectId} orgId={orgId} current={current} onCreated={(change) => setActiveId(change.id)} />
         <div className="card">
           <h3>Versions</h3>
           <div id="versions">
@@ -136,7 +136,7 @@ function ChangeFlow({ projectId, orgId, versions, onToast }: { projectId: string
           current={current}
           run={run.data ?? null}
           runError={run.isError ? errorMessage(run.error) : null}
-          onReplanned={(id) => setLocalRuns((prev) => ({ ...prev, [active.id]: id }))}
+          onReplanned={(id) => setLocalRuns((previous) => ({ ...previous, [active.id]: id }))}
           onDecided={(decision) => {
             const base = active.baseVersion ?? current.version
             if (decision === 'reject') {
@@ -157,20 +157,20 @@ function VersionList({ versions, draft }: { versions: PlanVersion[]; draft: bool
   const last = versions[versions.length - 1]
   return (
     <>
-      {versions.map((v) => (
-        <div className="ver" key={v.runId}>
-          <b>Plan v{v.version}</b> {v === last ? <Chip k="stated">In force</Chip> : <Chip k="default">Superseded</Chip>}
+      {versions.map((version) => (
+        <div className="ver" key={version.runId}>
+          <b>Plan v{version.version}</b> {version === last ? <Chip kind="stated">In force</Chip> : <Chip kind="default">Superseded</Chip>}
           <div className="small muted">
-            Applied {formatDate(v.appliedAt)}
-            {v.label && v.label !== `Plan v${v.version}` ? <> &middot; {v.label}</> : null}
+            Applied {formatDate(version.appliedAt)}
+            {version.label && version.label !== `Plan v${version.version}` ? <> &middot; {version.label}</> : null}
             <br />
-            Go-live {formatDate(v.completionDate)} &middot; {formatMoney(v.expectedCostCents)}
+            Go-live {formatDate(version.completionDate)} &middot; {formatMoney(version.expectedCostCents)}
           </div>
         </div>
       ))}
       {draft && (
         <div className="ver">
-          <b>Plan v{last.version + 1}</b> <Chip k="inferred">Draft</Chip>
+          <b>Plan v{last.version + 1}</b> <Chip kind="inferred">Draft</Chip>
           <div className="small muted">Waiting for your approval. Plan v{last.version} stays in force until then.</div>
         </div>
       )}

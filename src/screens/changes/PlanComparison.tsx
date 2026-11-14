@@ -22,9 +22,9 @@ interface CompareQuery {
 }
 
 /** A row the user should see in "What moved and why": added, dropped, re-dated or re-owned. */
-function isChanged(r: CompareRow): boolean {
-  if (r.before === null || r.after === null || r.ownerChanged) return true
-  return r.before.start !== r.after.start || r.before.end !== r.after.end
+function isChanged(row: CompareRow): boolean {
+  if (row.before === null || row.after === null || row.ownerChanged) return true
+  return row.before.start !== row.after.start || row.before.end !== row.after.end
 }
 
 /** The comparison card stack plus Approve / Keep. Loading and error states retry the comparison only. */
@@ -70,17 +70,17 @@ export function PlanComparison({
 
   const { base, proposed, rows } = query.data
   const changed = rows.filter(isChanged)
-  const moved = changed.filter((r) => r.before && r.after && (r.before.start !== r.after.start || r.before.end !== r.after.end)).length
-  const owners = rows.filter((r) => r.ownerChanged).length
-  const added = rows.filter((r) => r.before === null).length
-  const gone = rows.filter((r) => r.after === null).length
+  const moved = changed.filter((row) => row.before && row.after && (row.before.start !== row.after.start || row.before.end !== row.after.end)).length
+  const owners = rows.filter((row) => row.ownerChanged).length
+  const added = rows.filter((row) => row.before === null).length
+  const gone = rows.filter((row) => row.after === null).length
   const unchanged = rows.length - changed.length
 
-  const c1 = base.expectedCostCents
-  const c2 = proposed.expectedCostCents
-  const costDelta = c1 != null && c2 != null ? c2 - c1 : null
-  const h1 = base.budgetCents != null && c1 != null ? base.budgetCents - c1 : null
-  const h2 = proposed.budgetCents != null && c2 != null ? proposed.budgetCents - c2 : null
+  const baseCost = base.expectedCostCents
+  const proposedCost = proposed.expectedCostCents
+  const costDelta = baseCost != null && proposedCost != null ? proposedCost - baseCost : null
+  const baseHeadroom = base.budgetCents != null && baseCost != null ? base.budgetCents - baseCost : null
+  const proposedHeadroom = proposed.budgetCents != null && proposedCost != null ? proposed.budgetCents - proposedCost : null
   const finishDelta =
     proposed.completionDate && base.completionDate ? Math.round((day(proposed.completionDate) - day(base.completionDate)) / DAY_MS) : null
 
@@ -98,17 +98,17 @@ export function PlanComparison({
           <h3 style={{ margin: 0 }}>
             Plan v{nextVersion} vs Plan v{baseVersion}
           </h3>
-          {approved ? <Chip k="stated">Approved · in force</Chip> : <Chip k="inferred">Draft · not applied yet</Chip>}
+          {approved ? <Chip kind="stated">Approved · in force</Chip> : <Chip kind="inferred">Draft · not applied yet</Chip>}
         </div>
         <div className="kpis mt" style={{ marginBottom: 0 }}>
-          <Kpi k="Go-live" v={formatDate(proposed.completionDate)} s={finishNote} />
-          <Kpi k="Total cost" v={formatMoney(c2)} s={costNote} />
+          <Kpi label="Go-live" value={formatDate(proposed.completionDate)} detail={finishNote} />
+          <Kpi label="Total cost" value={formatMoney(proposedCost)} detail={costNote} />
           <Kpi
-            k="Budget headroom"
-            v={formatMoney(h2)}
-            s={proposed.budgetCents == null ? 'No budget set' : `under ${formatMoney(proposed.budgetCents)} · was ${formatMoney(h1)}`}
+            label="Budget headroom"
+            value={formatMoney(proposedHeadroom)}
+            detail={proposed.budgetCents == null ? 'No budget set' : `under ${formatMoney(proposed.budgetCents)} · was ${formatMoney(baseHeadroom)}`}
           />
-          <Kpi k="What changed" v={`${moved} moved`} s={`${owners} owner${owners === 1 ? '' : 's'} changed · ${added} added · ${gone} done or dropped`} />
+          <Kpi label="What changed" value={`${moved} moved`} detail={`${owners} owner${owners === 1 ? '' : 's'} changed · ${added} added · ${gone} done or dropped`} />
         </div>
       </div>
       <div className="card">
@@ -138,8 +138,8 @@ export function PlanComparison({
               </tr>
             </thead>
             <tbody>
-              {changed.map((r) => (
-                <MovedRow key={r.wbsNodeId} r={r} />
+              {changed.map((row) => (
+                <MovedRow key={row.wbsNodeId} row={row} />
               ))}
               {unchanged > 0 && (
                 <tr>
@@ -173,36 +173,36 @@ export function PlanComparison({
   )
 }
 
-function Kpi({ k, v, s }: { k: string; v: string; s: string }) {
+function Kpi({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
     <div className="kpi">
-      <div className="k">{k}</div>
-      <div className="v">{v}</div>
-      <div className="s">{s}</div>
+      <div className="k">{label}</div>
+      <div className="v">{value}</div>
+      <div className="s">{detail}</div>
     </div>
   )
 }
 
-function MovedRow({ r }: { r: CompareRow }) {
+function MovedRow({ row }: { row: CompareRow }) {
   let change: string
-  if (r.before === null) change = 'Added'
-  else if (r.after === null) change = r.why?.startsWith('Done') ? 'Done' : 'Dropped'
-  else if (r.shiftDays) change = signedWeeks(r.shiftDays)
-  else change = r.ownerChanged ? 'Owner' : 'Start moved'
-  let owner = r.before?.owner ?? '—'
-  if (r.ownerChanged) owner = `${r.before?.owner ?? '—'} → ${r.after?.owner ?? '—'}`
-  else if (r.after?.owner) owner = `${r.after.owner} (same)`
+  if (row.before === null) change = 'Added'
+  else if (row.after === null) change = row.why?.startsWith('Done') ? 'Done' : 'Dropped'
+  else if (row.shiftDays) change = signedWeeks(row.shiftDays)
+  else change = row.ownerChanged ? 'Owner' : 'Start moved'
+  let owner = row.before?.owner ?? '—'
+  if (row.ownerChanged) owner = `${row.before?.owner ?? '—'} → ${row.after?.owner ?? '—'}`
+  else if (row.after?.owner) owner = `${row.after.owner} (same)`
   return (
     <tr>
-      <td className="mono">{r.code}</td>
-      <td>{r.name}</td>
-      <td className="small">{range(r.before)}</td>
+      <td className="mono">{row.code}</td>
+      <td>{row.name}</td>
+      <td className="small">{range(row.before)}</td>
       <td className="small">
-        <b>{range(r.after)}</b>
+        <b>{range(row.after)}</b>
       </td>
       <td className="mono">{change}</td>
       <td className="small">{owner}</td>
-      <td className="small">{r.why ?? '—'}</td>
+      <td className="small">{row.why ?? '—'}</td>
     </tr>
   )
 }

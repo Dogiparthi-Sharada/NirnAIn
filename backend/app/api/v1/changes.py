@@ -16,8 +16,9 @@ from fastapi import APIRouter, Body, Depends, Path, Query, Request, Response, st
 from app.ai.llm import LLM, make_client
 from app.api.deps import ProjectId
 from app.changes.compare import build_comparison
-from app.changes.derive import InvalidEditError, build_impact, from_edits, validate_answers
+from app.changes.derive import InvalidEditError, build_impact, from_edits
 from app.changes.llm import RULES_MODEL, ChangeDetector
+from app.changes.questions import validate_answers
 from app.core.db import UserDB
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableError
 from app.domain.changes import (
@@ -40,11 +41,16 @@ NO_PLAN = "No applied plan yet. Apply a plan on step 6 first. Changes are measur
 RUNNING = (SolverStatus.QUEUED, SolverStatus.RUNNING)
 
 
-def get_change_repo(db: UserDB) -> ChangeRepository:
-    return ChangeRepository(db)
+def get_change_repo(connection: UserDB) -> ChangeRepository:
+    """Change repository on the caller's RLS session (tests override this)."""
+    return ChangeRepository(connection)
 
 
 def get_change_detector(request: Request) -> ChangeDetector:
+    """One detector per app: Claude when ANTHROPIC_API_KEY is set, else the rules.
+
+    Built lazily so the API starts without a key; tests override this dependency.
+    """
     detector: ChangeDetector | None = getattr(request.app.state, "change_detector", None)
     if detector is None:
         settings = request.app.state.settings
@@ -59,6 +65,7 @@ ChangeId = Annotated[uuid.UUID, Path(alias="changeId")]
 
 
 async def _writable_project(changes: ChangeRepository, project_id: uuid.UUID) -> ProjectRef:
+    """The project, or 404 when not visible / 403 when the caller can't change it."""
     project = await changes.project(project_id)
     if project is None:
         raise NotFoundError("Project not found")
@@ -68,6 +75,7 @@ async def _writable_project(changes: ChangeRepository, project_id: uuid.UUID) ->
 
 
 async def _change(changes: ChangeRepository, change_id: uuid.UUID) -> ChangeRequest:
+    """The change, or 404 (RLS hides other projects' changes)."""
     change = await changes.get(change_id)
     if change is None:
         raise NotFoundError("Change not found")
@@ -75,6 +83,7 @@ async def _change(changes: ChangeRepository, change_id: uuid.UUID) -> ChangeRequ
 
 
 def _open(change: ChangeRequest) -> None:
+    """409 once a change is approved or rejected: decisions are final."""
     if change.status in DECIDED:
         raise ConflictError(f"This change was already {change.status.value}.")
 
@@ -92,29 +101,36 @@ async def create_change(
     changes: Changes,
     detector: Detector,
 ) -> ChangeRequest:
+    """Record a change and find what it affects.
+
+    Needs a plan in force (409 otherwise). Notes are read by Claude or the rules (the
+    analysis runs inside the request, so the 202 response already carries the impact);
+    edits and progress are taken as given (422 when they change nothing). The change is
+    measured against the run in force (`baseRunId`).
+    """
     project = await _writable_project(changes, project_id)
     in_force = await changes.in_force(project_id)
     if in_force is None:
         raise ConflictError(NO_PLAN)
-    ctx = await changes.context(project, in_force, datetime.now(UTC).date())
+    context = await changes.context(project, in_force, datetime.now(UTC).date())
 
     found: list[DetectedChange]
     if body.source == "notes":
         if not body.text:
             raise UnprocessableError("Paste the new meeting notes (or upload a file) first.")
-        found, model = await detector.detect(body.text, ctx)
+        found, model = await detector.detect(body.text, context)
     else:
         if body.edits is None:
             raise UnprocessableError("Enter at least one change first.")
         try:
-            found = from_edits(body.edits, ctx)
+            found = from_edits(body.edits, context)
         except InvalidEditError as exc:
             raise UnprocessableError(str(exc)) from exc
         if not found:
-            raise UnprocessableError(f"Nothing changed: these values match {ctx.plan_label}.")
+            raise UnprocessableError(f"Nothing changed: these values match {context.plan_label}.")
         model = RULES_MODEL
 
-    impact = build_impact(found, body.source, ctx, model)
+    impact = build_impact(found, body.source, context, model)
     change_id = await changes.create(project_id, body.source, body.text, impact, in_force.run_id)
     change = await changes.get(change_id)
     if change is None:
@@ -129,6 +145,7 @@ async def create_change(
     summary="Changes of a project, newest first",
 )
 async def list_changes(project_id: ProjectId, changes: Changes) -> list[ChangeRequest]:
+    """The project's changes, newest first (readers may list; 404 when not visible)."""
     if await changes.project(project_id) is None:
         raise NotFoundError("Project not found")
     return await changes.list(project_id)
@@ -136,6 +153,7 @@ async def list_changes(project_id: ProjectId, changes: Changes) -> list[ChangeRe
 
 @router.get("/changes/{changeId}", response_model=ChangeRequest, summary="Get a change")
 async def get_change(change_id: ChangeId, changes: Changes) -> ChangeRequest:
+    """One change with its impact, answers and, once complete, the re-plan overrides."""
     return await _change(changes, change_id)
 
 
@@ -147,6 +165,10 @@ async def get_change(change_id: ChangeId, changes: Changes) -> ChangeRequest:
 async def answer_change(
     change_id: ChangeId, body: ChangeAnswers, changes: Changes
 ) -> ChangeRequest:
+    """Save answers (validated against the questions' options; 422 otherwise).
+
+    Changing an answer after a re-plan drops that proposal: it was solved with other values.
+    """
     change = await _change(changes, change_id)
     await _writable_project(changes, change.project_id)
     _open(change)
@@ -171,6 +193,11 @@ async def approve_change(
     changes: Changes,
     body: Annotated[ChangeApprove | None, Body()] = None,
 ) -> ChangeRequest:
+    """Approve the re-plan: it becomes Plan vN+1 and the change's values become the inputs.
+
+    Refused while the run is still solving (409), when it didn't solve (422), when it is
+    already applied, or when another plan was applied since the change was recorded.
+    """
     change = await _change(changes, change_id)
     project = await _writable_project(changes, change.project_id)
     _open(change)
@@ -209,6 +236,7 @@ async def approve_change(
     summary="Keep the plan in force; the change stays on record",
 )
 async def reject_change(change_id: ChangeId, changes: Changes) -> ChangeRequest:
+    """Keep Plan vN: the change is closed as rejected and stays on record."""
     change = await _change(changes, change_id)
     await _writable_project(changes, change.project_id)
     _open(change)
@@ -226,6 +254,7 @@ async def compare_change(
     changes: Changes,
     run_id: Annotated[uuid.UUID | None, Query(alias="runId")] = None,
 ) -> ChangeComparison:
+    """Plan vN+1 against Plan vN per work package (409 until the re-plan has solved)."""
     change = await _change(changes, change_id)
     proposed_id = change.proposed_run_id or run_id
     if change.base_run_id is None or proposed_id is None:

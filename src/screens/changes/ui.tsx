@@ -24,8 +24,8 @@ const CHIP: Record<ChipKind, [string, string]> = {
 }
 
 /** Provenance chip from the approved design (`chip()` in the mockup); `children` overrides the label. */
-export function Chip({ k, children }: { k: ChipKind; children?: ReactNode }) {
-  return <span className={`chip ${CHIP[k][0]}`}>{children ?? CHIP[k][1]}</span>
+export function Chip({ kind, children }: { kind: ChipKind; children?: ReactNode }) {
+  return <span className={`chip ${CHIP[kind][0]}`}>{children ?? CHIP[kind][1]}</span>
 }
 
 /** Advances through `count` steps every 700 ms while `active` (purely visual progress for slow calls). */
@@ -36,8 +36,8 @@ export function useSteps(active: boolean, count: number): number {
       setStep(0)
       return
     }
-    const t = window.setInterval(() => setStep((s) => Math.min(s + 1, count - 1)), 700)
-    return () => window.clearInterval(t)
+    const timer = window.setInterval(() => setStep((step) => Math.min(step + 1, count - 1)), 700)
+    return () => window.clearInterval(timer)
   }, [active, count])
   return step
 }
@@ -46,9 +46,9 @@ export function useSteps(active: boolean, count: number): number {
 export function RunSteps({ steps, at }: { steps: string[]; at: number }) {
   return (
     <div className="runbox" role="status" aria-live="polite">
-      {steps.map((s, i) => (
-        <div key={s} className={i < at ? 'done' : i === at ? 'cur' : ''}>
-          {s}
+      {steps.map((step, index) => (
+        <div key={step} className={index < at ? 'done' : index === at ? 'cur' : ''}>
+          {step}
         </div>
       ))}
     </div>
@@ -76,8 +76,8 @@ export function day(iso: string): number {
   return Date.parse(`${iso.slice(0, 10)}T00:00:00Z`)
 }
 
-export function shortDay(ms: number): string {
-  return shortDate.format(ms)
+export function shortDay(timestamp: number): string {
+  return shortDate.format(timestamp)
 }
 
 /** "Mar 10–Apr 4" for a plan bar. */
@@ -86,48 +86,48 @@ export function range(bar: { start: string; end: string } | null): string {
   return `${shortDate.format(day(bar.start))}–${shortDate.format(day(bar.end))}`
 }
 
-function num(v: number | string | null): number | null {
-  return typeof v === 'number' ? v : null
+function num(value: number | string | null): number | null {
+  return typeof value === 'number' ? value : null
 }
 
 /** A change's before/after value in the unit of its kind (cents, ISO date, working days, hours). */
-export function changeValue(c: DetectedChange, v: number | string | null): string {
-  switch (c.kind) {
+export function changeValue(change: DetectedChange, value: number | string | null): string {
+  switch (change.kind) {
     case 'budget':
-      return formatMoney(num(v))
+      return formatMoney(num(value))
     case 'deadline':
-      return typeof v === 'string' ? formatDate(v) : '—'
+      return typeof value === 'string' ? formatDate(value) : '—'
     case 'duration':
-      return weeks(num(v))
+      return weeks(num(value))
     case 'capacity':
-      return num(v) === 0 ? 'off the project' : v == null ? '—' : `${v}h/week`
+      return num(value) === 0 ? 'off the project' : value == null ? '—' : `${value}h/week`
     default:
-      return typeof v === 'string' ? v : '—'
+      return typeof value === 'string' ? value : '—'
   }
 }
 
 /** The small caps label in the left column of a change row. */
-export function kindLabel(c: DetectedChange): string {
-  if (c.kind === 'duration') return c.to === 0 ? 'Progress' : 'Effort'
-  return { budget: 'Budget', deadline: 'Deadline', capacity: 'Team', scope: 'New requirement' }[c.kind]
+export function kindLabel(change: DetectedChange): string {
+  if (change.kind === 'duration') return change.to === 0 ? 'Progress' : 'Effort'
+  return { budget: 'Budget', deadline: 'Deadline', capacity: 'Team', scope: 'New requirement' }[change.kind]
 }
 
 /** One-line title of a change ("Budget cut", "1.1.1 Salesforce connector: done", …). */
-export function changeTitle(c: DetectedChange): string {
-  const label = c.targetLabel ?? (c.candidates.length ? 'A work package' : '')
-  switch (c.kind) {
+export function changeTitle(change: DetectedChange): string {
+  const label = change.targetLabel ?? (change.candidates.length ? 'A work package' : '')
+  switch (change.kind) {
     case 'budget': {
-      const from = num(c.from)
-      const to = num(c.to)
+      const from = num(change.from)
+      const to = num(change.to)
       return from !== null && to !== null && to < from ? 'Budget cut' : 'Budget change'
     }
     case 'deadline':
       return 'Deadline moves'
     case 'duration':
-      return c.to === 0 ? `${label}: done` : `${label}: new effort`
+      return change.to === 0 ? `${label}: done` : `${label}: new effort`
     case 'capacity':
-      return c.to === 0 ? `${label} leaves the project` : `${label}: hours per week`
+      return change.to === 0 ? `${label} leaves the project` : `${label}: hours per week`
     default:
-      return typeof c.to === 'string' ? c.to : 'Scope change'
+      return typeof change.to === 'string' ? change.to : 'Scope change'
   }
 }

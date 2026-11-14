@@ -14,7 +14,7 @@ import re
 from collections import Counter
 from datetime import date, timedelta
 
-from app.changes import text as tx
+from app.changes import parsing
 from app.changes.context import ChangeContext, PersonRef, TaskRef
 from app.domain.changes import DetectedChange, TargetOption
 
@@ -54,36 +54,43 @@ _ON_TRACK = re.compile(r"\bon (track|schedule)\b", re.I)
 
 
 class _Ids:
+    """Sequential change ids (c1, c2…) that questions and answers refer to."""
+
     def __init__(self) -> None:
-        self.n = 0
+        self.count = 0
 
     def next(self) -> str:
-        self.n += 1
-        return f"c{self.n}"
+        self.count += 1
+        return f"c{self.count}"
 
 
-def detect(text: str, ctx: ChangeContext) -> list[DetectedChange]:
+def detect(text: str, context: ChangeContext) -> list[DetectedChange]:
+    """Changes the notes state, in reading order, each with its verbatim quote.
+
+    Pure and deterministic: used when no AI key is configured and when the Claude call
+    fails. Values come only from the sentence and the project (never invented).
+    """
     ids = _Ids()
-    year = (ctx.deadline or ctx.plan_finish or ctx.today).year
-    rare = _rare_tokens(ctx.tasks)
+    year = (context.deadline or context.plan_finish or context.today).year
+    rare = _rare_tokens(context.tasks)
     out: list[DetectedChange] = []
-    for s in tx.sentences(text):
+    for sentence in parsing.sentences(text):
         found: list[DetectedChange] = []
-        found += _budget(s, ctx, ids)
-        found += _deadline(s, ctx, ids, year)
-        found += _capacity(s, ctx, ids)
-        if not any(c.kind == "capacity" for c in found):
-            found += _duration(s, ctx, ids, rare)
-        if not any(c.kind in ("duration", "deadline") for c in found):
-            found += _deadline_shift(s, ctx, ids)
-        if not found and tx.has(s.body, _SCOPE):
+        found += _budget(sentence, context, ids)
+        found += _deadline(sentence, context, ids, year)
+        found += _capacity(sentence, context, ids)
+        if not any(change.kind == "capacity" for change in found):
+            found += _duration(sentence, context, ids, rare)
+        if not any(change.kind in ("duration", "deadline") for change in found):
+            found += _deadline_shift(sentence, context, ids)
+        if not found and parsing.has(sentence.body, _SCOPE):
             found.append(
                 DetectedChange(
                     id=ids.next(),
                     kind="scope",
-                    to=s.body,
-                    quote=s.body,
-                    speaker=s.speaker,
+                    to=sentence.body,
+                    quote=sentence.body,
+                    speaker=sentence.speaker,
                     confidence=0.7,
                     note=(
                         "Re-planning doesn't add work. Add it as a work package in WBS Builder, "
@@ -96,159 +103,178 @@ def detect(text: str, ctx: ChangeContext) -> list[DetectedChange]:
 
 
 # --------------------------------------------------------------------------- budget / deadline
-def _budget(s: tx.Sentence, ctx: ChangeContext, ids: _Ids) -> list[DetectedChange]:
-    amounts = tx.money_cents(s.body)
+def _budget(sentence: parsing.Sentence, context: ChangeContext, ids: _Ids) -> list[DetectedChange]:
+    """A money amount → budget change. Without a budget word it is only a candidate
+    (confidence 0.5); the notes' value is always confirmed through a question."""
+    amounts = parsing.money_cents(sentence.body)
     if not amounts:
         return []
-    keyword = tx.has(s.text, _BUDGET_WORDS)
+    keyword = parsing.has(sentence.text, _BUDGET_WORDS)
     # Several amounts in one sentence: the last one is usually the new value ("from $X to $Y").
     cents = amounts[-1]
-    if cents == ctx.budget_cents:
+    if cents == context.budget_cents:
         return []
     return [
         DetectedChange(
             id=ids.next(),
             kind="budget",
-            from_=ctx.budget_cents,
+            from_=context.budget_cents,
             to=cents,
-            quote=s.body,
-            speaker=s.speaker,
+            quote=sentence.body,
+            speaker=sentence.speaker,
             confidence=0.9 if keyword else 0.5,
         )
     ]
 
 
-def _deadline(s: tx.Sentence, ctx: ChangeContext, ids: _Ids, year: int) -> list[DetectedChange]:
-    if not tx.has(s.text, _DEADLINE_WORDS):
+def _deadline(
+    sentence: parsing.Sentence, context: ChangeContext, ids: _Ids, year: int
+) -> list[DetectedChange]:
+    """A date counts as a new deadline only next to a deadline word (a meeting date doesn't)."""
+    if not parsing.has(sentence.text, _DEADLINE_WORDS):
         return []
-    found = tx.dates(s.body, year)
+    found = parsing.dates(sentence.body, year)
     if not found:
         return []
     new = found[-1]
-    if new == ctx.deadline:
+    if new == context.deadline:
         return []
     return [
         DetectedChange(
             id=ids.next(),
             kind="deadline",
-            from_=ctx.deadline.isoformat() if ctx.deadline else None,
+            from_=context.deadline.isoformat() if context.deadline else None,
             to=new.isoformat(),
-            quote=s.body,
-            speaker=s.speaker,
+            quote=sentence.body,
+            speaker=sentence.speaker,
             confidence=0.85,
         )
     ]
 
 
-def _deadline_shift(s: tx.Sentence, ctx: ChangeContext, ids: _Ids) -> list[DetectedChange]:
+def _deadline_shift(
+    sentence: parsing.Sentence, context: ChangeContext, ids: _Ids
+) -> list[DetectedChange]:
     """ "Go-live slips two weeks": the deadline moves by a stated span."""
-    if ctx.deadline is None or not tx.has(s.text, _DEADLINE_WORDS):
+    if context.deadline is None or not parsing.has(sentence.text, _DEADLINE_WORDS):
         return []
-    spans = tx.spans_days(s.body)
+    spans = parsing.spans_days(sentence.body)
     if not spans:
         return []
-    sign = -1 if tx.has(s.body, _EARLIER) else 1 if tx.has(s.body, _LATER) else 0
+    sign = (
+        -1
+        if parsing.has(sentence.body, _EARLIER)
+        else 1
+        if parsing.has(sentence.body, _LATER)
+        else 0
+    )
     if sign == 0:
         return []
-    new = _add_workdays(ctx.deadline, sign * spans[0])
+    new = _add_workdays(context.deadline, sign * spans[0])
     return [
         DetectedChange(
             id=ids.next(),
             kind="deadline",
-            from_=ctx.deadline.isoformat(),
+            from_=context.deadline.isoformat(),
             to=new.isoformat(),
-            quote=s.body,
-            speaker=s.speaker,
+            quote=sentence.body,
+            speaker=sentence.speaker,
             confidence=0.7,
         )
     ]
 
 
-def _add_workdays(d: date, days: int) -> date:
+def _add_workdays(current: date, days: int) -> date:
     step = 1 if days >= 0 else -1
     left = abs(days)
     while left:
-        d += timedelta(days=step)
-        if d.weekday() < 5:
+        current += timedelta(days=step)
+        if current.weekday() < 5:
             left -= 1
-    return d
+    return current
 
 
 # --------------------------------------------------------------------------- work packages
 def _rare_tokens(tasks: tuple[TaskRef, ...]) -> set[str]:
     """Name tokens used by at most two work packages: enough to suggest a match."""
     counts: Counter[str] = Counter()
-    for t in tasks:
-        counts.update(tx.distinctive(t.name))
-    return {tok for tok, n in counts.items() if n <= 2 and len(tok) > 2}
+    for task in tasks:
+        counts.update(parsing.distinctive(task.name))
+    return {token for token, uses in counts.items() if uses <= 2 and len(token) > 2}
 
 
 def match_tasks(
     sentence: str, tasks: tuple[TaskRef, ...], rare: set[str]
 ) -> tuple[list[TaskRef], list[TaskRef]]:
     """(exact, partial) work packages a sentence mentions."""
-    words = tx.tokens(sentence)
+    words = parsing.tokens(sentence)
     lower = sentence.lower()
     exact: list[TaskRef] = []
     partial: list[TaskRef] = []
-    for t in tasks:
-        name = tx.distinctive(t.name)
+    for task in tasks:
+        name = parsing.distinctive(task.name)
         if (
-            tx.code_in(t.code, sentence)
-            or t.name.lower() in lower
+            parsing.code_in(task.code, sentence)
+            or task.name.lower() in lower
             or (len(name) >= 2 and name <= words)
         ):
-            exact.append(t)
+            exact.append(task)
         elif name & words & rare:
-            partial.append(t)
+            partial.append(task)
     # A package whose whole name matched beats ones that only share a word.
     return exact, ([] if exact else partial)
 
 
 def _duration(
-    s: tx.Sentence, ctx: ChangeContext, ids: _Ids, rare: set[str]
+    sentence: parsing.Sentence, context: ChangeContext, ids: _Ids, rare: set[str]
 ) -> list[DetectedChange]:
-    if tx.has(s.body, _ON_TRACK):
+    """A named work package with a span ("slips two weeks") or "done" → its new duration.
+
+    "slips / more / late" add the span, "earlier / less" subtract it, otherwise the span is
+    the new total. A package only partly named (a rare word such as "SAP") is not guessed:
+    the change carries candidates and a question asks which one.
+    """
+    if parsing.has(sentence.body, _ON_TRACK):
         return []
-    exact, partial = match_tasks(s.text, ctx.tasks, rare)
+    exact, partial = match_tasks(sentence.text, context.tasks, rare)
     hits = exact or partial
     if not hits:
         return []
-    spans = tx.spans_days(s.body)
-    done = not spans and tx.has(s.body, _DONE)
+    spans = parsing.spans_days(sentence.body)
+    done = not spans and parsing.has(sentence.body, _DONE)
     if not spans and not done:
         return []
 
-    def new_value(t: TaskRef) -> int | None:
+    def new_value(task: TaskRef) -> int | None:
         if done:
             return 0
-        n = spans[0]
-        if tx.has(s.body, _EARLIER):
-            return None if t.duration_days is None else max(t.duration_days - n, 1)
-        if tx.has(s.body, _LATER):
-            return None if t.duration_days is None else t.duration_days + n
-        return n
+        number = spans[0]
+        if parsing.has(sentence.body, _EARLIER):
+            return None if task.duration_days is None else max(task.duration_days - number, 1)
+        if parsing.has(sentence.body, _LATER):
+            return None if task.duration_days is None else task.duration_days + number
+        return number
 
     options = [
-        TargetOption(id=t.id, label=_task_label(t), from_=t.duration_days, to=v)
-        for t in hits
-        if (v := new_value(t)) is not None and v != t.duration_days
+        TargetOption(id=task.id, label=_task_label(task), from_=task.duration_days, to=value)
+        for task in hits
+        if (value := new_value(task)) is not None and value != task.duration_days
     ]
     if not options:
         return []
     confidence = 0.9 if len(exact) == 1 else 0.5
     if len(exact) == 1:
-        o = options[0]
+        option = options[0]
         return [
             DetectedChange(
                 id=ids.next(),
                 kind="duration",
-                target=o.id,
-                target_label=o.label,
-                from_=o.from_,
-                to=o.to,
-                quote=s.body,
-                speaker=s.speaker,
+                target=option.id,
+                target_label=option.label,
+                from_=option.from_,
+                to=option.to,
+                quote=sentence.body,
+                speaker=sentence.speaker,
                 confidence=confidence,
                 note="Done. Nothing left to plan." if done else None,
             )
@@ -258,8 +284,8 @@ def _duration(
             id=ids.next(),
             kind="duration",
             to=0 if done else None,
-            quote=s.body,
-            speaker=s.speaker,
+            quote=sentence.body,
+            speaker=sentence.speaker,
             confidence=confidence,
             candidates=options,
             note="Done. Nothing left to plan." if done else None,
@@ -267,56 +293,65 @@ def _duration(
     ]
 
 
-def _task_label(t: TaskRef) -> str:
-    return f"{t.code} {t.name}"
+def _task_label(task: TaskRef) -> str:
+    return f"{task.code} {task.name}"
 
 
 # --------------------------------------------------------------------------- people
 def match_people(sentence: str, people: tuple[PersonRef, ...]) -> list[PersonRef]:
+    """People a sentence names: full name, or a first / last name unique on the team."""
     words = set(re.findall(r"[a-z0-9']+", sentence.lower()))
     lower = sentence.lower()
-    full = [p for p in people if p.name.lower() in lower]
-    if full:
-        return full
-    firsts = Counter(tx.first_name(p.name).lower() for p in people)
-    lasts = Counter(p.name.split()[-1].lower() for p in people if len(p.name.split()) > 1)
+    full_matches = [person for person in people if person.name.lower() in lower]
+    if full_matches:
+        return full_matches
+    firsts = Counter(parsing.first_name(person.name).lower() for person in people)
+    lasts = Counter(
+        person.name.split()[-1].lower() for person in people if len(person.name.split()) > 1
+    )
     out = []
-    for p in people:
-        first = tx.first_name(p.name).lower()
-        last = p.name.split()[-1].lower() if len(p.name.split()) > 1 else None
+    for person in people:
+        first = parsing.first_name(person.name).lower()
+        last = person.name.split()[-1].lower() if len(person.name.split()) > 1 else None
         if (first in words and firsts[first] == 1) or (
             last is not None and last in words and lasts[last] == 1
         ):
-            out.append(p)
+            out.append(person)
     return out
 
 
-def _capacity(s: tx.Sentence, ctx: ChangeContext, ids: _Ids) -> list[DetectedChange]:
-    people = match_people(s.body, ctx.people)
+def _capacity(
+    sentence: parsing.Sentence, context: ChangeContext, ids: _Ids
+) -> list[DetectedChange]:
+    """A person with hours a week, or who leaves / is unavailable → their weekly hours
+    (0 = off the project). A limited absence is noted: a re-plan can only remove them."""
+    people = match_people(sentence.body, context.people)
     if len(people) != 1:
         return []
-    p = people[0]
-    leaves = tx.has(s.body, _LEAVES)
-    hrs = tx.hours(s.body)
+    person = people[0]
+    leaves = parsing.has(sentence.body, _LEAVES)
+    hour_figures = parsing.hours(sentence.body)
     if leaves:
         new: float = 0
-    elif hrs:
-        new = hrs[0]
+    elif hour_figures:
+        new = hour_figures[0]
     else:
         return []
-    if math.isclose(new, p.hours_per_week):
+    if math.isclose(new, person.hours_per_week):
         return []
-    period = leaves and bool(tx.spans_days(s.body) or tx.dates(s.body, ctx.today.year))
+    period = leaves and bool(
+        parsing.spans_days(sentence.body) or parsing.dates(sentence.body, context.today.year)
+    )
     return [
         DetectedChange(
             id=ids.next(),
             kind="capacity",
-            target=p.id,
-            target_label=p.name,
-            from_=p.hours_per_week,
+            target=person.id,
+            target_label=person.name,
+            from_=person.hours_per_week,
             to=new,
-            quote=s.body,
-            speaker=s.speaker,
+            quote=sentence.body,
+            speaker=sentence.speaker,
             confidence=0.6 if period else 0.85,
             note=(
                 "The notes mention a limited period. A re-plan can only take them off the "

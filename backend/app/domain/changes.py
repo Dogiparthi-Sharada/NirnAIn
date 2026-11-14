@@ -1,4 +1,10 @@
-"""Changes & Versions (step 7): something changed after a plan was applied."""
+"""API models of Changes & Versions (step 7): something changed after a plan was applied.
+
+A change request records what changed (from meeting notes, direct edits or a progress
+update), the questions it raises, the answers, and the re-plan it led to. JSON is camelCase
+(CamelModel). Used by app/api/v1/changes.py, the pure logic in app/changes/ and the
+repositories; the frontend mirrors these types in src/lib/changes.ts.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +26,9 @@ MAX_EDITS = 500
 
 
 class ChangeStatus(StrEnum):
+    """Lifecycle: ready → replanning (C1 run started) → proposed (run solved) →
+    approved | rejected. `proposed` is derived on read from the run's status."""
+
     DRAFT = "draft"
     ANALYZING = "analyzing"
     READY = "ready"
@@ -33,8 +42,8 @@ class ChangeStatus(StrEnum):
 DECIDED = (ChangeStatus.APPROVED, ChangeStatus.REJECTED)
 
 
-def _omit_none(v: object) -> bool:
-    return v is None
+def _omit_none(value: object) -> bool:
+    return value is None
 
 
 class TargetOption(CamelModel):
@@ -64,11 +73,15 @@ class DetectedChange(CamelModel):
 
 
 class QuestionOption(CamelModel):
+    """One answer; `value` is "keep", "new", "none", an amount in cents, an ISO date or an id."""
+
     value: str
     label: str
 
 
 class ChangeQuestion(CamelModel):
+    """A question the change raises; Re-plan stays locked until every one is answered."""
+
     id: str
     kind: QuestionKind
     change_id: str
@@ -79,12 +92,16 @@ class ChangeQuestion(CamelModel):
 
 
 class AffectedTask(CamelModel):
+    """A work package the change reaches."""
+
     id: uuid.UUID
     code: str
     name: str
 
 
 class AffectedPerson(CamelModel):
+    """Someone whose work or hours the change reaches."""
+
     id: uuid.UUID
     name: str
 
@@ -100,6 +117,8 @@ class ChangeAffects(CamelModel):
 
 
 class ChangeImpact(CamelModel):
+    """Stored as `change_requests.impact`: what changed, the questions, what it touches."""
+
     changes: list[DetectedChange]
     questions: list[ChangeQuestion]
     affects: ChangeAffects
@@ -126,6 +145,8 @@ class PlanOverrides(CamelModel):
 
 
 class ChangeRequest(CamelModel):
+    """A change as the API returns it, with the derived re-plan overrides."""
+
     id: uuid.UUID
     project_id: uuid.UUID
     source: ChangeSource
@@ -162,24 +183,32 @@ class ChangeEdits(InputModel):
 
 
 class ChangeCreate(InputModel):
+    """POST body: `text` for notes, `edits` for the Edit inputs and Progress update tabs."""
+
     source: ChangeSource
     text: str | None = Field(default=None, max_length=MAX_TEXT)
     edits: ChangeEdits | None = None
 
 
 class ChangeAnswers(InputModel):
+    """PATCH body: answers by question id, merged into the ones already given."""
+
     answers: dict[Annotated[str, Field(max_length=80)], Annotated[str, Field(max_length=80)]] = (
         Field(max_length=100)
     )
 
 
 class ChangeApprove(InputModel):
-    # Fallback when the re-plan run was not linked to the change (C1 sets proposed_run_id).
+    """Optional approve body: `runId` is a fallback for when C1's re-plan run was not linked
+    to the change (C1 normally sets proposed_run_id itself)."""
+
     run_id: uuid.UUID | None = None
 
 
 # --------------------------------------------------------------------------- compare
 class PlanSide(CamelModel):
+    """One plan of the comparison: KPIs and the budget / deadline it was solved under."""
+
     run_id: uuid.UUID
     version: int | None
     status: SolverStatus
@@ -190,12 +219,16 @@ class PlanSide(CamelModel):
 
 
 class Bar(CamelModel):
+    """A work package's dates and owner in one plan."""
+
     start: date
     end: date
     owner: str | None
 
 
 class CompareRow(CamelModel):
+    """A work package in both plans; `before`/`after` is null when it is new / done."""
+
     wbs_node_id: uuid.UUID
     code: str
     name: str
@@ -209,6 +242,8 @@ class CompareRow(CamelModel):
 
 
 class ChangeComparison(CamelModel):
+    """GET /changes/{id}/compare: Plan vN (base) against the proposed Plan vN+1."""
+
     base: PlanSide
     proposed: PlanSide
     rows: list[CompareRow]

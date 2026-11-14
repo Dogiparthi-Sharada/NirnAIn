@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import date, timedelta
 
-from app.changes import text as tx
+from app.changes import parsing
 from app.changes.context import NodeRow, PlanRow, RunMeta
 from app.domain.changes import (
     Bar,
@@ -34,20 +34,20 @@ def _bars(
         start = monday + timedelta(days=7 * row.start_week)
         end = monday + timedelta(days=7 * row.end_week + per_week - 1)
         owner = names.get(row.employee_id) if row.employee_id is not None else row.contractor_label
-        prev = out.get(row.wbs_node_id)
-        if prev is None:
+        previous = out.get(row.wbs_node_id)
+        if previous is None:
             out[row.wbs_node_id] = Bar(start=start, end=end, owner=owner)
         else:
             out[row.wbs_node_id] = Bar(
-                start=min(prev.start, start), end=max(prev.end, end), owner=prev.owner
+                start=min(previous.start, start), end=max(previous.end, end), owner=previous.owner
             )
     return out
 
 
 def _side(meta: RunMeta) -> PlanSide:
-    c = meta.snapshot.get("constraints") or {}
-    finish = c.get("must_finish_by")
-    budget = c.get("budget_total_cents")
+    constraints = meta.snapshot.get("constraints") or {}
+    finish = constraints.get("must_finish_by")
+    budget = constraints.get("budget_total_cents")
     return PlanSide(
         run_id=meta.id,
         version=meta.version,
@@ -61,20 +61,30 @@ def _side(meta: RunMeta) -> PlanSide:
 
 def _labels(meta: RunMeta) -> dict[str, tuple[str, str]]:
     return {
-        str(t.get("id")): (str(t.get("code") or ""), str(t.get("name") or ""))
-        for t in meta.snapshot.get("tasks") or []
+        str(task.get("id")): (str(task.get("code") or ""), str(task.get("name") or ""))
+        for task in meta.snapshot.get("tasks") or []
     }
 
 
 def _preds(meta: RunMeta) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
-    for d in meta.snapshot.get("dependencies") or []:
-        out.setdefault(str(d.get("successor_id")), []).append(str(d.get("predecessor_id")))
+    for dependency in meta.snapshot.get("dependencies") or []:
+        out.setdefault(str(dependency.get("successor_id")), []).append(
+            str(dependency.get("predecessor_id"))
+        )
     return out
 
 
-def _n(v: object) -> float | None:
-    return float(v) if isinstance(v, int | float) else None
+def _as_number(value: object) -> float | None:
+    return float(value) if isinstance(value, int | float) else None
+
+
+def _weeks(value: object) -> str:
+    return parsing.format_days(_as_number(value))
+
+
+def _hours(value: object) -> str:
+    return parsing.format_hours(_as_number(value))
 
 
 def _change_reasons(impact: ChangeImpact | None) -> tuple[dict[str, str], dict[str, str]]:
@@ -83,24 +93,24 @@ def _change_reasons(impact: ChangeImpact | None) -> tuple[dict[str, str], dict[s
     people: dict[str, str] = {}
     if impact is None:
         return tasks, people
-    for c in impact.changes:
+    for change in impact.changes:
         targets = (
-            [(c.target, c.from_, c.to)]
-            if c.target
-            else [(o.id, o.from_, o.to) for o in c.candidates]
+            [(change.target, change.from_, change.to)]
+            if change.target
+            else [(option.id, option.from_, option.to) for option in change.candidates]
         )
         for target, before, after in targets:
-            if c.kind == "duration":
+            if change.kind == "duration":
                 tasks[str(target)] = (
                     "Done, nothing left to plan"
                     if after == 0
-                    else f"Effort {tx.fmt_days(_n(before))} → {tx.fmt_days(_n(after))}"
+                    else f"Effort {_weeks(before)} → {_weeks(after)}"
                 )
-            elif c.kind == "capacity":
+            elif change.kind == "capacity":
                 people[str(target)] = (
-                    f"{c.target_label} leaves the project"
+                    f"{change.target_label} leaves the project"
                     if after == 0
-                    else f"{c.target_label} now gives {tx.fmt_hours(_n(after))} a week"
+                    else f"{change.target_label} now gives {_hours(after)} a week"
                 )
     return tasks, people
 
@@ -114,58 +124,73 @@ def build_comparison(
     names: dict[uuid.UUID, str],
     impact: ChangeImpact | None,
 ) -> ChangeComparison:
+    """Rows per work package of either plan, in WBS order, with shifts and a reason.
+
+    The reason comes from the change itself when it targets the package (or its owner),
+    else "Follows <predecessor>" when something it waits on moved, else "Re-solved".
+    """
     before = _bars(base, base_rows, names)
     after = _bars(proposed, proposed_rows, names)
     labels = {
-        **{str(n.id): (n.code, n.name) for n in nodes},
+        **{str(node.id): (node.code, node.name) for node in nodes},
         **_labels(base),
         **_labels(proposed),
     }
-    by_id = {n.id: n for n in nodes}
-    order = {n.id: i for i, n in enumerate(nodes)}
+    by_id = {node.id: node for node in nodes}
+    order = {node.id: position for position, node in enumerate(nodes)}
     preds = _preds(proposed)
     task_why, person_why = _change_reasons(impact)
     owner_ids = {
         row.wbs_node_id: row.employee_id for row in base_rows if row.employee_id is not None
     }
 
-    ids = sorted(set(before) | set(after), key=lambda i: (order.get(i, len(order)), str(i)))
+    ids = sorted(
+        set(before) | set(after), key=lambda node_id: (order.get(node_id, len(order)), str(node_id))
+    )
     shifts: dict[str, int | None] = {}
-    for i in ids:
-        b, a = before.get(i), after.get(i)
-        shifts[str(i)] = (a.end - b.end).days if a and b else None
+    for node_id in ids:
+        before_bar, after_bar = before.get(node_id), after.get(node_id)
+        shifts[str(node_id)] = (
+            (after_bar.end - before_bar.end).days if after_bar and before_bar else None
+        )
 
     rows: list[CompareRow] = []
-    for i in ids:
-        b, a = before.get(i), after.get(i)
-        node = by_id.get(i)
-        code, name = labels.get(str(i), ("", ""))
+    for node_id in ids:
+        before_bar, after_bar = before.get(node_id), after.get(node_id)
+        node = by_id.get(node_id)
+        code, name = labels.get(str(node_id), ("", ""))
         parent = by_id.get(node.parent_id) if node and node.parent_id else None
         group = parent if parent is not None and parent.level >= 2 else node
-        owner_changed = bool(a and b and a.owner != b.owner)
-        moved = bool(a and b and (a.start != b.start or a.end != b.end))
-        why = task_why.get(str(i))
+        owner_changed = bool(after_bar and before_bar and after_bar.owner != before_bar.owner)
+        moved = bool(
+            after_bar
+            and before_bar
+            and (after_bar.start != before_bar.start or after_bar.end != before_bar.end)
+        )
+        why = task_why.get(str(node_id))
         if why is None:
-            base_owner = owner_ids.get(i)
+            base_owner = owner_ids.get(node_id)
             if base_owner is not None and str(base_owner) in person_why:
                 why = person_why[str(base_owner)]
             elif moved:
                 moved_preds = [
-                    labels.get(p, ("", ""))[0] for p in preds.get(str(i), []) if shifts.get(p)
+                    labels.get(predecessor_id, ("", ""))[0]
+                    for predecessor_id in preds.get(str(node_id), [])
+                    if shifts.get(predecessor_id)
                 ]
                 why = f"Follows {', '.join(moved_preds)}" if moved_preds else "Re-solved"
             elif owner_changed:
                 why = "Owner changed in the re-plan"
         rows.append(
             CompareRow(
-                wbs_node_id=i,
+                wbs_node_id=node_id,
                 code=code,
                 name=name,
                 group_code=group.code if group else None,
                 group_name=group.name if group else None,
-                before=b,
-                after=a,
-                shift_days=shifts[str(i)],
+                before=before_bar,
+                after=after_bar,
+                shift_days=shifts[str(node_id)],
                 owner_changed=owner_changed,
                 why=why,
             )

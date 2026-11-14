@@ -18,8 +18,7 @@ from pydantic import BaseModel, Field
 
 from app.ai.llm import LLM
 from app.ai.prompting import DATA_RULE, as_data, data_block, one_line
-from app.changes import detect
-from app.changes import text as tx
+from app.changes import detect, parsing
 from app.changes.context import ChangeContext
 from app.domain.changes import DetectedChange
 
@@ -40,6 +39,8 @@ SYSTEM_PROMPT = (
 
 
 class ProposedChange(BaseModel):
+    """One change as Claude proposes it; checked by `to_changes` before it is kept."""
+
     kind: Literal["budget", "deadline", "duration", "capacity", "scope"]
     target: str | None = Field(
         default=None,
@@ -57,22 +58,28 @@ class ProposedChange(BaseModel):
 
 
 class ProposedChanges(BaseModel):
+    """Structured output of the Claude call."""
+
     changes: list[ProposedChange]
 
 
-def build_prompt(notes: str, ctx: ChangeContext) -> str:
+def build_prompt(notes: str, context: ChangeContext) -> str:
+    """The user message: project context and the notes, inside the data block."""
     lines = [
-        f"Today: {ctx.today.isoformat()}",
-        f"Applied plan: {ctx.plan_label}",
-        f"Total budget: {tx.fmt_money(ctx.budget_cents)}",
-        f"Deadline: {ctx.deadline.isoformat() if ctx.deadline else 'none'}",
+        f"Today: {context.today.isoformat()}",
+        f"Applied plan: {context.plan_label}",
+        f"Total budget: {parsing.format_money(context.budget_cents)}",
+        f"Deadline: {context.deadline.isoformat() if context.deadline else 'none'}",
         "Work packages (code | name | working days):",
         *(
-            f"- {t.code} | {as_data(one_line(t.name, 200))} | {t.duration_days or 0}"
-            for t in ctx.tasks
+            f"- {task.code} | {as_data(one_line(task.name, 200))} | {task.duration_days or 0}"
+            for task in context.tasks
         ),
         "Team (full name | hours per week):",
-        *(f"- {as_data(one_line(p.name, 120))} | {p.hours_per_week:g}" for p in ctx.people),
+        *(
+            f"- {as_data(one_line(person.name, 120))} | {person.hours_per_week:g}"
+            for person in context.people
+        ),
         "",
         "New meeting notes:",
         as_data(notes),
@@ -80,45 +87,53 @@ def build_prompt(notes: str, ctx: ChangeContext) -> str:
     return data_block("\n".join(lines)) + "\n\nList what changed."
 
 
-def _norm(s: str) -> str:
-    return " ".join(s.split()).lower()
+def _normalized(value: str) -> str:
+    return " ".join(value.split()).lower()
 
 
-def to_changes(out: ProposedChanges, notes: str, ctx: ChangeContext) -> list[DetectedChange]:
+def to_changes(out: ProposedChanges, notes: str, context: ChangeContext) -> list[DetectedChange]:
     """Keep only what the notes support and the project contains."""
-    haystack = _norm(notes)
+    haystack = _normalized(notes)
     kept: list[DetectedChange] = []
-    for c in out.changes[:MAX_CHANGES]:
-        quote = " ".join(c.quote.split()).strip()
-        if not quote or _norm(quote) not in haystack:
+    for proposal in out.changes[:MAX_CHANGES]:
+        quote = " ".join(proposal.quote.split()).strip()
+        if not quote or _normalized(quote) not in haystack:
             continue
-        change = _one(c, quote, ctx, f"c{len(kept) + 1}")
+        change = _proposal_to_change(proposal, quote, context, f"c{len(kept) + 1}")
         if change is not None:
             kept.append(change)
     return kept
 
 
-def _one(c: ProposedChange, quote: str, ctx: ChangeContext, cid: str) -> DetectedChange | None:  # noqa: PLR0911
-    value = (c.value or "").strip()
-    base = {"id": cid, "kind": c.kind, "quote": quote, "confidence": c.confidence}
-    if c.kind == "budget":
+def _proposal_to_change(  # noqa: PLR0911
+    proposal: ProposedChange, quote: str, context: ChangeContext, change_id: str
+) -> DetectedChange | None:
+    """Turn one proposal into a change, or None when its value or target doesn't check out."""
+    value = (proposal.value or "").strip()
+    base = {
+        "id": change_id,
+        "kind": proposal.kind,
+        "quote": quote,
+        "confidence": proposal.confidence,
+    }
+    if proposal.kind == "budget":
         digits = re.sub(r"[^\d.]", "", value)
         if not digits:
             return None
         cents = round(float(digits) * 100)
-        if cents <= 0 or cents == ctx.budget_cents:
+        if cents <= 0 or cents == context.budget_cents:
             return None
-        return DetectedChange.model_validate({**base, "from_": ctx.budget_cents, "to": cents})
-    if c.kind == "deadline":
+        return DetectedChange.model_validate({**base, "from_": context.budget_cents, "to": cents})
+    if proposal.kind == "deadline":
         try:
             new = date.fromisoformat(value)
         except ValueError:
             return None
-        if new == ctx.deadline:
+        if new == context.deadline:
             return None
-        old = ctx.deadline.isoformat() if ctx.deadline else None
+        old = context.deadline.isoformat() if context.deadline else None
         return DetectedChange.model_validate({**base, "from_": old, "to": new.isoformat()})
-    if c.kind == "scope":
+    if proposal.kind == "scope":
         return DetectedChange.model_validate(
             {
                 **base,
@@ -131,10 +146,15 @@ def _one(c: ProposedChange, quote: str, ctx: ChangeContext, cid: str) -> Detecte
         number = float(value)
     except ValueError:
         return None
-    target = (c.target or "").strip()
-    if c.kind == "duration":
+    target = (proposal.target or "").strip()
+    if proposal.kind == "duration":
         task = next(
-            (t for t in ctx.tasks if t.code == target or t.name.lower() == target.lower()), None
+            (
+                task
+                for task in context.tasks
+                if task.code == target or task.name.lower() == target.lower()
+            ),
+            None,
         )
         if task is None or number < 0 or int(number) == task.duration_days:
             return None
@@ -148,7 +168,9 @@ def _one(c: ProposedChange, quote: str, ctx: ChangeContext, cid: str) -> Detecte
                 "note": "Done. Nothing left to plan." if number == 0 else None,
             }
         )
-    person = next((p for p in ctx.people if p.name.lower() == target.lower()), None)
+    person = next(
+        (person for person in context.people if person.name.lower() == target.lower()), None
+    )
     if person is None or not 0 <= number <= 80 or number == person.hours_per_week:
         return None
     return DetectedChange.model_validate(
@@ -168,7 +190,11 @@ class ChangeDetector:
     def __init__(self, llm: LLM | None) -> None:
         self._llm = llm
 
-    async def detect(self, notes: str, ctx: ChangeContext) -> tuple[list[DetectedChange], str]:
+    async def detect(self, notes: str, context: ChangeContext) -> tuple[list[DetectedChange], str]:
+        """Changes in the notes and who read them (`rules` or the Claude model id).
+
+        Never raises for AI problems: a failed or slow Claude call falls back to the rules.
+        """
         llm = self._llm
         if llm is not None and llm.configured:
             try:
@@ -176,14 +202,14 @@ class ChangeDetector:
                     asyncio.to_thread(
                         llm.parse,
                         system=SYSTEM_PROMPT,
-                        prompt=build_prompt(notes, ctx),
+                        prompt=build_prompt(notes, context),
                         output=ProposedChanges,
                         max_tokens=4000,
                         timeout_s=TIMEOUT_S,
                     ),
                     timeout=TIMEOUT_S + 5,
                 )
-                return to_changes(parsed, notes, ctx), llm.model
+                return to_changes(parsed, notes, context), llm.model
             except Exception:
                 logger.exception("change detection with Claude failed; using the rules")
-        return detect.detect(notes, ctx), RULES_MODEL
+        return detect.detect(notes, context), RULES_MODEL

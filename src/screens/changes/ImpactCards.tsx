@@ -10,29 +10,29 @@ import { Chip } from './ui'
 
 /** Work and people the change reaches, and the in-force plan it is measured against. */
 export function Touches({ change, baseVersion }: { change: ChangeRequest; baseVersion: number }) {
-  const a = change.impact?.affects
-  if (!a) return null
+  const affects = change.impact?.affects
+  if (!affects) return null
   return (
     <div className="card">
       <h3>What it touches</h3>
       <div className="risk">
-        <Chip k="default">Work</Chip>
+        <Chip kind="default">Work</Chip>
         <div>
-          {a.tasks.length ? a.tasks.map((t) => `${t.code} ${t.name}`).join(', ') : 'No work package directly'}
-          <small>{a.tasks.length ? 'Changed work packages and everything that waits on them.' : 'Budget and deadline changes re-solve the whole plan.'}</small>
+          {affects.tasks.length ? affects.tasks.map((task) => `${task.code} ${task.name}`).join(', ') : 'No work package directly'}
+          <small>{affects.tasks.length ? 'Changed work packages and everything that waits on them.' : 'Budget and deadline changes re-solve the whole plan.'}</small>
         </div>
       </div>
       <div className="risk">
-        <Chip k="default">People</Chip>
+        <Chip kind="default">People</Chip>
         <div>
-          {a.people.length ? a.people.map((p) => p.name).join(', ') : 'Nobody directly'}
+          {affects.people.length ? affects.people.map((person) => person.name).join(', ') : 'Nobody directly'}
           <small>Owners of that work, and anyone whose hours change.</small>
         </div>
       </div>
       <div className="risk">
-        <Chip k="yours">Plan v{baseVersion}</Chip>
+        <Chip kind="yours">Plan v{baseVersion}</Chip>
         <div>
-          Go-live {formatDate(a.completionDate)} &middot; {formatMoney(a.costCents)}
+          Go-live {formatDate(affects.completionDate)} &middot; {formatMoney(affects.costCents)}
           <small>What the new plan is measured against. It stays in force until you approve.</small>
         </div>
       </div>
@@ -42,13 +42,13 @@ export function Touches({ change, baseVersion }: { change: ChangeRequest; baseVe
 
 /** The mockup's "What will be regenerated" tiles, filled from the detected changes. */
 export function Regenerated({ changes }: { changes: DetectedChange[] }) {
-  const count = (pred: (c: DetectedChange) => boolean) => changes.filter(pred).length
-  const budget = count((c) => c.kind === 'budget')
-  const deadline = count((c) => c.kind === 'deadline')
-  const effort = count((c) => c.kind === 'duration' && c.to !== 0)
-  const done = count((c) => c.kind === 'duration' && c.to === 0)
-  const people = count((c) => c.kind === 'capacity')
-  const scope = count((c) => c.kind === 'scope')
+  const count = (matches: (change: DetectedChange) => boolean) => changes.filter(matches).length
+  const budget = count((change) => change.kind === 'budget')
+  const deadline = count((change) => change.kind === 'deadline')
+  const effort = count((change) => change.kind === 'duration' && change.to !== 0)
+  const done = count((change) => change.kind === 'duration' && change.to === 0)
+  const people = count((change) => change.kind === 'capacity')
+  const scope = count((change) => change.kind === 'scope')
   const limits = [budget ? 'Budget' : '', deadline ? 'deadline' : ''].filter(Boolean).join(' and ')
   const tiles: [string, string][] = [
     ['Constraints', limits ? `${limits}, if you take the new value` : 'Unchanged'],
@@ -60,10 +60,10 @@ export function Regenerated({ changes }: { changes: DetectedChange[] }) {
   ]
   return (
     <div className="art">
-      {tiles.map(([k, v]) => (
-        <div className="a" key={k}>
-          <b>{k}</b>
-          <span>{v}</span>
+      {tiles.map(([title, detail]) => (
+        <div className="a" key={title}>
+          <b>{title}</b>
+          <span>{detail}</span>
         </div>
       ))}
     </div>
@@ -84,13 +84,13 @@ export function RunProblem({ run }: { run: OptimizationRun }) {
       <b>The new plan is infeasible as specified.</b>
       <br />
       No plan meets every hard constraint with these changes. Pick other answers above (for example keep the current value) and re-plan.
-      {(run.iis ?? []).map((c) => (
-        <div className="iis" key={c.name}>
+      {(run.iis ?? []).map((conflict) => (
+        <div className="iis" key={conflict.name}>
           <div className="lbl">Conflicting constraint</div>
           <div className="mono" style={{ fontWeight: 600 }}>
-            {c.name}
+            {conflict.name}
           </div>
-          <div className="small">{c.explanation}</div>
+          <div className="small">{conflict.explanation}</div>
         </div>
       ))}
     </div>

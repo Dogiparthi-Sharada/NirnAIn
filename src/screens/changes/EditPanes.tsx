@@ -17,8 +17,8 @@ import { DAYS_PER_WEEK, weeks } from './ui'
 /** Work packages as the optimizer sees them: level-3 nodes and level-2 nodes without children. */
 function workPackages(nodes: WbsNode[] | undefined): WbsNode[] {
   if (!nodes) return []
-  const parents = new Set(nodes.map((n) => n.parentId).filter(Boolean))
-  return nodes.filter((n) => n.level === 3 || (n.level === 2 && !parents.has(n.id)))
+  const parents = new Set(nodes.map((node) => node.parentId).filter(Boolean))
+  return nodes.filter((node) => node.level === 3 || (node.level === 2 && !parents.has(node.id)))
 }
 
 /** "$365,000", "365000" or "365k" → cents; null when empty, NaN when not a number. */
@@ -56,8 +56,8 @@ export function EditsPane({ projectId, current, busy, onSubmit }: { projectId: s
   const [budget, setBudget] = useState('')
   const [deadline, setDeadline] = useState('')
   const [hoursBy, setHoursBy] = useState<Record<string, string>>({})
-  const [wpId, setWpId] = useState('')
-  const [wpWeeks, setWpWeeks] = useState('')
+  const [workPackageId, setWorkPackageId] = useState('')
+  const [workPackageWeeks, setWorkPackageWeeks] = useState('')
   const packages = useMemo(() => workPackages(wbs.data), [wbs.data])
 
   if (!constraints.data || !wbs.data || !team.data) {
@@ -74,23 +74,23 @@ export function EditsPane({ projectId, current, busy, onSubmit }: { projectId: s
       />
     )
   }
-  const cs = constraints.data
+  const constraintSet = constraints.data
   const budgetCents = parseDollars(budget)
-  const wp = packages.find((p) => p.id === wpId)
-  const wpDays = wpWeeks.trim() ? Math.round(Number(wpWeeks) * DAYS_PER_WEEK) : null
+  const workPackage = packages.find((candidate) => candidate.id === workPackageId)
+  const workPackageDays = workPackageWeeks.trim() ? Math.round(Number(workPackageWeeks) * DAYS_PER_WEEK) : null
 
   const edits: ChangeEdits = {}
-  if (budgetCents !== null && !Number.isNaN(budgetCents) && budgetCents !== cs.budgetTotalCents) edits.budgetTotalCents = budgetCents
-  if (deadline && deadline !== cs.mustFinishBy) edits.mustFinishBy = deadline
+  if (budgetCents !== null && !Number.isNaN(budgetCents) && budgetCents !== constraintSet.budgetTotalCents) edits.budgetTotalCents = budgetCents
+  if (deadline && deadline !== constraintSet.mustFinishBy) edits.mustFinishBy = deadline
   const hoursEdits: Record<string, number> = {}
-  for (const p of team.data) {
-    const raw = hoursBy[p.employeeId]?.trim()
-    const h = raw ? Number(raw) : NaN
-    if (Number.isFinite(h) && h >= 0 && h <= 80 && h !== p.hoursPerWeek) hoursEdits[p.employeeId] = h
+  for (const member of team.data) {
+    const raw = hoursBy[member.employeeId]?.trim()
+    const hoursValue = raw ? Number(raw) : NaN
+    if (Number.isFinite(hoursValue) && hoursValue >= 0 && hoursValue <= 80 && hoursValue !== member.hoursPerWeek) hoursEdits[member.employeeId] = hoursValue
   }
   if (Object.keys(hoursEdits).length) edits.hoursPerWeek = hoursEdits
-  if (wp && wpDays !== null && Number.isFinite(wpDays) && wpDays >= 0 && wpDays !== wp.durationDays) edits.durationDays = { [wp.id]: wpDays }
-  const invalid = (budgetCents !== null && Number.isNaN(budgetCents)) || (wpDays !== null && (!Number.isFinite(wpDays) || wpDays < 0))
+  if (workPackage && workPackageDays !== null && Number.isFinite(workPackageDays) && workPackageDays >= 0 && workPackageDays !== workPackage.durationDays) edits.durationDays = { [workPackage.id]: workPackageDays }
+  const invalid = (budgetCents !== null && Number.isNaN(budgetCents)) || (workPackageDays !== null && (!Number.isFinite(workPackageDays) || workPackageDays < 0))
   const was = { fontWeight: 400 }
 
   return (
@@ -98,29 +98,29 @@ export function EditsPane({ projectId, current, busy, onSubmit }: { projectId: s
       <div className="g2">
         <div className="field">
           <label htmlFor="ed-budget">
-            Total budget ($) <span className="muted small" style={was}>was {formatMoney(cs.budgetTotalCents)} in Plan v{current.version}</span>
+            Total budget ($) <span className="muted small" style={was}>was {formatMoney(constraintSet.budgetTotalCents)} in Plan v{current.version}</span>
           </label>
-          <input className="in" id="ed-budget" inputMode="decimal" value={budget} placeholder={cs.budgetTotalCents != null ? String(cs.budgetTotalCents / 100) : 'Not set'} onChange={(e) => setBudget(e.target.value)} />
+          <input className="in" id="ed-budget" inputMode="decimal" value={budget} placeholder={constraintSet.budgetTotalCents != null ? String(constraintSet.budgetTotalCents / 100) : 'Not set'} onChange={(event) => setBudget(event.target.value)} />
         </div>
         <div className="field">
           <label htmlFor="ed-deadline">
-            Must finish by <span className="muted small" style={was}>was {formatDate(cs.mustFinishBy)}</span>
+            Must finish by <span className="muted small" style={was}>was {formatDate(constraintSet.mustFinishBy)}</span>
           </label>
-          <input className="in" id="ed-deadline" type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+          <input className="in" id="ed-deadline" type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} />
         </div>
       </div>
       <div className="field mt">
-        <label htmlFor="ed-wp">A work package’s duration</label>
+        <label htmlFor="ed-work-package">A work package’s duration</label>
         <div className="row">
-          <select className="in sm" id="ed-wp" value={wpId} onChange={(e) => setWpId(e.target.value)} style={{ maxWidth: 360 }}>
+          <select className="in sm" id="ed-work-package" value={workPackageId} onChange={(event) => setWorkPackageId(event.target.value)} style={{ maxWidth: 360 }}>
             <option value="">Choose a work package…</option>
-            {packages.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.code} {p.name} ({weeks(p.durationDays)})
+            {packages.map((choice) => (
+              <option key={choice.id} value={choice.id}>
+                {choice.code} {choice.name} ({weeks(choice.durationDays)})
               </option>
             ))}
           </select>
-          <input className="in sm" aria-label="New duration in weeks" inputMode="decimal" style={{ width: 90 }} placeholder="weeks" value={wpWeeks} disabled={!wp} onChange={(e) => setWpWeeks(e.target.value)} />
+          <input className="in sm" aria-label="New duration in weeks" inputMode="decimal" style={{ width: 90 }} placeholder="weeks" value={workPackageWeeks} disabled={!workPackage} onChange={(event) => setWorkPackageWeeks(event.target.value)} />
           <span className="small muted">weeks</span>
         </div>
       </div>
@@ -136,19 +136,19 @@ export function EditsPane({ projectId, current, busy, onSubmit }: { projectId: s
               </tr>
             </thead>
             <tbody>
-              {team.data.map((p) => (
-                <tr key={p.employeeId}>
-                  <td>{p.fullName}</td>
-                  <td className="mono">{p.hoursPerWeek}h</td>
+              {team.data.map((member) => (
+                <tr key={member.employeeId}>
+                  <td>{member.fullName}</td>
+                  <td className="mono">{member.hoursPerWeek}h</td>
                   <td>
                     <input
                       className="in sm"
                       style={{ width: 80 }}
                       inputMode="decimal"
-                      aria-label={`New hours per week for ${p.fullName}`}
-                      placeholder={String(p.hoursPerWeek)}
-                      value={hoursBy[p.employeeId] ?? ''}
-                      onChange={(e) => setHoursBy((prev) => ({ ...prev, [p.employeeId]: e.target.value }))}
+                      aria-label={`New hours per week for ${member.fullName}`}
+                      placeholder={String(member.hoursPerWeek)}
+                      value={hoursBy[member.employeeId] ?? ''}
+                      onChange={(event) => setHoursBy((previous) => ({ ...previous, [member.employeeId]: event.target.value }))}
                     />
                   </td>
                 </tr>
@@ -179,11 +179,11 @@ const PROGRESS_OPTIONS: [number, string][] = [
 /** Progress per work package; only packages with some progress are sent. */
 export function ProgressPane({ projectId, current, busy, onSubmit }: { projectId: string; current: PlanVersion; busy: boolean; onSubmit: (edits: ChangeEdits) => void }) {
   const wbs = useWbs(projectId)
-  const [pct, setPct] = useState<Record<string, number>>({})
-  const packages = useMemo(() => workPackages(wbs.data).filter((p) => (p.durationDays ?? 0) > 0), [wbs.data])
+  const [percentById, setPct] = useState<Record<string, number>>({})
+  const packages = useMemo(() => workPackages(wbs.data).filter((workPackage) => (workPackage.durationDays ?? 0) > 0), [wbs.data])
   if (!wbs.data) return <InputsState loading={!wbs.isError} error={wbs.error} retry={() => void wbs.refetch()} />
   if (packages.length === 0) return <p className="small muted">No work packages with a duration yet. Add them in WBS Builder.</p>
-  const progress = Object.fromEntries(Object.entries(pct).filter(([, v]) => v > 0))
+  const progress = Object.fromEntries(Object.entries(percentById).filter(([, percent]) => percent > 0))
 
   return (
     <>
@@ -196,16 +196,16 @@ export function ProgressPane({ projectId, current, busy, onSubmit }: { projectId
           </tr>
         </thead>
         <tbody>
-          {packages.map((p) => (
-            <tr key={p.id}>
+          {packages.map((workPackage) => (
+            <tr key={workPackage.id}>
               <td>
-                <span className="mono">{p.code}</span> {p.name}
+                <span className="mono">{workPackage.code}</span> {workPackage.name}
               </td>
-              <td className="mono">{weeks(p.durationDays)}</td>
+              <td className="mono">{weeks(workPackage.durationDays)}</td>
               <td>
-                <select className="in sm" aria-label={`Progress of ${p.code} ${p.name}`} value={pct[p.id] ?? 0} onChange={(e) => setPct((prev) => ({ ...prev, [p.id]: Number(e.target.value) }))}>
-                  {PROGRESS_OPTIONS.map(([v, label]) => (
-                    <option key={v} value={v}>
+                <select className="in sm" aria-label={`Progress of ${workPackage.code} ${workPackage.name}`} value={percentById[workPackage.id] ?? 0} onChange={(event) => setPct((previous) => ({ ...previous, [workPackage.id]: Number(event.target.value) }))}>
+                  {PROGRESS_OPTIONS.map(([percent, label]) => (
+                    <option key={percent} value={percent}>
                       {label}
                     </option>
                   ))}

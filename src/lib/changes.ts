@@ -197,7 +197,7 @@ export function useChangeTeam(projectId: string, enabled = true) {
         if (!isApiError(error) || error.status !== 404) throw error
       }
       const pool = await apiFetch<TeamMember[]>(project(projectId, '/capacity'), { signal })
-      return pool.map((p) => ({ employeeId: p.employeeId, fullName: p.fullName, hoursPerWeek: p.weeklyCapacityHours }))
+      return pool.map((member) => ({ employeeId: member.employeeId, fullName: member.fullName, hoursPerWeek: member.weeklyCapacityHours }))
     },
     enabled: Boolean(projectId) && enabled,
   })
@@ -205,12 +205,12 @@ export function useChangeTeam(projectId: string, enabled = true) {
 
 function upsert(list: ChangeRequest[] | undefined, item: ChangeRequest): ChangeRequest[] {
   if (!list) return [item]
-  return list.some((c) => c.id === item.id) ? list.map((c) => (c.id === item.id ? item : c)) : [item, ...list]
+  return list.some((entry) => entry.id === item.id) ? list.map((entry) => (entry.id === item.id ? item : entry)) : [item, ...list]
 }
 
 function useStoreChange(projectId: string) {
   const queryClient = useQueryClient()
-  return (item: ChangeRequest) => queryClient.setQueryData<ChangeRequest[]>(keys.changes(projectId), (prev) => upsert(prev, item))
+  return (item: ChangeRequest) => queryClient.setQueryData<ChangeRequest[]>(keys.changes(projectId), (previous) => upsert(previous, item))
 }
 
 export function useCreateChange(projectId: string) {

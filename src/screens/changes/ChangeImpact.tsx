@@ -68,14 +68,14 @@ export function ChangeImpact({
   if (!impact) return null
   const baseVersion = change.baseVersion ?? current.version
   const nextVersion = baseVersion + 1
-  const pick: PickAnswer = (q, value) => {
-    if (!decided && !answer.isPending) answer.mutate({ changeId: change.id, answers: { [q.id]: value } })
+  const pick: PickAnswer = (question, value) => {
+    if (!decided && !answer.isPending) answer.mutate({ changeId: change.id, answers: { [question.id]: value } })
   }
-  const flags = impact.questions.filter((q) => q.kind === 'budget' || q.kind === 'deadline')
-  const asked = impact.questions.filter((q) => q.kind !== 'budget' && q.kind !== 'deadline')
-  const open = impact.questions.filter((q) => !(q.id in change.answers)).length
+  const flags = impact.questions.filter((question) => question.kind === 'budget' || question.kind === 'deadline')
+  const asked = impact.questions.filter((question) => question.kind !== 'budget' && question.kind !== 'deadline')
+  const open = impact.questions.filter((question) => !(question.id in change.answers)).length
   // Scope additions alone can't be re-planned: the optimizer only re-solves existing work.
-  const usable = impact.changes.some((c) => c.kind !== 'scope')
+  const usable = impact.changes.some((detected) => detected.kind !== 'scope')
   const ready = change.overrides !== null && usable && !decided
   const notes = change.source === 'notes'
   const count = impact.changes.length
@@ -103,8 +103,8 @@ export function ChangeImpact({
               We didn’t find a budget, deadline, effort, team or scope change in these notes. Plan v{baseVersion} still holds.
             </p>
           ) : (
-            impact.changes.map((c) => (
-              <ChangeRow key={c.id} change={c} source={change.source} flags={flags.filter((q) => q.changeId === c.id)} answers={change.answers} disabled={lock} onPick={pick} />
+            impact.changes.map((detected) => (
+              <ChangeRow key={detected.id} change={detected} source={change.source} flags={flags.filter((question) => question.changeId === detected.id)} answers={change.answers} disabled={lock} onPick={pick} />
             ))
           )}
         </div>
@@ -116,7 +116,7 @@ export function ChangeImpact({
                 {asked.length === 0 ? (
                   <p className="small muted">{flags.length ? 'Only the choice above.' : 'Nothing to answer: these are your own values.'}</p>
                 ) : (
-                  asked.map((q) => <Question key={q.id} q={q} picked={change.answers[q.id]} disabled={lock} onPick={pick} />)
+                  asked.map((question) => <Question key={question.id} question={question} picked={change.answers[question.id]} disabled={lock} onPick={pick} />)
                 )}
                 {answer.isError && (
                   <div className="note bad" role="alert">
@@ -143,7 +143,7 @@ export function ChangeImpact({
                       if (!change.overrides) return
                       replan.mutate(
                         { overrides: change.overrides, changeRequestId: change.id, baselineRunId: change.baseRunId },
-                        { onSuccess: (r) => onReplanned(r.id) },
+                        { onSuccess: (replanRun) => onReplanned(replanRun.id) },
                       )
                     }}
                   >
