@@ -1,4 +1,11 @@
-"""Structured JSON logging with per-request context (request id, user id)."""
+"""Structured JSON logging with per-request context (request id, user id).
+
+Purpose: One JSON line per log record that always carries the request id (and the user id once
+authenticated), so a support request can be traced through the logs.
+How it fits: `app.main` calls `configure_logging`; the request-context middleware binds the context
+and `app.core.security` records the user id; layer: core.
+Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -28,21 +35,25 @@ _request_context: ContextVar[RequestContext | None] = ContextVar("request_contex
 
 
 def get_request_context() -> RequestContext | None:
+    """Return the context of the request being handled, if any."""
     return _request_context.get()
 
 
-def bind_request_context(ctx: RequestContext) -> Token[RequestContext | None]:
-    return _request_context.set(ctx)
+def bind_request_context(context: RequestContext) -> Token[RequestContext | None]:
+    """Make `context` the current request context and return the token that undoes it."""
+    return _request_context.set(context)
 
 
 def reset_request_context(token: Token[RequestContext | None]) -> None:
+    """Restore the request context that was current before `bind_request_context`."""
     _request_context.reset(token)
 
 
 def set_user_id(user_id: str) -> None:
-    ctx = _request_context.get()
-    if ctx is not None:
-        ctx.user_id = user_id
+    """Record the authenticated user's id on the current request context."""
+    context = _request_context.get()
+    if context is not None:
+        context.user_id = user_id
 
 
 # Attributes present on every LogRecord; anything else passed via `extra=` is emitted.
@@ -52,18 +63,21 @@ _RESERVED = frozenset(
 
 
 class JsonFormatter(logging.Formatter):
+    """Log formatter that writes each record as one JSON object."""
+
     def format(self, record: logging.LogRecord) -> str:
+        """Serialise a log record, its request context and any `extra=` fields as one JSON line."""
         payload: dict[str, Any] = {
             "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat(timespec="milliseconds"),
             "level": record.levelname,
             "logger": record.name,
             "msg": record.getMessage(),
         }
-        ctx = _request_context.get()
-        if ctx is not None:
-            payload["request_id"] = ctx.request_id
-            if ctx.user_id:
-                payload["user_id"] = ctx.user_id
+        context = _request_context.get()
+        if context is not None:
+            payload["request_id"] = context.request_id
+            if context.user_id:
+                payload["user_id"] = context.user_id
         for key, value in record.__dict__.items():
             if key not in _RESERVED and not key.startswith("_"):
                 payload[key] = value
@@ -73,6 +87,10 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure_logging(level: str = "INFO") -> None:
+    """Send all logs, uvicorn's included, through the JSON formatter on stdout at `level`.
+
+    uvicorn's own access log is disabled because the middleware writes a richer one.
+    """
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
 
@@ -82,9 +100,9 @@ def configure_logging(level: str = "INFO") -> None:
 
     # Route uvicorn through our formatter; its own access log is replaced by ours.
     for name in ("uvicorn", "uvicorn.error"):
-        lg = logging.getLogger(name)
-        lg.handlers[:] = []
-        lg.propagate = True
+        uvicorn_logger = logging.getLogger(name)
+        uvicorn_logger.handlers[:] = []
+        uvicorn_logger.propagate = True
     access = logging.getLogger("uvicorn.access")
     access.handlers[:] = []
     access.propagate = False

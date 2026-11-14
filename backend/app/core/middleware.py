@@ -1,4 +1,11 @@
-"""Pure-ASGI middleware: request id + access log, and security headers."""
+"""Pure-ASGI middleware: request id plus access log, and security headers.
+
+Purpose: Give every response an `X-Request-ID`, log one access line per request, turn any escaped
+exception into a clean 500 and add the browser security headers the API always sends.
+How it fits: Installed by `app.main.create_app`; uses `app.core.logging` for the request context and
+`app.core.errors.problem_response` for the fallback 500; layer: core.
+Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -21,6 +28,7 @@ _VALID_REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
 
 
 def _incoming_request_id(scope: Scope) -> str | None:
+    """Return the caller's `X-Request-ID` when it is well-formed, else None."""
     for name, value in scope.get("headers", []):
         if name == b"x-request-id":
             candidate = value.decode("latin-1").strip()
@@ -37,21 +45,24 @@ class RequestContextMiddleware:
     """
 
     def __init__(self, app: ASGIApp) -> None:
+        """Wrap the inner ASGI app."""
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Bind a request context, echo the request id, log the request and catch escaped errors."""
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
         request_id = _incoming_request_id(scope) or uuid.uuid4().hex
-        ctx = RequestContext(request_id=request_id)
-        token = bind_request_context(ctx)
+        context = RequestContext(request_id=request_id)
+        token = bind_request_context(context)
         start = time.perf_counter()
         status_code = 500
         response_started = False
 
         async def send_wrapper(message: Message) -> None:
+            """Record the response status and add the request-id header to the response start."""
             nonlocal status_code, response_started
             if message["type"] == "http.response.start":
                 response_started = True
@@ -97,18 +108,23 @@ _DOCS_CSP = (
 
 
 class SecurityHeadersMiddleware:
+    """Adds the browser security headers (CSP, framing, sniffing, HSTS) to every response."""
+
     def __init__(self, app: ASGIApp, *, hsts: bool, docs_prefix: str = "/api/docs") -> None:
+        """Wrap the inner app; `hsts` turns on Strict-Transport-Security (production only)."""
         self.app = app
         self.hsts = hsts
         self.docs_prefix = docs_prefix
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Add the security headers to every HTTP response; the docs pages get a looser CSP."""
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
         is_docs = str(scope.get("path", "")).startswith(self.docs_prefix)
 
         async def send_wrapper(message: Message) -> None:
+            """Set any security header the route did not set itself on the response start."""
             if message["type"] == "http.response.start":
                 headers = MutableHeaders(scope=message)
                 headers.setdefault("X-Content-Type-Options", "nosniff")

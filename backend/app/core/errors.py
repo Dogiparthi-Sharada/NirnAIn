@@ -1,4 +1,11 @@
-"""RFC 7807 problem responses and mapping of framework / database errors."""
+"""RFC 7807 problem responses and the mapping of framework and database errors onto them.
+
+Purpose: Every error the API returns is an `application/problem+json` document with a stable `type`,
+the request id and no leaked internals (stack traces, SQL, echoed input).
+How it fits: Routes and repositories raise the `AppError` subclasses; `app.main` registers the
+handlers below; middleware uses `problem_response` as the last line of defence; layer: core.
+Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -22,6 +29,7 @@ PROBLEM_JSON = "application/problem+json"
 
 
 def _type_uri(slug: str) -> str:
+    """Return the problem `type` URI for an error slug."""
     return f"urn:problem-type:{slug}"
 
 
@@ -40,6 +48,7 @@ class AppError(Exception):
         extra: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
     ) -> None:
+        """Keep the human-readable detail, extra problem members and response headers."""
         super().__init__(detail or self.title)
         self.detail = detail
         self.extra = extra or {}
@@ -47,46 +56,66 @@ class AppError(Exception):
 
 
 class BadRequestError(AppError):
+    """400: the request is malformed (for example an invalid pagination cursor)."""
+
     status, slug, title = 400, "bad-request", "Bad Request"
 
 
 class UnauthorizedError(AppError):
+    """401: the bearer token is missing, invalid or expired."""
+
     status, slug, title = 401, "unauthorized", "Unauthorized"
 
     def __init__(self, detail: str | None = "Missing or invalid access token") -> None:
+        """Build a 401 that tells the client to send a bearer token."""
         super().__init__(detail, headers={"WWW-Authenticate": 'Bearer realm="api"'})
 
 
 class ForbiddenError(AppError):
+    """403: the caller may not do this (RLS or a role check said no)."""
+
     status, slug, title = 403, "forbidden", "Forbidden"
 
 
 class NotFoundError(AppError):
+    """404: the resource does not exist or is not visible to the caller."""
+
     status, slug, title = 404, "not-found", "Not Found"
 
 
 class ConflictError(AppError):
+    """409: the request clashes with the current state (duplicates, stale inputs, races)."""
+
     status, slug, title = 409, "conflict", "Conflict"
 
 
 class ContentTooLargeError(AppError):
+    """413: the upload or text is over the size limit."""
+
     status, slug, title = 413, "content-too-large", "Content Too Large"
 
 
 class UnsupportedMediaTypeError(AppError):
+    """415: the upload's file type is not accepted."""
+
     status, slug, title = 415, "unsupported-media-type", "Unsupported Media Type"
 
 
 class UnprocessableError(AppError):
+    """422: the request is well-formed but breaks a business rule or data constraint."""
+
     status, slug, title = 422, "unprocessable", "Unprocessable Content"
 
 
 class ServiceUnavailableError(AppError):
+    """503: a dependency (database, auth provider, AI) is not configured or not reachable."""
+
     status, slug, title = 503, "service-unavailable", "Service Unavailable"
 
 
 # --------------------------------------------------------------------------- rendering
 def _phrase(status: int) -> str:
+    """Return the standard reason phrase for an HTTP status, or `Error` for unknown codes."""
     try:
         return HTTPStatus(status).phrase
     except ValueError:
@@ -103,6 +132,10 @@ def problem_response(
     extra: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
+    """Render a problem+json response with the request path and request id filled in.
+
+    `extra` members are merged into the body; `headers` are sent as-is.
+    """
     phrase = _phrase(status)
     body: dict[str, Any] = {
         "type": _type_uri(slug) if slug else "about:blank",
@@ -113,9 +146,9 @@ def problem_response(
         body["detail"] = detail
     if request is not None:
         body["instance"] = request.url.path
-    ctx = get_request_context()
-    if ctx is not None:
-        body["requestId"] = ctx.request_id
+    request_context = get_request_context()
+    if request_context is not None:
+        body["requestId"] = request_context.request_id
     if extra:
         body.update(extra)
     return JSONResponse(body, status_code=status, headers=headers, media_type=PROBLEM_JSON)
@@ -124,6 +157,8 @@ def problem_response(
 # --------------------------------------------------------------------------- DB errors
 @dataclass(frozen=True, slots=True)
 class PgErrorInfo:
+    """The parts of a Postgres error the API maps on: SQLSTATE, message and constraint name."""
+
     sqlstate: str | None
     message: str | None
     constraint: str | None
@@ -133,17 +168,24 @@ def pg_error_info(exc: BaseException) -> PgErrorInfo:
     """Extract SQLSTATE / message from a SQLAlchemy-wrapped asyncpg error."""
     candidates: list[BaseException] = []
     orig = getattr(exc, "orig", None)
-    for e in (orig, getattr(orig, "__cause__", None), getattr(orig, "__context__", None), exc):
-        if isinstance(e, BaseException) and e not in candidates:
-            candidates.append(e)
+    for candidate in (
+        orig,
+        getattr(orig, "__cause__", None),
+        getattr(orig, "__context__", None),
+        exc,
+    ):
+        if isinstance(candidate, BaseException) and candidate not in candidates:
+            candidates.append(candidate)
 
     sqlstate = message = constraint = None
-    for e in candidates:
-        sqlstate = sqlstate or getattr(e, "sqlstate", None) or getattr(e, "pgcode", None)
-        msg = getattr(e, "message", None)
-        if isinstance(msg, str) and msg and message is None:
-            message = msg
-        constraint = constraint or getattr(e, "constraint_name", None)
+    for candidate in candidates:
+        sqlstate = (
+            sqlstate or getattr(candidate, "sqlstate", None) or getattr(candidate, "pgcode", None)
+        )
+        candidate_message = getattr(candidate, "message", None)
+        if isinstance(candidate_message, str) and candidate_message and message is None:
+            message = candidate_message
+        constraint = constraint or getattr(candidate, "constraint_name", None)
     return PgErrorInfo(
         sqlstate if isinstance(sqlstate, str) else None,
         message,
@@ -152,6 +194,11 @@ def pg_error_info(exc: BaseException) -> PgErrorInfo:
 
 
 def map_db_error(exc: DBAPIError) -> AppError:  # noqa: PLR0911
+    """Translate a Postgres error (by SQLSTATE) into the API error the client should see.
+
+    42501 is an RLS or grant denial (403), P0001 a business rule raised by a trigger (422);
+    unique/check/FK/not-null violations become 409/422 and connection problems 503.
+    """
     info = pg_error_info(exc)
     code = info.sqlstate or ""
     extra = {"constraint": info.constraint} if info.constraint else None
@@ -181,6 +228,7 @@ def map_db_error(exc: DBAPIError) -> AppError:  # noqa: PLR0911
 
 # --------------------------------------------------------------------------- handlers
 async def _app_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Render an `AppError` as its problem document; logs server-side failures."""
     exc = cast(AppError, exc)
     if exc.status >= 500:
         logger.error("request failed", extra={"error": exc.slug, "detail": exc.detail})
@@ -196,6 +244,7 @@ async def _app_error_handler(request: Request, exc: Exception) -> JSONResponse:
 
 
 async def _db_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Map a database error to an `AppError`, log it by severity and render it."""
     exc = cast(DBAPIError, exc)
     mapped = map_db_error(exc)
     info = pg_error_info(exc)
@@ -210,6 +259,7 @@ async def _db_error_handler(request: Request, exc: Exception) -> JSONResponse:
 
 
 async def _http_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Render Starlette/FastAPI HTTP exceptions (404 route, 405 method) as problem documents."""
     exc = cast(StarletteHTTPException, exc)
     detail = exc.detail if isinstance(exc.detail, str) else None
     phrase = _phrase(exc.status_code)
@@ -222,6 +272,7 @@ async def _http_exception_handler(request: Request, exc: Exception) -> JSONRespo
 
 
 async def _validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Render request validation errors as a 422 that lists location, message and type per error."""
     exc = cast(RequestValidationError, exc)
     # Never echo `input` back: it may contain secrets or large payloads.
     errors = [
@@ -239,6 +290,7 @@ async def _validation_error_handler(request: Request, exc: Exception) -> JSONRes
 
 
 async def _pool_timeout_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Answer 503 when no pooled database connection became free in time."""
     logger.error("database pool exhausted")
     return await _app_error_handler(
         request, ServiceUnavailableError("The database is temporarily unavailable")
@@ -246,11 +298,13 @@ async def _pool_timeout_handler(request: Request, exc: Exception) -> JSONRespons
 
 
 async def _unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Log an unexpected exception and answer a bare 500 without internals."""
     logger.error("unhandled exception", exc_info=exc)
     return problem_response(request, status=500, slug="internal-error")
 
 
 def register_exception_handlers(app: FastAPI) -> None:
+    """Install every problem-document handler on the app."""
     app.add_exception_handler(AppError, _app_error_handler)
     app.add_exception_handler(DBAPIError, _db_error_handler)
     app.add_exception_handler(PoolTimeoutError, _pool_timeout_handler)

@@ -1,4 +1,11 @@
-"""FastAPI application factory."""
+"""FastAPI application factory and the ASGI `app` that uvicorn serves.
+
+Purpose: Assemble one API process: settings, logging, database engine, token verifier, the three
+in-process job runners, error handlers, middleware and the versioned routers.
+How it fits: Entry point for uvicorn (`app.main:app`) and for tests via `create_app(settings)`;
+wires `app.core`, `app.api.v1` and `app.jobs` together; layer: core.
+Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -32,11 +39,17 @@ logger = logging.getLogger("app")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    """Build a fully wired FastAPI app for the given settings (or the environment's settings).
+
+    Stores the engine, token verifier, job runners and assistant client on `app.state`; the
+    lifespan recovers stale jobs at start-up and shuts runners and the engine down at exit.
+    """
     settings = settings or get_settings()
     configure_logging(settings.log_level)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        """Recover orphaned jobs at start-up; stop the workers and the engine at shutdown."""
         logger.info(
             "starting",
             extra={"environment": settings.environment, "version": settings.version},

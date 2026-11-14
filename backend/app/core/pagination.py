@@ -1,4 +1,11 @@
-"""Opaque keyset cursors over (created_at desc, id desc)."""
+"""Opaque keyset cursors over (created_at desc, id desc).
+
+Purpose: Let list endpoints page through large collections stably without OFFSET, and keep the
+cursor opaque so clients cannot depend on its contents.
+How it fits: Repositories filter on the decoded cursor and API routes return the encoded
+`nextCursor`; layer: core.
+Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -17,10 +24,13 @@ MAX_LIMIT = 100
 
 @dataclass(frozen=True, slots=True)
 class Cursor:
+    """Position after the last row of a page: its creation time and id."""
+
     created_at: datetime
     id: uuid.UUID
 
     def encode(self) -> str:
+        """Return the cursor as URL-safe base64 JSON without padding."""
         raw = json.dumps(
             {"c": self.created_at.isoformat(), "i": str(self.id)}, separators=(",", ":")
         )
@@ -28,6 +38,7 @@ class Cursor:
 
     @classmethod
     def decode(cls, value: str) -> Cursor:
+        """Parse a cursor made by `encode`; raises 400 when malformed or timezone-naive."""
         try:
             padded = value + "=" * (-len(value) % 4)
             data = json.loads(base64.urlsafe_b64decode(padded.encode()))
