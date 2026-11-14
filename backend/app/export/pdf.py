@@ -39,6 +39,16 @@ _LATIN1 = str.maketrans(
 )
 
 STATUS_LABELS = {"optimal": "Optimal plan", "feasible": "Feasible plan (time limit reached)"}
+SCHEDULE_HEADINGS = (
+    "WBS",
+    "Work package",
+    "Assigned to",
+    "Start",
+    "Finish",
+    "Working days",
+    "Work",
+    "Hours/week",
+)
 
 
 def latin1(text: str) -> str:
@@ -96,6 +106,24 @@ def _table(
             table.row([latin1(cell) for cell in row])
 
 
+def schedule_rows(plan: PlanExport) -> list[tuple[str, ...]]:
+    """The Schedule table: the plan's dates, working days and work, as in the MS Project
+    export (round 3, R4)."""
+    return [
+        (
+            task.code,
+            task.name,
+            _assignee(task),
+            day(task.start),
+            day(task.finish),
+            str(task.duration_days),
+            f"{task.work_hours:g} h",
+            f"{task.hours_per_week:g}",
+        )
+        for task in plan.tasks
+    ]
+
+
 def render_pdf(plan: PlanExport) -> bytes:
     pdf = _Document(orientation="L", unit="mm", format="A4")
     pdf.set_title(latin1(f"{plan.project_name} - {plan.title}"))
@@ -132,20 +160,9 @@ def render_pdf(plan: PlanExport) -> bytes:
     if plan.tasks:
         _table(
             pdf,
-            ("WBS", "Work package", "Assigned to", "Start", "Finish", "Weeks", "Hours/week"),
-            [
-                (
-                    task.code,
-                    task.name,
-                    _assignee(task),
-                    day(task.start),
-                    day(task.finish),
-                    task.weeks,
-                    f"{task.hours_per_week:g}",
-                )
-                for task in plan.tasks
-            ],
-            (18, 85, 55, 30, 30, 32, 27),
+            SCHEDULE_HEADINGS,
+            schedule_rows(plan),
+            (18, 80, 50, 28, 28, 23, 25, 25),
         )
     else:
         _note(pdf, "This plan has no scheduled work packages.")

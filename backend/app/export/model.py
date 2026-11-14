@@ -1,12 +1,19 @@
 """The data both export formats render, derived from a run and its assignments.
 
-`planned_assignments` stores 0-based calendar weeks counted from the Monday of
-the week containing the run's planning start (see
-`app/optimization/calendar.py:week_index`). Exports show dates: a task starts
-on the first working day of its start week (not before the planning start)
-(moved later within that week to follow its FS/SS predecessors), runs for
-its planned duration in working days, and finishes inside its end week and
-not after the run's completion date.
+Business rule (round 3, R4): an export states the plan as solved. Each work
+package keeps the first and last day of the run's timeline (`result.schedule`),
+its duration is the working days between them (a part-timer's package takes
+longer than its WBS duration), and its work is the effort the plan books: its
+weekly rate (`planned_assignments.hours_per_week`) over those days, the same
+hours applying the plan books (64 h, not the rate over the WBS duration).
+
+Runs stored before the timeline existed only have 0-based calendar weeks
+counted from the Monday of the week containing the run's planning start (see
+`app/optimization/calendar.py:week_index`): a task then starts on the first
+working day of its start week (not before the planning start) (moved later
+within that week to follow its FS/SS predecessors), runs for its WBS
+duration in working days, and finishes inside its end week and not after the
+run's completion date.
 """
 
 from __future__ import annotations
@@ -19,8 +26,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from app.optimization.calendar import first_workday, workday_date
-from app.optimization.formatting import weeks_label
+from app.optimization.calendar import first_workday, workday_date, workdays_through
 
 DEFAULT_WORKING_DAYS = 5
 
@@ -72,7 +78,6 @@ class ExportTask:
     duration_days: int
     work_hours: float
     hours_per_week: float
-    weeks: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +134,20 @@ def _snapshot_durations(snapshot: Mapping[str, Any]) -> dict[str, int]:
         if isinstance(task, dict) and isinstance(task.get("duration_days"), int):
             durations[str(task.get("id"))] = task["duration_days"]
     return durations
+
+
+def _planned_dates(result: Mapping[str, Any] | None) -> dict[str, tuple[date, date]]:
+    """WBS node id -> first and last day (inclusive) of the run's timeline."""
+    schedule = result.get("schedule") if result else None
+    planned: dict[str, tuple[date, date]] = {}
+    for item in schedule if isinstance(schedule, list) else []:
+        try:
+            first_day = date.fromisoformat(str(item["start"]))
+            last_day = date.fromisoformat(str(item["end"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        planned[str(item.get("wbsNodeId"))] = (first_day, max(first_day, last_day))
+    return planned
 
 
 def _rows_of(result: Mapping[str, Any] | None, key: str) -> list[dict[str, str]]:
@@ -238,28 +257,36 @@ def build_export(header: RunHeader, rows: Sequence[PlannedRow]) -> PlanExport:
         windows.append(_window(row, duration, planning_start, per_week))
         task_uids[str(row.wbs_node_id)] = task_uid
     links = _links(snapshot, task_uids)
-    dates = _schedule(windows, links, per_week, header.completion_date)
+    derived = _schedule(windows, links, per_week, header.completion_date)
+    planned = _planned_dates(header.result)
 
-    tasks = [
-        ExportTask(
-            uid=task_uid,
-            wbs_node_id=str(row.wbs_node_id),
-            code=row.code,
-            name=row.name,
-            resource=row.employee_name or row.contractor_label,
-            resource_key=_resource_key(row),
-            is_contractor=row.employee_id is None and row.contractor_label is not None,
-            start=start,
-            finish=finish,
-            duration_days=window.duration_days,
-            work_hours=round(row.hours_per_week * window.duration_days / per_week, 1),
-            hours_per_week=row.hours_per_week,
-            weeks=weeks_label(row.start_week, row.end_week),
+    tasks = []
+    for task_uid, (row, window, derived_dates) in enumerate(
+        zip(rows, windows, derived, strict=True), start=1
+    ):
+        node_id = str(row.wbs_node_id)
+        start, finish = planned.get(node_id, derived_dates)
+        days = (
+            workdays_through(start, finish, per_week)
+            if node_id in planned
+            else window.duration_days
         )
-        for task_uid, (row, window, (start, finish)) in enumerate(
-            zip(rows, windows, dates, strict=True), start=1
+        tasks.append(
+            ExportTask(
+                uid=task_uid,
+                wbs_node_id=node_id,
+                code=row.code,
+                name=row.name,
+                resource=row.employee_name or row.contractor_label,
+                resource_key=_resource_key(row),
+                is_contractor=row.employee_id is None and row.contractor_label is not None,
+                start=start,
+                finish=finish,
+                duration_days=days,
+                work_hours=round(row.hours_per_week * days / per_week, 1),
+                hours_per_week=row.hours_per_week,
+            )
         )
-    ]
 
     finish_date = header.completion_date or max((task.finish for task in tasks), default=None)
     return PlanExport(
