@@ -4,8 +4,10 @@
  *
  * Why: the approved design edits values in place without a Save button. Saving on every
  * keystroke would send half-typed values to the server, so the typed text stays a local draft
- * until the PM is done. Escape drops the draft. When the parent rejects a value (it shows why in
- * a toast), the field simply falls back to the saved value, like the design's "reverted" input.
+ * until the PM is done. Escape drops the draft. When the parent rejects a value it either explains
+ * why in a toast and lets the field fall back to the saved value (like the design's "reverted"
+ * input), or returns `false` from `onCommit` to keep the typed text next to an inline message so
+ * the PM can correct it.
  */
 import { useState, type InputHTMLAttributes } from 'react'
 
@@ -14,16 +16,23 @@ type NativeProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'defaul
 export interface CommitInputProps extends NativeProps {
   /** The saved value, as text. */
   value: string
-  /** Called with the typed text once the PM is done editing and it differs from `value`. */
-  onCommit: (text: string) => void
+  /**
+   * Called with the typed text once the PM is done editing and it differs from `value`. Returning
+   * `false` rejects it and keeps the typed text in the field.
+   */
+  onCommit: (text: string) => boolean | void
+  /** Called when the field goes back to the saved value (Escape, or the saved value typed again). */
+  onRevert?: () => void
 }
 
 /** A text, number or date input that commits its draft on blur or Enter. */
-export function CommitInput({ value, onCommit, ...inputProps }: CommitInputProps) {
+export function CommitInput({ value, onCommit, onRevert, ...inputProps }: CommitInputProps) {
   const [draft, setDraft] = useState<string | null>(null)
 
   function commit() {
-    if (draft !== null && draft.trim() !== value.trim()) onCommit(draft)
+    if (draft === null) return
+    if (draft.trim() === value.trim()) onRevert?.()
+    else if (onCommit(draft) === false) return
     setDraft(null)
   }
 
@@ -39,6 +48,7 @@ export function CommitInput({ value, onCommit, ...inputProps }: CommitInputProps
           commit()
         } else if (event.key === 'Escape') {
           setDraft(null)
+          onRevert?.()
         }
       }}
     />

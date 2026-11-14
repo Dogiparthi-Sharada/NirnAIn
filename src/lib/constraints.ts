@@ -17,6 +17,7 @@ import { useCallback } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch, errorMessage, isApiError } from './api'
 import type { PolicyKey, PolicyMode } from './constraintPolicy'
+import { budgetProblem } from './createForm'
 import { formatDate } from './format'
 import { inputKeys, type ConstraintInputs, type DeadlineAnswerValue, type PlanVersion, type ProjectTeamMember, type SpecialistAnswer } from './inputs'
 import { queryKeys } from './queries'
@@ -271,6 +272,15 @@ export function parseDollars(text: string): number | null {
   if (cleaned === '') return null
   if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return Number.NaN
   return Math.round(Number(cleaned) * 100)
+}
+
+/**
+ * Why a budget amount typed on step 5 can't be saved, or null when it can. Same rules as step 1
+ * (`budgetProblem`): dollars and cents only, more than $0, and at most $100B so a typo with extra
+ * zeros is caught. A blank field is fine: it clears the limit.
+ */
+export function moneyLimitProblem(text: string): string | null {
+  return text.replace(/[$,\s]/g, '') === '' ? null : budgetProblem(text)
 }
 
 /** A percentage from 0 to 100 from "10" or "10 %"; NaN otherwise. */

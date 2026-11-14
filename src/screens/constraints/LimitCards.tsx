@@ -2,15 +2,18 @@
  * The Budget and Deadline cards on step 5 (approved mockup views/constraints.js): the money and
  * date limits the plan must respect, each with its Must hold / Can flex switch.
  *
- * Every field saves when the PM leaves it (see `CommitInput`); a value the server would reject is
- * explained in a toast and the field falls back to the saved value. Money is integer cents on the
- * wire and shown in whole dollars. The chips say where a value came from: "Stated" when the notes
+ * Every field saves when the PM leaves it (see `CommitInput`). A budget amount follows step 1's
+ * rules (more than $0, at most $100B); one that breaks them stays in the field with the reason
+ * underneath. Other values the server would reject are explained in a toast and the field falls
+ * back to the saved value. Money is integer cents on the wire and shown in whole dollars. The
+ * chips say where a value came from: "Stated" when the notes
  * say it (with the quote), "Yours" when a person entered it, "Default" when we filled it in.
  * The Deadline switch is the deadline question: changing one changes the other.
  */
+import { useState } from 'react'
 import { Chip, type ChipKind } from '@/components/InputsKit'
 import { policyOf, type PolicyInputs, type PolicyRisk } from '@/lib/constraintPolicy'
-import { dollarsText, parseDollars, parsePercent, policyChanges, type ConstraintChanges } from '@/lib/constraints'
+import { dollarsText, moneyLimitProblem, parseDollars, parsePercent, policyChanges, type ConstraintChanges } from '@/lib/constraints'
 import type { ConstraintInputs } from '@/lib/inputs'
 import type { InputSource } from '@/lib/optimize'
 import { toast } from '@/lib/toast'
@@ -39,10 +42,19 @@ type MoneyField = 'budgetTotalCents' | 'laborCapCents' | 'infraCapCents'
 
 /** The Budget card: total, contingency and the optional labor and infrastructure caps. */
 export function BudgetCard({ constraints, policy, risks, locked, onSave, budgetSource }: CardProps & { budgetSource: InputSource | undefined }) {
-  function commitMoney(field: MoneyField, text: string) {
-    const cents = parseDollars(text)
-    if (cents !== null && Number.isNaN(cents)) toast('Enter the amount in dollars, for example 375,000.')
-    else onSave({ [field]: cents })
+  // An amount that can't be saved stays in its field with the reason underneath, as on step 1.
+  const [moneyProblems, setMoneyProblems] = useState<Partial<Record<MoneyField, string>>>({})
+
+  function showMoneyProblem(field: MoneyField, problem: string | null) {
+    setMoneyProblems((previous) => ({ ...previous, [field]: problem ?? undefined }))
+  }
+
+  function commitMoney(field: MoneyField, text: string): boolean {
+    const problem = moneyLimitProblem(text)
+    showMoneyProblem(field, problem)
+    if (problem) return false
+    onSave({ [field]: parseDollars(text) })
+    return true
   }
 
   function commitContingency(text: string) {
@@ -53,9 +65,30 @@ export function BudgetCard({ constraints, policy, risks, locked, onSave, budgetS
 
   const hasBudget = constraints.budgetTotalCents != null
   const budgetChip = !hasBudget ? <Chip kind="default">Not set</Chip> : <Chip kind={budgetSource ? SOURCE_CHIP[budgetSource] : 'yours'} />
-  const moneyField = (field: MoneyField, id: string) => (
-    <CommitInput className="in" id={id} inputMode="decimal" placeholder="$ 0" value={dollarsText(constraints[field])} onCommit={(text) => commitMoney(field, text)} disabled={locked} />
-  )
+  const moneyField = (field: MoneyField, id: string) => {
+    const problem = moneyProblems[field]
+    return (
+      <>
+        <CommitInput
+          className={problem ? 'in invalid' : 'in'}
+          id={id}
+          inputMode="decimal"
+          placeholder="$ 0"
+          value={dollarsText(constraints[field])}
+          onCommit={(text) => commitMoney(field, text)}
+          onRevert={() => showMoneyProblem(field, null)}
+          aria-invalid={problem ? true : undefined}
+          aria-describedby={problem ? `${id}-err` : undefined}
+          disabled={locked}
+        />
+        {problem && (
+          <p className="err" id={`${id}-err`} role="alert">
+            {problem}
+          </p>
+        )}
+      </>
+    )
+  }
 
   return (
     <div className="card" id="con-budget">
