@@ -14,7 +14,8 @@ Business rules:
 - WebVTT / SRT captions keep only the spoken words (`app.ai.transcripts`);
 - at most `MAX_CHARS` characters of text are kept per document;
 - failures are recorded with a fixed, user-facing message. Exception text never
-  reaches the user: a parser error can contain file internals.
+  reaches the user or the server log: a parser error can quote the file. Only the
+  exception's class is kept, for the API to log with the document's id, size and kind.
 """
 
 from __future__ import annotations
@@ -22,13 +23,15 @@ from __future__ import annotations
 import io
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import BinaryIO
 
 from app.ai.transcripts import clean_transcript
 from app.domain.common import DocumentKind, JobStatus
 
-logger = logging.getLogger("app.ai.documents")
+# Security rule (SEC-006): pypdf's warnings quote bytes of the file being parsed
+# ("invalid pdf header: b'Kicko'"), and uploaded content never goes to the server log.
+logging.getLogger("pypdf").setLevel(logging.CRITICAL)
 
 # Matches the `size_bytes` check on public.source_documents (100 MB).
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
@@ -81,11 +84,13 @@ class Extraction:
     status: JobStatus
     text: str | None = None
     error: str | None = None
+    # The parser's exception class when the file couldn't be read: logged, never stored.
+    failure: str | None = field(default=None, compare=False)
 
     @classmethod
-    def failed(cls, error: str) -> Extraction:
-        """A failed extraction with a fixed, user-facing message."""
-        return cls(JobStatus.FAILED, None, error)
+    def failed(cls, error: str, failure: str | None = None) -> Extraction:
+        """A failed extraction with a fixed, user-facing message (and the exception class)."""
+        return cls(JobStatus.FAILED, None, error, failure)
 
 
 def file_title(filename: str | None) -> str:
@@ -196,10 +201,10 @@ def extract_text(kind: DocumentKind, data: bytes | BinaryIO) -> Extraction:
         else:
             raw_bytes = stream.read(TEXT_READ_LIMIT_BYTES)
             raw_text = clean_transcript(raw_bytes.decode("utf-8", errors="replace"))
-    except Exception:
-        # Corrupt or malicious files: log the details, show only a fixed message.
-        logger.warning("document text extraction failed", exc_info=True, extra={"kind": kind})
-        return Extraction.failed(UNREADABLE_ERROR)
+    except Exception as exc:
+        # Corrupt or malicious files. Security rule (SEC-006): the exception's text can
+        # quote the file, so only its class is kept; the user sees a fixed message.
+        return Extraction.failed(UNREADABLE_ERROR, type(exc).__name__)
     text = normalize(raw_text)
     if not text:
         return Extraction.failed(NO_TEXT_ERROR)

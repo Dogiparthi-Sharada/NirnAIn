@@ -14,6 +14,7 @@ being spooled in full.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -45,6 +46,7 @@ from app.core.errors import (
 from app.domain.intake import SourceDocument
 
 router = APIRouter(tags=["intake"])
+logger = logging.getLogger("app.api.documents")
 
 NO_FILE_DETAIL = "Attach the file in a form field named `file`."
 # Multipart framing (boundary lines, part headers) on top of the file itself.
@@ -139,6 +141,18 @@ async def upload_document(
     document = await documents.create(project_id, kind, title, mime_type, size_bytes, extraction)
     if document is None:
         raise ForbiddenError("The document was saved but is not visible to you")
+    if extraction.failure is not None:
+        # Security rule (SEC-006): no file name or content in the log, only what
+        # identifies the upload and the parser's exception class.
+        logger.warning(
+            "document text extraction failed",
+            extra={
+                "document_id": str(document.id),
+                "size_bytes": size_bytes,
+                "kind": str(kind),
+                "error": extraction.failure,
+            },
+        )
     return document
 
 
