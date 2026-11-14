@@ -38,6 +38,22 @@ uv run uvicorn app.main:app --reload --port 8000
 [docs/DEPLOY_DEMO.md](docs/DEPLOY_DEMO.md) walks through hosting the demo step by step on free tiers: a new Supabase
 project (database and sign-in), the API as a Render free web service (Docker), and the website as a Render static site.
 
+## Project documentation
+
+The hand-over package for the NirnAIn demo is in [docs/project/](docs/project/). Every document comes as Word (.docx) and plain text (.txt):
+
+| Document | Word | Text |
+|---|---|---|
+| Read me first | [README.docx](docs/project/README.docx) | [README.txt](docs/project/README.txt) |
+| Final project report | [FINAL_PROJECT_REPORT.docx](docs/project/FINAL_PROJECT_REPORT.docx) | [FINAL_PROJECT_REPORT.txt](docs/project/FINAL_PROJECT_REPORT.txt) |
+| Architecture and design decisions | [ARCHITECTURE_AND_DESIGN_DECISIONS.docx](docs/project/ARCHITECTURE_AND_DESIGN_DECISIONS.docx) | [ARCHITECTURE_AND_DESIGN_DECISIONS.txt](docs/project/ARCHITECTURE_AND_DESIGN_DECISIONS.txt) |
+| Lessons learned | [LESSONS_LEARNED.docx](docs/project/LESSONS_LEARNED.docx) | [LESSONS_LEARNED.txt](docs/project/LESSONS_LEARNED.txt) |
+| Hosting quick start | [HOSTING_QUICKSTART.docx](docs/project/HOSTING_QUICKSTART.docx) | [HOSTING_QUICKSTART.txt](docs/project/HOSTING_QUICKSTART.txt) |
+| Full hosting guide | [DEPLOY_DEMO.docx](docs/project/DEPLOY_DEMO.docx) | [DEPLOY_DEMO.txt](docs/project/DEPLOY_DEMO.txt) |
+| GitHub upload steps | [GITHUB_UPLOAD_STEPS.docx](docs/project/GITHUB_UPLOAD_STEPS.docx) | [GITHUB_UPLOAD_STEPS.txt](docs/project/GITHUB_UPLOAD_STEPS.txt) |
+
+Presentation: [NirnAIn_Project_Overview.pptx](docs/project/NirnAIn_Project_Overview.pptx) (18 slides with speaker notes).
+
 ## Contributing
 
 1. Branch from `main`: `git switch -c feat/<area>-<thing>`
