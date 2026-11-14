@@ -297,7 +297,7 @@ export default function CreateProject() {
                   onFiles={attached.add}
                   onRemove={attached.remove}
                   disabled={pendingIntent !== null}
-                  hint="Optional. Attach briefs, specs or meeting transcripts now; AI reads them in the AI Intake step. Max 50 MB per file."
+                  hint="Optional. Attach briefs, specs or meeting transcripts now; AI reads them in the AI Intake step. Max 100 MB per file."
                   error={attached.error}
                   idPrefix="cf"
                 />

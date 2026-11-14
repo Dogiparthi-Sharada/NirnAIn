@@ -12,7 +12,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { GapBanner, StatusChip, useBannerFocus } from '@/components/CreateForm'
-import DocumentUpload, { checkFile } from '@/components/DocumentUpload'
+import DocumentUpload, { checkFile, isVideoFile } from '@/components/DocumentUpload'
 import DraftReviewForm, { type ReviewSettings } from '@/components/DraftReviewForm'
 import { errorMessage } from '@/lib/api'
 import { DEPARTMENTS } from '@/lib/createForm'
@@ -64,7 +64,8 @@ export default function CreateFromUpload() {
     setFileError(null)
     const picked = files[0]
     if (!picked) return
-    const problem = AUDIO.test(picked.name) ? AUDIO_MESSAGE : checkFile(picked)
+    // Video first: a .webm recording is video unless the browser says audio/webm.
+    const problem = !isVideoFile(picked) && AUDIO.test(picked.name) ? AUDIO_MESSAGE : checkFile(picked)
     if (problem) {
       setFileError(`${picked.name}: ${problem}`)
       return
@@ -170,7 +171,7 @@ export default function CreateFromUpload() {
               onFiles={attach}
               onRemove={() => setFile(null)}
               disabled={extract.isPending}
-              hint="Drag a file here or click a tile to browse: PDF, Word or a transcript (.txt, .vtt, .srt). Max 50 MB."
+              hint="Drag a file here or click a tile to browse: PDF, Word or a transcript (.txt, .vtt, .srt). Max 100 MB."
               error={fileError}
               idPrefix="up"
             />
