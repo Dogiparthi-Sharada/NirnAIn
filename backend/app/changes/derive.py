@@ -2,8 +2,9 @@
 
 `from_edits` turns the Edit inputs / Progress update tabs into changes as they are.
 `derive_overrides` maps the changes plus the answers to the `overrides` body of C1's
-optimization run (budgetTotalCents, mustFinishBy, durationDays, hoursPerWeek); it returns
-None until every question is answered, which is what keeps "Re-plan" locked.
+optimization run (budgetTotalCents, mustFinishBy, durationDays, hoursPerWeek, addMembers,
+removeMembers); it returns None until every question is answered, which is what keeps
+"Re-plan" locked.
 `build_impact` assembles the `impact` JSON stored on the change request.
 """
 
@@ -16,6 +17,7 @@ from datetime import date
 
 from app.changes.context import ChangeContext
 from app.changes.questions import KEEP, NONE, build_questions
+from app.changes.team import TeamEditError, is_addition, is_removal, member_overrides, team_edits
 from app.domain.changes import (
     AffectedPerson,
     AffectedTask,
@@ -26,6 +28,9 @@ from app.domain.changes import (
     DetectedChange,
     PlanOverrides,
 )
+
+# Longest scope item text (scope_items.text check constraint).
+MAX_REQUIREMENT_CHARS = 2000
 
 
 class InvalidEditError(ValueError):
@@ -87,7 +92,17 @@ def from_edits(edits: ChangeEdits, context: ChangeContext) -> list[DetectedChang
             to=remaining,
             note="Done. Nothing left to plan." if percent == 100 else f"{percent}% complete",
         )
+    for fields in _team_edits(edits, context):
+        add(**fields)
     return out
+
+
+def _team_edits(edits: ChangeEdits, context: ChangeContext) -> list[dict[str, object]]:
+    """Who joins and who leaves, with the team rules' violations as InvalidEditError."""
+    try:
+        return team_edits(edits, context)
+    except TeamEditError as exc:
+        raise InvalidEditError(str(exc)) from exc
 
 
 # --------------------------------------------------------------------------- overrides
@@ -119,11 +134,14 @@ def derive_overrides(impact: ChangeImpact, answers: dict[str, str]) -> PlanOverr
             durations[str(target)] = int(to)
         elif change.kind == "capacity" and target is not None and isinstance(to, int | float):
             hours[str(target)] = float(to)
+    added, removed = member_overrides(impact.changes, answers)
     return PlanOverrides(
         budget_total_cents=budget,
         must_finish_by=deadline,
         duration_days=durations or None,
         hours_per_week=hours or None,
+        add_members=added or None,
+        remove_members=removed or None,
     )
 
 
@@ -158,7 +176,7 @@ def build_affects(changes: list[DetectedChange], context: ChangeContext) -> Chan
             )
             for root in roots:
                 task_ids |= _reach(root, successors)
-        elif change.kind == "capacity":
+        elif change.kind == "capacity" or is_removal(change):
             targets = (
                 [change.target] if change.target else [option.id for option in change.candidates]
             )
@@ -167,13 +185,20 @@ def build_affects(changes: list[DetectedChange], context: ChangeContext) -> Chan
                 task_ids |= {task.id for task in context.tasks if task.owner_id == person_id}
     tasks = [task for task in context.tasks if task.id in task_ids]
     people |= {task.owner_id for task in tasks if task.owner_id is not None}
+    # Newcomers aren't on the team yet: listed under the employee reserved for them.
+    newcomers = [
+        AffectedPerson(id=change.target, name=change.member.full_name)
+        for change in changes
+        if is_addition(change) and change.target is not None and change.member is not None
+    ]
     return ChangeAffects(
         tasks=[AffectedTask(id=task.id, code=task.code, name=task.name) for task in tasks],
         people=[
-            AffectedPerson(id=person_id.id, name=person_id.name)
-            for person_id in context.people
-            if person_id.id in people
-        ],
+            AffectedPerson(id=person.id, name=person.name)
+            for person in context.people
+            if person.id in people
+        ]
+        + newcomers,
         cost_cents=context.plan_cost_cents,
         completion_date=context.plan_finish,
     )
@@ -190,9 +215,25 @@ def _reach(start: uuid.UUID, successors: dict[uuid.UUID, list[uuid.UUID]]) -> se
     return seen
 
 
+def requirements_to_add(impact: ChangeImpact | None) -> list[str]:
+    """Requirements the change notes as new: on approval they join the project's scope.
+
+    Re-planning can't turn requirement text into work, so these are informational in the
+    impact; any effort they need is a duration change on the work package they belong to.
+    """
+    if impact is None:
+        return []
+    return [
+        change.to[:MAX_REQUIREMENT_CHARS]
+        for change in impact.changes
+        if change.kind == "scope" and change.action != "remove" and isinstance(change.to, str)
+    ]
+
+
 def build_impact(
     changes: list[DetectedChange], source: ChangeSource, context: ChangeContext, model: str
 ) -> ChangeImpact:
+    """The stored impact: the changes, the questions they raise and what they touch."""
     return ChangeImpact(
         changes=changes,
         questions=build_questions(changes, source, context),

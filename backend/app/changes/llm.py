@@ -2,8 +2,9 @@
 
 The model only proposes changes; every one is checked against the notes and the project
 before it is kept: the quote must appear in the notes verbatim, the work package or
-person must exist, and the value must parse. Questions are always derived by rules
-(`app.changes.derive`), so answering them maps to overrides deterministically.
+person must exist (a newcomer must not), and the value must parse. Questions are always
+derived by rules (`app.changes.derive`), so answering them maps to overrides
+deterministically.
 """
 
 from __future__ import annotations
@@ -14,13 +15,14 @@ import re
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from app.ai.llm import LLM
 from app.ai.prompting import DATA_RULE, as_data, data_block, one_line
 from app.changes import detect, parsing
 from app.changes.context import ChangeContext
-from app.domain.changes import DetectedChange
+from app.changes.team import DEFAULT_NEW_MEMBER_HOURS, addition
+from app.domain.changes import DetectedChange, NewMember
 
 logger = logging.getLogger("app.changes")
 
@@ -31,9 +33,12 @@ MAX_CHANGES = 20
 SYSTEM_PROMPT = (
     "You compare new meeting notes with a project's applied plan and list what changed: "
     "the total budget, the deadline, the duration of a listed work package (including work "
-    "that is now done), the weekly hours of a listed team member (0 when they leave), or new "
-    "or removed scope. Report only changes the notes state. Never invent numbers, dates, "
-    "people or work packages; skip anything that is merely on track or unchanged. "
+    "that is now done), the weekly hours of a listed team member (0 when they leave), a "
+    "person brought onto the project (kind team: their role, their name only if the notes "
+    "give it, their hours only if stated, whether they come from outside as a contractor, and "
+    "which listed skills they bring), or new or removed scope. Report only changes the notes "
+    "state. Never invent numbers, dates, people or work packages; skip anything that is "
+    "merely on track or unchanged. "
     "For every change copy the sentence it comes from verbatim into `quote`. " + DATA_RULE
 )
 
@@ -41,17 +46,27 @@ SYSTEM_PROMPT = (
 class ProposedChange(BaseModel):
     """One change as Claude proposes it; checked by `to_changes` before it is kept."""
 
-    kind: Literal["budget", "deadline", "duration", "capacity", "scope"]
+    kind: Literal["budget", "deadline", "duration", "capacity", "scope", "team"]
     target: str | None = Field(
         default=None,
         description="duration: the work package code exactly as listed; capacity: the "
-        "person's full name exactly as listed; otherwise null",
+        "person's full name exactly as listed; team: the newcomer's full name if the notes "
+        "give it; otherwise null",
     )
     value: str | None = Field(
         default=None,
         description="budget: new total in US dollars (digits only); deadline: YYYY-MM-DD; "
         "duration: new total working days (0 = done); capacity: hours per week (0 = leaves); "
-        "scope: the requirement in one sentence",
+        "team: hours per week if stated, else null; scope: the requirement in one sentence",
+    )
+    role: str | None = Field(
+        default=None, description="team: the newcomer's role, e.g. Security Specialist"
+    )
+    contractor: bool = Field(
+        default=False, description="team: true when they come from outside the organization"
+    )
+    skills: list[str] = Field(
+        default_factory=list, description="team: listed project skills they bring, exactly"
     )
     quote: str
     confidence: float = Field(ge=0, le=1)
@@ -80,6 +95,8 @@ def build_prompt(notes: str, context: ChangeContext) -> str:
             f"- {as_data(one_line(person.name, 120))} | {person.hours_per_week:g}"
             for person in context.people
         ),
+        "Skills the project needs:",
+        *(f"- {as_data(one_line(skill, 100))}" for skill in context.skills),
         "",
         "New meeting notes:",
         as_data(notes),
@@ -134,14 +151,12 @@ def _proposal_to_change(  # noqa: PLR0911
         old = context.deadline.isoformat() if context.deadline else None
         return DetectedChange.model_validate({**base, "from_": old, "to": new.isoformat()})
     if proposal.kind == "scope":
+        action, note = detect.scope_action(f"{value} {quote}")
         return DetectedChange.model_validate(
-            {
-                **base,
-                "to": value or quote,
-                "note": "Re-planning doesn't add work. Add it as a work package in WBS Builder, "
-                "then record the change again.",
-            }
+            {**base, "to": value or quote, "action": action, "note": note}
         )
+    if proposal.kind == "team":
+        return _newcomer(proposal, value, base, context)
     try:
         number = float(value)
     except ValueError:
@@ -182,6 +197,38 @@ def _proposal_to_change(  # noqa: PLR0911
             "to": number,
         }
     )
+
+
+def _newcomer(
+    proposal: ProposedChange, value: str, base: dict[str, object], context: ChangeContext
+) -> DetectedChange | None:
+    """A person brought in: needs a role; the name defaults to the role, skills must be the
+    project's, and hours count only when stated (else 40 h a week and a question asks)."""
+    role = " ".join((proposal.role or "").split())[:120]
+    if not role:
+        return None
+    name = " ".join((proposal.target or "").split())[:200] or role
+    if any(person.name.casefold() == name.casefold() for person in context.people):
+        return None
+    try:
+        stated = round(float(value)) if value else None
+    except ValueError:
+        stated = None
+    hours = stated if stated is not None and 1 <= stated <= 80 else None
+    known = {skill.casefold(): skill for skill in context.skills}
+    try:
+        member = NewMember(
+            full_name=name,
+            role_title=role,
+            hours_per_week=hours or DEFAULT_NEW_MEMBER_HOURS,
+            skills=[
+                known[skill.casefold()] for skill in proposal.skills if skill.casefold() in known
+            ],
+            is_contractor=proposal.contractor,
+        )
+    except ValidationError:
+        return None
+    return DetectedChange.model_validate({**base, **addition(member, hours)})
 
 
 class ChangeDetector:

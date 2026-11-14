@@ -156,8 +156,18 @@ class TeamRepository:
         return (await self._conn.execute(stmt)).scalar()
 
     async def create_employee(
-        self, org_id: uuid.UUID, full_name: str, role_title: str, hours_per_week: int
+        self,
+        org_id: uuid.UUID,
+        full_name: str,
+        role_title: str,
+        hours_per_week: int,
+        *,
+        active: bool = True,
+        is_contractor: bool = False,
+        hourly_rate_cents: int | None = None,
     ) -> uuid.UUID:
+        """A new organization employee. Step 7 creates newcomers inactive (a candidate the
+        re-plan can staff) and activates them when the change is approved."""
         employee_id = uuid.uuid4()
         await self._conn.execute(
             sa.insert(employees).values(
@@ -166,6 +176,9 @@ class TeamRepository:
                 full_name=full_name,
                 role_title=role_title,
                 weekly_capacity_hours=hours_per_week,
+                active=active,
+                is_contractor=is_contractor,
+                hourly_rate_cents=hourly_rate_cents,
             )
         )
         return employee_id

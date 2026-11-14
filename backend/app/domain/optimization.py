@@ -15,6 +15,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
+from app.domain.changes import MAX_NEW_MEMBERS, AddedMember
 from app.domain.common import CamelModel, InputModel, SolverStatus
 
 RemedyId = Literal["specialist", "move_deadline"]
@@ -151,6 +152,9 @@ class RunOverrides(InputModel):
     must_finish_by: date | None = None
     duration_days: dict[uuid.UUID, Days] | None = Field(default=None, max_length=2000)
     hours_per_week: dict[uuid.UUID, Hours] | None = Field(default=None, max_length=500)
+    # People joining (with the employee record step 7 reserved for them) or leaving.
+    add_members: list[AddedMember] | None = Field(default=None, max_length=MAX_NEW_MEMBERS)
+    remove_members: list[uuid.UUID] | None = Field(default=None, max_length=500)
 
 
 class RunCreate(InputModel):

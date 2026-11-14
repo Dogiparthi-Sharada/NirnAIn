@@ -29,6 +29,7 @@ from app.repositories.tables import (
     project_team_members,
     wbs_nodes_with_code,
 )
+from app.repositories.team import TeamRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,7 +194,7 @@ class ChangePlanReads:
         self, project: ProjectRef, in_force: InForce | None, today: date
     ) -> ChangeContext:
         """Everything a change is read against: budget, deadline, work packages, team,
-        dependencies and the plan in force.
+        dependencies, the skills the project needs and the plan in force.
 
         Falls back to the project's own budget and dates when no constraint set exists,
         the same fallbacks the optimizer uses.
@@ -257,6 +258,9 @@ class ChangePlanReads:
             plan_cost_cents=in_force.expected_cost_cents if in_force else None,
             plan_finish=in_force.completion_date if in_force else None,
             today=today,
+            skills=tuple(
+                row.name for row in await TeamRepository(self._connection).skill_rows(project.id)
+            ),
         )
 
     async def _people(self, project: ProjectRef) -> tuple[PersonRef, ...]:

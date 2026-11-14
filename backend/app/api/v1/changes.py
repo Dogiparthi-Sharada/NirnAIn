@@ -2,7 +2,9 @@
 
 The re-plan itself is C1's `POST /projects/{projectId}/optimization/runs` with
 `{overrides, changeRequestId, baselineRunId}`; this module reads the change, derives
-the overrides, and applies the proposed run on approval.
+the overrides, and applies the proposed run on approval. People who join get an
+organization employee reserved when the change is recorded (so the re-plan can staff
+them); approval puts them on the team, a rejection or a "Don't bring them in" releases it.
 """
 
 from __future__ import annotations
@@ -16,9 +18,10 @@ from fastapi import APIRouter, Body, Depends, Path, Query, Request, Response, st
 from app.ai.llm import LLM, make_client
 from app.api.deps import ProjectId
 from app.changes.compare import build_comparison
-from app.changes.derive import InvalidEditError, build_impact, from_edits
+from app.changes.derive import InvalidEditError, build_impact, from_edits, requirements_to_add
 from app.changes.llm import RULES_MODEL, ChangeDetector
 from app.changes.questions import validate_answers
+from app.changes.team import reserved_employees, unused_reservations
 from app.core.db import UserDB
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableError
 from app.domain.changes import (
@@ -105,8 +108,9 @@ async def create_change(
 
     Needs a plan in force (409 otherwise). Notes are read by Claude or the rules (the
     analysis runs inside the request, so the 202 response already carries the impact);
-    edits and progress are taken as given (422 when they change nothing). The change is
-    measured against the run in force (`baseRunId`).
+    edits and progress are taken as given (422 when they change nothing, or when a
+    newcomer is already on the team, someone to remove isn't, or nobody would be left).
+    The change is measured against the run in force (`baseRunId`).
     """
     project = await _writable_project(changes, project_id)
     in_force = await changes.in_force(project_id)
@@ -130,6 +134,7 @@ async def create_change(
             raise UnprocessableError(f"Nothing changed: these values match {context.plan_label}.")
         model = RULES_MODEL
 
+    found = await changes.reserve_members(project, found)
     impact = build_impact(found, body.source, context, model)
     change_id = await changes.create(project_id, body.source, body.text, impact, in_force.run_id)
     change = await changes.get(change_id)
@@ -226,6 +231,8 @@ async def approve_change(
 
     await changes.apply_run(run_id)
     await changes.write_overrides(project, overrides)
+    await changes.add_requirements(project.id, requirements_to_add(change.impact))
+    await changes.release_members(project, unused_reservations(change.impact, overrides))
     await changes.decide(change_id, ChangeStatus.APPROVED, run_id)
     return await _change(changes, change_id)
 
@@ -236,10 +243,12 @@ async def approve_change(
     summary="Keep the plan in force; the change stays on record",
 )
 async def reject_change(change_id: ChangeId, changes: Changes) -> ChangeRequest:
-    """Keep Plan vN: the change is closed as rejected and stays on record."""
+    """Keep Plan vN: the change is closed as rejected and stays on record; employees
+    reserved for its newcomers are released."""
     change = await _change(changes, change_id)
-    await _writable_project(changes, change.project_id)
+    project = await _writable_project(changes, change.project_id)
     _open(change)
+    await changes.release_members(project, reserved_employees(change.impact))
     await changes.decide(change_id, ChangeStatus.REJECTED, None)
     return await _change(changes, change_id)
 
