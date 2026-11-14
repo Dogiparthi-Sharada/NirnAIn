@@ -1,10 +1,12 @@
-"""SQL of the step 7 team writes (app/repositories/change_team.py) on a recording connection.
+"""SQL of the team writes (app/repositories/change_team.py, team.py) on a recording connection.
 
-What: reserving a newcomer (an inactive candidate employee), releasing unused candidates, and
+What: reserving a newcomer (an inactive candidate employee), releasing unused candidates,
 approving a change that adds Dana and removes Sam on a project still planned with the
-organization's pool. Why: these writes change the project's team only on approval and must
-never delete a real employee; there is no database in the test run. How it fits: compiles
-every statement for PostgreSQL through the `Conn` recorder of tests/test_repositories.py.
+organization's pool, and taking someone off the team on step 5 (RES-017). Why: these writes
+change the project's team only on approval, must never delete a real employee, and leave
+nobody off the team owning a work package; there is no database in the test run. How it
+fits: compiles every statement for PostgreSQL through the `Conn` recorder of
+tests/test_repositories.py.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from datetime import date
 from app.domain.changes import AddedMember, DetectedChange, NewMember, PlanOverrides
 from app.repositories.access import ProjectRef
 from app.repositories.changes import ChangeRepository
+from app.repositories.team import TeamRepository
 from tests.test_optimization_repo import Rows
 from tests.test_repositories import Conn, Result
 
@@ -132,3 +135,21 @@ async def test_approved_requirements_become_accepted_scope_items() -> None:
         "status": "accepted",
         "origin": "manual",
     }
+
+
+async def test_removing_a_member_on_step_5_unassigns_their_packages() -> None:
+    """RES-017: the packages a removed person owns lose their owner, as on step 7."""
+    mark = uuid.uuid4()
+    conn = Conn(Result([]), Result([]))
+    assert await TeamRepository(conn).remove_member(PROJECT.id, mark)  # type: ignore[arg-type]
+    assert _starts(conn.sql) == [
+        "DELETE FROM public.project_team_members",
+        "UPDATE public.wbs_nodes SET",
+    ]
+    ownership = conn.params[1]
+    assert (ownership["owner_employee_id"], ownership["owner_employee_id_1"]) == (None, mark)
+    assert ownership["project_id_1"] == PROJECT.id
+
+    nobody = Conn(Result([], rowcount=0))
+    assert not await TeamRepository(nobody).remove_member(PROJECT.id, mark)  # type: ignore[arg-type]
+    assert len(nobody.sql) == 1
