@@ -1,12 +1,21 @@
+/**
+ * Choose a new password (`/reset-password`): the end of the reset flow. The emailed link signs the
+ * user in through `/auth/callback` or `/auth/confirm` with a recovery session, and this screen
+ * sets the new password with Supabase `auth.updateUser`.
+ *
+ * Without a session the link has expired or was used already; the screen offers a new one. The new
+ * password must meet the policy in `auth/password.ts`. Styled like the approved sign-in screens.
+ */
 import { useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { supabase } from '@/lib/supabase'
-import AuthLayout, { linkClass } from '@/auth/AuthLayout'
+import AuthLayout, { AuthField, PasswordRules } from '@/auth/AuthLayout'
 import { useAuth } from '@/auth/useAuth'
 import { friendlyAuthError } from '@/auth/errors'
 import { passwordMeetsPolicy } from '@/auth/password'
-import { Alert, Button, FullPageSpinner, PasswordChecklist, PasswordField } from '@/components/ui'
+import { FullPageSpinner } from '@/components/ui'
 
+/** New password + confirmation; on success the dashboard opens with a notice. */
 export default function ResetPassword() {
   const { session, loading } = useAuth()
   const navigate = useNavigate()
@@ -23,18 +32,13 @@ export default function ResetPassword() {
   if (!session) {
     return (
       <AuthLayout
+        id="v-reset"
         title="Link expired"
+        features={false}
         subtitle="This password reset link is invalid or has expired. Reset links can only be used once."
-        footer={
-          <Link to="/login" className={linkClass}>
-            Back to sign in
-          </Link>
-        }
+        footer={<Link to="/login">Back to sign in</Link>}
       >
-        <Link
-          to="/forgot-password"
-          className="flex w-full items-center justify-center rounded-[4px] bg-primary px-4 py-[11px] text-sm font-semibold text-white hover:bg-[#5E262D] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-        >
+        <Link className="btn block lg" to="/forgot-password">
           Request a new link
         </Link>
       </AuthLayout>
@@ -66,52 +70,53 @@ export default function ResetPassword() {
 
   return (
     <AuthLayout
+      id="v-reset"
       title="Choose a new password"
+      features={false}
       subtitle={
         <>
-          Setting a new password for <span className="font-semibold text-foreground">{session.user.email}</span>.
+          Setting a new password for <b>{session.user.email}</b>.
         </>
       }
     >
       <form onSubmit={onSubmit} noValidate>
         <div aria-live="assertive" aria-atomic="true">
-          {error && (
-            <div className="mb-5">
-              <Alert tone="error" onDismiss={() => setError(null)}>
-                {error}
-              </Alert>
-            </div>
-          )}
+          {error && <div className="alert bad">{error}</div>}
         </div>
         {/* Lets password managers associate the new password with the right account. */}
         <input type="email" name="email" autoComplete="username" value={session.user.email ?? ''} readOnly hidden />
-        <PasswordField
+        <AuthField
           ref={passwordRef}
+          id="rp-pw"
           label="New password"
+          type="password"
           name="new-password"
           autoComplete="new-password"
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onChange={(event) => setPassword(event.target.value)}
           error={fieldErrors.password}
+          describedBy="rp-pw-rules"
           readOnly={submitting}
           autoFocus
           required
-          hint={<PasswordChecklist password={password} />}
+          hint={<PasswordRules id="rp-pw-rules" password={password} />}
         />
-        <PasswordField
+        <AuthField
           ref={confirmRef}
+          id="rp-confirm"
           label="Confirm new password"
+          type="password"
           name="confirm-password"
           autoComplete="new-password"
           value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
+          onChange={(event) => setConfirm(event.target.value)}
           error={fieldErrors.confirm ?? (confirmMismatch ? "Passwords don't match." : undefined)}
           readOnly={submitting}
           required
         />
-        <Button type="submit" size="lg" block loading={submitting} className="mt-2">
-          Update password
-        </Button>
+        <button className="btn block lg" type="submit" disabled={submitting} aria-busy={submitting || undefined}>
+          {submitting ? 'Updating…' : 'Update password'}
+        </button>
       </form>
     </AuthLayout>
   )

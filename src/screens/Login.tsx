@@ -1,14 +1,26 @@
+/**
+ * Sign in (`/login`, mockup views/auth.js `#v-login`): Google / Microsoft OAuth or email + password
+ * through Supabase Auth.
+ *
+ * The email form is checked on the client first (the first problem shows in `#li-err` and its field
+ * is focused). Supabase errors are mapped to friendly copy; "email not confirmed" offers to resend
+ * the confirmation and "invalid credentials" links to the password reset. On success the auth
+ * listener stores the session and `<PublicOnly>` sends the user on to `?next=` (validated by
+ * `safeNext`) or the dashboard. Nothing is pre-filled.
+ */
 import { useRef, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { supabase } from '@/lib/supabase'
 import { authRedirectUrl, safeNext } from '@/lib/redirect'
-import AuthLayout, { linkClass } from '@/auth/AuthLayout'
+import AuthLayout, { AuthField } from '@/auth/AuthLayout'
 import OAuthButtons, { Divider } from '@/auth/OAuthButtons'
 import { friendlyAuthError, type FriendlyAuthError } from '@/auth/errors'
-import { Alert, Button, PasswordField, TextField } from '@/components/ui'
 
 type ResendState = 'idle' | 'sending' | 'sent' | 'failed'
 
+const EMAIL_PATTERN = /^\S+@\S+\.\S+$/
+
+/** The sign-in form; keeps the `?next=` target when switching to Create account. */
 export default function Login() {
   const [params] = useSearchParams()
   const next = safeNext(params.get('next'))
@@ -19,7 +31,7 @@ export default function Login() {
   const [submitting, setSubmitting] = useState(false)
   const [oauthPending, setOauthPending] = useState(false)
   const [error, setError] = useState<FriendlyAuthError | null>(null)
-  const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({})
+  const [fieldError, setFieldError] = useState<{ field: 'email' | 'password'; message: string } | null>(null)
   const [resend, setResend] = useState<ResendState>('idle')
   const emailRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
@@ -29,13 +41,15 @@ export default function Login() {
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const trimmed = email.trim()
-    const errors: typeof fieldErrors = {}
-    if (!trimmed) errors.email = 'Enter your email address.'
-    else if (!/^\S+@\S+\.\S+$/.test(trimmed)) errors.email = 'Enter a valid email address.'
-    if (!password) errors.password = 'Enter your password.'
-    setFieldErrors(errors)
-    if (errors.email) return emailRef.current?.focus()
-    if (errors.password) return passwordRef.current?.focus()
+    const problem = !trimmed
+      ? ({ field: 'email', message: 'Enter your email address.' } as const)
+      : !EMAIL_PATTERN.test(trimmed)
+        ? ({ field: 'email', message: 'Enter a valid email address.' } as const)
+        : !password
+          ? ({ field: 'password', message: 'Enter your password.' } as const)
+          : null
+    setFieldError(problem)
+    if (problem) return (problem.field === 'email' ? emailRef : passwordRef).current?.focus()
 
     setSubmitting(true)
     setError(null)
@@ -61,50 +75,28 @@ export default function Login() {
 
   return (
     <AuthLayout
+      id="v-login"
       title="Sign in"
       subtitle="Access your project workspace"
       footer={
         <>
-          New to NirnAIn?{' '}
-          <Link to={`/signup${nextQuery}`} className={linkClass}>
-            Create an account
-          </Link>
+          New to NirnAIn? <Link to={`/signup${nextQuery}`}>Create an account</Link>
         </>
       }
     >
       <div aria-live="assertive" aria-atomic="true">
         {error && (
-          <div className="mb-5">
-            <Alert
-              tone="error"
-              onDismiss={() => setError(null)}
-              action={
-                error.kind === 'email_not_confirmed' ? (
-                  resend === 'sent' ? (
-                    <span className="font-medium">Confirmation email sent to {email.trim()}.</span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={resendConfirmation}
-                      disabled={resend === 'sending'}
-                      className="font-semibold underline underline-offset-2 disabled:opacity-60 cursor-pointer"
-                    >
-                      {resend === 'sending'
-                        ? 'Sending…'
-                        : resend === 'failed'
-                          ? "Couldn't send — try again"
-                          : 'Resend confirmation email'}
-                    </button>
-                  )
-                ) : error.kind === 'invalid_credentials' ? (
-                  <Link to="/forgot-password" className="font-semibold underline underline-offset-2">
-                    Reset your password
-                  </Link>
-                ) : undefined
-              }
-            >
-              {error.message}
-            </Alert>
+          <div className="alert bad">
+            {error.message}{' '}
+            {error.kind === 'email_not_confirmed' &&
+              (resend === 'sent' ? (
+                <b>Confirmation email sent to {email.trim()}.</b>
+              ) : (
+                <button className="linkbtn" type="button" onClick={() => void resendConfirmation()} disabled={resend === 'sending'}>
+                  {resend === 'sending' ? 'Sending…' : resend === 'failed' ? "Couldn't send — try again" : 'Resend confirmation email'}
+                </button>
+              ))}
+            {error.kind === 'invalid_credentials' && <Link to="/forgot-password">Reset your password</Link>}
           </div>
         )}
       </div>
@@ -119,8 +111,9 @@ export default function Login() {
       <Divider label="or sign in with email" />
 
       <form onSubmit={onSubmit} noValidate>
-        <TextField
+        <AuthField
           ref={emailRef}
+          id="li-email"
           label="Email address"
           type="email"
           name="email"
@@ -130,30 +123,37 @@ export default function Login() {
           spellCheck={false}
           placeholder="you@company.com"
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          error={fieldErrors.email}
+          onChange={(event) => setEmail(event.target.value)}
+          invalid={fieldError?.field === 'email'}
+          describedBy={fieldError?.field === 'email' ? 'li-err' : undefined}
           readOnly={busy}
           required
         />
-        <PasswordField
+        <AuthField
           ref={passwordRef}
+          id="li-pw"
           label="Password"
-          name="password"
-          autoComplete="current-password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          error={fieldErrors.password}
-          readOnly={busy}
-          required
-          labelAside={
-            <Link to="/forgot-password" className={`text-[13px] ${linkClass}`}>
+          aside={
+            <Link className="aside" to="/forgot-password">
               Forgot password?
             </Link>
           }
+          type="password"
+          name="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          invalid={fieldError?.field === 'password'}
+          describedBy={fieldError?.field === 'password' ? 'li-err' : undefined}
+          readOnly={busy}
+          required
         />
-        <Button type="submit" size="lg" block loading={submitting} disabled={oauthPending} className="mt-2">
-          Sign in
-        </Button>
+        <p className="err" id="li-err" role="alert" hidden={!fieldError}>
+          {fieldError?.message}
+        </p>
+        <button className="btn block lg" id="btn-signin" type="submit" disabled={busy} aria-busy={submitting || undefined}>
+          {submitting ? 'Signing in…' : 'Sign in'}
+        </button>
       </form>
     </AuthLayout>
   )

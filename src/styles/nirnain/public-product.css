@@ -1,0 +1,34 @@
+/**
+ * NirnAIn · styles/nirnain/public-product.css
+ *
+ * Product adjustments to the approved public pages (mockup styles/public.css, imported unchanged):
+ * the mockup reserves 42px for its reviewer bar above the landing header and the sign-in screens,
+ * and is drawn for a desktop window. Loaded by `auth/AuthLayout.tsx` and `screens/LandingPage.tsx`.
+ */
+
+/* No reviewer bar in the product. */
+.lp-head{top:0}
+.auth{min-height:100vh}
+.lp-sec[id]{scroll-margin-top:64px}
+
+/* Narrow screens: one column, the brand panel above the form. */
+@media (max-width:860px){
+  .auth{grid-template-columns:minmax(0,1fr)}
+  .auth-panel{padding:28px}
+  .auth-panel h2{margin-top:28px}
+  .auth-main{padding:28px 20px}
+  .lp-head{padding:12px 20px}
+  .lp-head nav{display:none}
+  .lp-hero,.lp-about{grid-template-columns:minmax(0,1fr);gap:28px}
+  .lp-hero,.lp-sec{padding:40px 20px}
+  .lp-hero h1{font-size:36px}
+  .lp-feats{grid-template-columns:minmax(0,1fr)}
+  .lp-steps{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:20px}
+}
+
+/* Password rules tick off as they are met. */
+.pwlist li.ok{color:var(--green)}
+.pwlist li.ok::before{content:'\2713  '}
+
+/* Links styled as buttons keep the button look on hover. */
+a.btn:hover{text-decoration:none}

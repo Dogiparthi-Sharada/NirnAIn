@@ -1,5 +1,15 @@
-import { useEffect, type ReactNode } from 'react'
-import { APP_NAME, BrandMark, BrandName } from '@/components/Brand'
+/**
+ * Frame and form pieces of the public sign-in screens (mockup views/auth.js, styles/public.css):
+ * the wine brand panel on the left and the form column on the right, plus the design's field,
+ * password-rules and brand markup.
+ *
+ * Used by Login, Signup, CheckEmail, ForgotPassword, ResetPassword, AuthCallback and AuthConfirm.
+ * Only presentation lives here; the Supabase calls stay in each screen.
+ */
+import { useEffect, type InputHTMLAttributes, type ReactNode, type Ref } from 'react'
+import { APP_NAME } from '@/components/Brand'
+import { PASSWORD_RULES } from './password'
+import '@/styles/nirnain/public-product.css'
 
 const FEATURES = [
   'AI extracts scope from briefs, transcripts and RFPs',
@@ -12,81 +22,135 @@ const DEFAULT_PANEL = {
   text: 'Plan projects intelligently. AI extracts scope, builds WBS structures, and optimizes resource allocation automatically.',
 }
 
+/** The "N" mark and the Nirn<em>AI</em>n wordmark; `inverted` for the wine panel. */
+export function BrandLockup({ inverted = false }: { inverted?: boolean }) {
+  return (
+    <div className="brand">
+      <span className={inverted ? 'bmark inv' : 'bmark'} aria-hidden="true">
+        N
+      </span>
+      <span className={inverted ? 'bname inv' : 'bname'}>
+        Nirn<em>AI</em>n
+      </span>
+    </div>
+  )
+}
+
+/**
+ * One sign-in screen: brand panel (heading, text, optional feature list) and the form column with
+ * its title, subtitle, content and footer line. Sets the document title.
+ */
 export default function AuthLayout({
+  id,
   title,
   subtitle,
   children,
   footer,
   panel = DEFAULT_PANEL,
+  features = true,
 }: {
+  /** Section id from the design (`v-login`, `v-signup`, …). */
+  id: string
   title: string
   subtitle?: ReactNode
   children: ReactNode
   footer?: ReactNode
-  /** Copy for the brand panel shown on wide screens. */
+  /** Copy for the brand panel. */
   panel?: { heading: string; text: string }
+  /** Show the three feature ticks under the panel text. */
+  features?: boolean
 }) {
   useEffect(() => {
     document.title = `${title} · ${APP_NAME}`
   }, [title])
 
   return (
-    <div className="flex min-h-screen bg-background">
-      {/* Brand panel */}
-      <aside className="relative hidden w-[420px] shrink-0 flex-col justify-between overflow-hidden bg-primary px-12 py-12 text-primary-foreground lg:flex">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 opacity-[0.07]"
-          style={{
-            backgroundImage:
-              'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)',
-            backgroundSize: '32px 32px',
-            maskImage: 'linear-gradient(to bottom, black, transparent 75%)',
-          }}
-        />
-        <div className="relative">
-          <div className="mb-12 flex items-center gap-2.5">
-            <BrandMark inverted />
-            <BrandName inverted className="text-base" />
-          </div>
-          <h2 className="mb-4 text-[28px] font-bold leading-[1.3]">{panel.heading}</h2>
-          <p className="text-sm leading-[1.7] text-[#CDBFAB]">{panel.text}</p>
-          <ul className="mt-10 space-y-3.5">
+    <section className="view on auth" id={id}>
+      <aside className="auth-panel">
+        <BrandLockup inverted />
+        <h2>{panel.heading}</h2>
+        <p>{panel.text}</p>
+        {features && (
+          <ul className="feat">
             {FEATURES.map((feature) => (
-              <li key={feature} className="flex items-start gap-3 text-[13px] leading-5 text-[#E8DCC6]">
-                <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[#DDE7D0]">
-                  <svg aria-hidden="true" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#4F7A4A" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M5 12.5l4.5 4.5L19 7.5" />
-                  </svg>
-                </span>
-                {feature}
-              </li>
+              <li key={feature}>{feature}</li>
             ))}
           </ul>
-        </div>
-        <div className="relative text-xs text-[#E8C9C4]">
-          © {new Date().getFullYear()} {APP_NAME} Inc.
+        )}
+        <div className="copy">
+          &copy; {new Date().getFullYear()} {APP_NAME} Inc.
         </div>
       </aside>
-
-      {/* Content */}
-      <main className="flex flex-1 items-center justify-center px-6 py-12">
-        <div className="w-full max-w-[380px]">
-          <div className="mb-10 flex items-center gap-2 lg:hidden">
-            <BrandMark size={28} />
-            <BrandName className="text-[15px]" />
-          </div>
-          <div className="mb-8">
-            <h1 className="mb-1.5 text-[22px] font-bold text-foreground">{title}</h1>
-            {subtitle && <div className="text-sm leading-6 text-muted-foreground">{subtitle}</div>}
-          </div>
+      <main className="auth-main">
+        <div className="auth-box">
+          <h1>{title}</h1>
+          {subtitle && <p className="sub muted">{subtitle}</p>}
           {children}
-          {footer && <div className="mt-8 text-center text-[13px] text-muted-foreground">{footer}</div>}
+          {footer && <p className="foot">{footer}</p>}
         </div>
       </main>
+    </section>
+  )
+}
+
+interface AuthFieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'id' | 'className'> {
+  id: string
+  label: string
+  /** Right-aligned extra in the label row, e.g. "Forgot password?". */
+  aside?: ReactNode
+  /** Message under the field; also outlines it red. */
+  error?: string | null
+  /** Outline red without a message of its own (the screen shows one elsewhere). */
+  invalid?: boolean
+  /** Ids of elements describing the field (an error shown elsewhere, the password rules). */
+  describedBy?: string
+  /** Shown under the input, e.g. the password rules. */
+  hint?: ReactNode
+  className?: string
+  ref?: Ref<HTMLInputElement>
+}
+
+/** A labelled input in the design's `.field` markup, with an accessible error state. */
+export function AuthField({ id, label, aside, error, invalid, describedBy, hint, className, ref, ...inputProps }: AuthFieldProps) {
+  const errorId = error ? `${id}-err` : undefined
+  const bad = Boolean(error) || invalid
+  return (
+    <div className={className ? `field ${className}` : 'field'}>
+      <label htmlFor={id}>
+        {label}
+        {aside}
+      </label>
+      <input
+        ref={ref}
+        id={id}
+        className={bad ? 'in invalid' : 'in'}
+        aria-invalid={bad || undefined}
+        aria-describedby={[errorId, describedBy].filter(Boolean).join(' ') || undefined}
+        {...inputProps}
+      />
+      {error && (
+        <p className="err" id={errorId}>
+          {error}
+        </p>
+      )}
+      {hint}
     </div>
   )
 }
 
-export const linkClass =
-  'font-medium text-primary underline decoration-[#B7A89A] underline-offset-2 hover:decoration-primary rounded-[2px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary'
+/** The password policy (`auth/password.ts`) as the design's `.pwlist`; met rules turn green. */
+export function PasswordRules({ id, password }: { id: string; password: string }) {
+  return (
+    <ul className="pwlist" id={id} aria-label="Password requirements">
+      {PASSWORD_RULES.map((rule) => {
+        const met = rule.test(password)
+        return (
+          <li key={rule.id} className={met ? 'ok' : undefined}>
+            {rule.label}
+            {met && <span className="sr-only"> (done)</span>}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
