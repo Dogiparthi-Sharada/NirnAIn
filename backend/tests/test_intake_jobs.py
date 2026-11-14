@@ -116,8 +116,10 @@ async def test_run_extracts_and_writes_items(monkeypatch: pytest.MonkeyPatch) ->
     await runner.submit(run_id)
     assert runner.active == 1
     await _drain(runner)
-    ((rid, _pid, model, suggestions, input_tokens, output_tokens),) = store.finished
-    assert rid == run_id
+    ((finished_run_id, _project_id, model, suggestions, input_tokens, output_tokens),) = (
+        store.finished
+    )
+    assert finished_run_id == run_id
     assert model == "claude-opus-5-5"
     assert [(item.text, item.source_quote, item.evidence) for item in suggestions] == [
         ("Ship the thing", "Ship the thing", Evidence.STATED),
@@ -159,7 +161,7 @@ async def test_without_api_key_the_rules_extractor_runs(monkeypatch: pytest.Monk
     runner = IntakeRunner(store, settings(with_key=False))  # type: ignore[arg-type]
     await runner.submit(uuid.uuid4())
     await _drain(runner)
-    ((_rid, _pid, model, suggestions, input_tokens, output_tokens),) = store.finished
+    ((_run_id, _project_id, model, suggestions, input_tokens, output_tokens),) = store.finished
     assert (model, input_tokens, output_tokens) == ("rules", 0, 0)
     assert [(item.category, item.text) for item in suggestions] == [
         (ScopeCategory.RISK, "Vendor delay")

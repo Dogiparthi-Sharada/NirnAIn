@@ -69,9 +69,9 @@ class FakeIntakes:
     async def create(self, project_id: uuid.UUID, text: str) -> uuid.UUID:
         if self.d.race:
             raise ActiveRunExistsError
-        rid = uuid.uuid4()
-        self.d.runs[rid] = IntakeRun(
-            id=rid,
+        run_id = uuid.uuid4()
+        self.d.runs[run_id] = IntakeRun(
+            id=run_id,
             project_id=project_id,
             status="queued",  # type: ignore[arg-type]
             model=None,
@@ -81,8 +81,8 @@ class FakeIntakes:
             started_at=None,
             finished_at=None,
         )
-        self.d.texts[rid] = text
-        return rid
+        self.d.texts[run_id] = text
+        return run_id
 
     async def list_runs(self, project_id: uuid.UUID) -> list[IntakeRun]:
         runs = [run for run in self.d.runs.values() if run.project_id == project_id]
@@ -173,21 +173,21 @@ def test_get_run_by_id_follows_location(
 def test_run_needs_notes_or_a_readable_upload(
     intake_client: TestClient, store: Store, intake_data: IntakeStore, auth: Auth
 ) -> None:
-    user, _, pid = _project(intake_client, store, auth)
-    url = f"/api/v1/projects/{pid}/intake/runs"
+    user, _, project_id = _project(intake_client, store, auth)
+    url = f"/api/v1/projects/{project_id}/intake/runs"
     for body in ({}, {"text": "   "}):
-        r = intake_client.post(url, json=body, headers=auth(user))
-        assert r.status_code == 422
-        assert r.json()["detail"] == "Paste project notes or upload a document first."
+        response = intake_client.post(url, json=body, headers=auth(user))
+        assert response.status_code == 422
+        assert response.json()["detail"] == "Paste project notes or upload a document first."
     intake_data.readable_upload = True
-    r = intake_client.post(url, json={"text": ""}, headers=auth(user))
-    assert r.status_code == 202
-    assert intake_data.texts[uuid.UUID(r.json()["id"])] == ""
+    response = intake_client.post(url, json={"text": ""}, headers=auth(user))
+    assert response.status_code == 202
+    assert intake_data.texts[uuid.UUID(response.json()["id"])] == ""
 
 
 def test_list_runs_newest_first(intake_client: TestClient, store: Store, auth: Auth) -> None:
-    user, _, pid = _project(intake_client, store, auth)
-    url = f"/api/v1/projects/{pid}/intake/runs"
+    user, _, project_id = _project(intake_client, store, auth)
+    url = f"/api/v1/projects/{project_id}/intake/runs"
     first = intake_client.post(url, json={"text": "a"}, headers=auth(user)).json()["id"]
     second = intake_client.post(url, json={"text": "b"}, headers=auth(user)).json()["id"]
     listed = intake_client.get(url, headers=auth(user))
@@ -283,15 +283,15 @@ async def test_create_without_pasted_text_stores_no_notes_document() -> None:
 
 
 async def test_claim_reads_the_runs_pasted_notes_and_readable_uploads() -> None:
-    pid, upload_id = uuid.uuid4(), uuid.uuid4()
+    project_id, upload_id = uuid.uuid4(), uuid.uuid4()
     conn = Conn(
-        Rows([{"project_id": pid, "created_at": NOW}]),
+        Rows([{"project_id": project_id, "created_at": NOW}]),
         Rows([{"content_text": "Kickoff notes"}]),
         Rows([{"id": upload_id, "title": "brief.pdf", "content_text": "Budget $375K"}]),
     )
     claimed = await IntakeJobStore(conn).claim(uuid.uuid4())  # type: ignore[arg-type]
     assert claimed == ClaimedRun(
-        pid,
+        project_id,
         [
             Source(None, "Pasted notes", "Kickoff notes"),
             Source(upload_id, "brief.pdf", "Budget $375K"),
@@ -378,7 +378,7 @@ async def test_using_the_suggested_text_makes_the_item_stated() -> None:
 
 async def test_finish_replaces_untouched_ai_items_and_stores_evidence() -> None:
     conn = ManyConn()
-    run_id, pid, upload_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    run_id, project_id, upload_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     suggestion = ScopeSuggestion(
         category=ScopeCategory.RISK,
         text="Vendor delay of 3 months",
@@ -389,7 +389,7 @@ async def test_finish_replaces_untouched_ai_items_and_stores_evidence() -> None:
         suggested_text="Vendor delay",
         source_document_id=upload_id,
     )
-    await IntakeJobStore(conn).finish(run_id, pid, "m", [suggestion], 1, 2)  # type: ignore[arg-type]
+    await IntakeJobStore(conn).finish(run_id, project_id, "m", [suggestion], 1, 2)  # type: ignore[arg-type]
     delete, insert, update = conn.sql
     assert delete.startswith("DELETE FROM public.scope_items")
     for fragment in (

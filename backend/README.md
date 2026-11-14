@@ -24,9 +24,12 @@ app/
                      logging (JSON), middleware (request id, access log, security headers),
                      pagination (keyset cursors)
   api/deps.py        repository providers (tests override these)
-  api/v1/            routers: me, orgs, projects, dashboard, notifications, optimization, health
+  api/v1/            routers: me, orgs, projects, dashboard, notifications, optimization, intake,
+                     documents, wbs, planning, ai jobs, assistant, health
+  ai/                Claude wrapper (llm.py), prompts and pure AI logic: document text extraction,
+                     intake notes / evidence / rule-based fallback, WBS generate/validate, assistant
   optimization/      pure CP-SAT optimizer (model, baseline, solver, explanations)
-  jobs/              in-process background worker for optimization runs
+  jobs/              in-process background workers (optimization, intake, AI jobs)
   domain/            pydantic schemas (camelCase JSON) + Postgres enum mirrors
   repositories/      SQLAlchemy Core queries against the existing tables (tables.py)
 tests/               unit + API tests (no database needed)
@@ -87,6 +90,15 @@ All endpoints are under `/api/v1` except health. JSON uses camelCase. Errors are
 | GET | `/api/v1/projects/{projectId}/optimization/runs/latest` | Latest run, or 404 when there are none |
 | GET | `/api/v1/projects/{projectId}/optimization/runs/{runId}` | One run |
 
+| POST | `/api/v1/projects/{projectId}/documents` | Multipart `file`. 201 + `SourceDocument`. 403 not a writer, 404 project not visible, 413 over 50 MB, 415 unsupported type. |
+| GET | `/api/v1/projects/{projectId}/documents` | Uploaded documents, newest first (pasted notes are not listed) |
+| DELETE | `/api/v1/documents/{documentId}` | 204. 403 not a writer, 404 not visible. |
+| POST | `/api/v1/projects/{projectId}/intake/runs` | `{text}` (may be empty when an upload was read; 422 when there is nothing to analyze). 202 + `IntakeRun`, extracted in the background. 409 a run is active. |
+| GET | `/api/v1/projects/{projectId}/intake/runs` | The 20 most recent runs, newest first |
+| GET | `/api/v1/projects/{projectId}/intake/runs/latest` · `/{runId}` | One run (404 when none) |
+| GET/POST | `/api/v1/projects/{projectId}/scope-items` | List (removed items hidden) / add by hand (accepted, evidence null) |
+| PATCH | `/api/v1/scope-items/{itemId}` | `{text?, status?}`. Text equal to `suggestedText` makes the item `stated`. |
+
 Error mapping: RLS violation / `42501` → 403, trigger `P0001` → 422 (with the trigger's
 message), `23505` → 409, `23514`/`23503`/`23502`/`22xxx` → 422, missing row → 404,
 DB unreachable / pool exhausted / statement timeout → 503.
@@ -106,6 +118,36 @@ into `input_snapshot` and commits. A background task then solves it in-process
 and before answering 409, runs stuck in queued/running for longer than
 `OPTIMIZER_STALE_AFTER_S` are marked failed, because a restart orphans them. Tuning:
 `OPTIMIZER_TIME_LIMIT_S`, `OPTIMIZER_WORKERS` (see `.env.example`).
+
+## AI intake
+
+`POST .../documents` keeps only the text of an upload (no object storage yet):
+PDF (pypdf), Word `.docx` (paragraphs and table cells), `.txt`/`.md`/`.vtt`/`.srt`
+transcripts (WebVTT/SRT headers, cue numbers and timings removed). The kind comes
+from the extension, then the MIME type. Text is capped at 200 000 characters per
+file. Audio is stored as a failed extraction ("Audio transcription is not available
+yet."), as are scanned or corrupt files, always with a fixed message.
+`SourceDocument = {id, projectId, kind: pdf|docx|transcript|audio, title, mimeType,
+sizeBytes, extractionStatus: succeeded|failed, extractionError, chars, createdAt}`.
+
+An intake run reads its own pasted notes plus every upload whose text was read,
+each as `<document title="…">` inside one `<project_notes>` block (≤ 400 000
+characters; longer notes are cut longest-document-first, with a note saying so).
+The worker (`app/jobs/intake.py`) writes results on a service connection:
+
+- With `ANTHROPIC_API_KEY`, Claude (`INTAKE_MODEL`) returns each scope item with
+  its evidence. A quote is kept only if it really occurs in the notes (ignoring
+  case, whitespace and typographic quotes); otherwise the item becomes
+  `inferred` with "No exact quote found in the notes." (`app/ai/evidence.py`).
+- Without a key, a rule-based extractor runs (`app/ai/intake_rules.py`, run
+  `model = "rules"`): bullets under OBJECTIVES/GOALS, REQUIREMENTS, DELIVERABLES,
+  CONSTRAINTS/BUDGET/TIMELINE, RISKS/CONCERNS and OPEN ITEMS/UNKNOWNS/QUESTIONS
+  headings become `stated` items quoting the bullet; a bullet naming money or a
+  deadline under any other heading also becomes a constraint.
+
+`ScopeItem` carries `sourceQuote`, `evidence` (`stated` | `inferred` | `flagged` |
+null for items added by hand), `evidenceNote`, `suggestedText` (flagged items: the
+version the quote supports) and `sourceDocumentId` (the upload the quote is from).
 
 ## Deploy (Railway)
 
