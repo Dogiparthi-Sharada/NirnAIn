@@ -6,6 +6,7 @@ import type { EvidenceScopeItem } from '@/lib/inputs'
 import { useAddScopeItem, useLatestIntakeRun, useScopeItems, useUpdateScopeItem } from '@/lib/queries'
 import { useStepNav } from '@/lib/steps'
 import { SCOPE_CATEGORIES, SCOPE_CATEGORY_LABELS, type ScopeCategory, type ScopeItemPatch } from '@/lib/types'
+import { scopeGate } from './scope/gate'
 
 const SECTION_COLOR: Record<ScopeCategory, string> = {
   objective: '#DDE7D0',
@@ -15,11 +16,6 @@ const SECTION_COLOR: Record<ScopeCategory, string> = {
   risk: '#F5E3C8',
   missing_info: '#F3EADB',
 }
-
-const short = (t: string) => (t.length > 70 ? `${t.slice(0, 67)}\u2026` : t)
-
-/** Says more than the notes and still waiting for a decision: blocks the WBS. */
-const isBlocker = (it: EvidenceScopeItem) => it.evidence === 'flagged' && it.status === 'pending'
 
 export default function ScopeReview() {
   const nav = useStepNav()
@@ -38,7 +34,8 @@ export default function ScopeReview() {
   const items = useMemo(() => (itemsQuery.data ?? []) as EvidenceScopeItem[], [itemsQuery.data])
   const visible = items.filter((i) => i.status !== 'removed')
   const accepted = visible.filter((i) => i.status === 'accepted').length
-  const blockers = items.filter(isBlocker)
+  // Pending items (and, first, those saying more than the notes) block the WBS step.
+  const gate = scopeGate(items, () => void acceptAllQuoted())
   const actionError = updateItem.error ?? addItem.error
 
   function patch(itemId: string, body: ScopeItemPatch) {
@@ -68,7 +65,7 @@ export default function ScopeReview() {
   }
 
   function continueToWbs() {
-    if (blockers.length) setTried((n) => n + 1)
+    if (gate.blocked) setTried((n) => n + 1)
     else nav('wbs')
   }
 
@@ -233,18 +230,16 @@ export default function ScopeReview() {
           id="sc-banner"
           open={tried > 0}
           focusKey={tried}
-          lead={`${blockers.length === 1 ? '1 item says' : `${blockers.length} items say`} more than your notes. Use the quoted version, remove it, or accept it as your own statement before you continue:`}
-          items={blockers.map((b) => ({ label: `\u201C${short(b.text)}\u201D`, target: `[data-id="${b.id}"]` }))}
+          lead={gate.lead}
+          items={gate.links}
         />
         <div className="row between mt" id="sc-foot">
           <button className="btn sec" type="button" onClick={() => nav('intake')}>
             &larr; Back to AI Intake
           </button>
           <div className="row">
-            <span className={`gate${blockers.length ? ' bad' : ''}`} id="sc-gate">
-              {blockers.length
-                ? `${blockers.length} item${blockers.length > 1 ? 's say' : ' says'} more than your notes. Fix, remove or accept ${blockers.length > 1 ? 'them' : 'it'} to continue.`
-                : 'Nothing here says more than your notes.'}
+            <span className={`gate${gate.blocked ? ' bad' : ''}`} id="sc-gate">
+              {gate.status}
             </span>
             <button className="btn" id="btn-to-wbs" type="button" onClick={continueToWbs}>
               Continue to WBS Builder &rarr;
