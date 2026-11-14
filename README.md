@@ -33,6 +33,11 @@ cp .env.example .env              # DATABASE_URL, SUPABASE_URL, CORS_ORIGINS
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
+## Host the demo for free
+
+[docs/DEPLOY_DEMO.md](docs/DEPLOY_DEMO.md) walks through hosting the demo step by step on free tiers: a new Supabase
+project (database and sign-in), the API on Render's free tier (Docker), and the website as a Hugging Face static Space.
+
 ## Contributing
 
 1. Branch from `main`: `git switch -c feat/<area>-<thing>`
