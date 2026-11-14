@@ -1,4 +1,4 @@
-"""AI intake: pasted notes -> LLM scope extraction.
+"""AI intake: project notes (pasted and uploaded) -> scope extraction.
 
 User-side queries (RLS) and the worker's service-side writes, mirroring
 `app.repositories.optimization`.
@@ -14,6 +14,7 @@ import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.ai.intake import PASTED_TITLE, Source
 from app.core.errors import pg_error_info
 from app.domain.common import DocumentKind, ItemOrigin, JobStatus, ScopeCategory, ScopeStatus
 from app.domain.intake import IntakeRun, ScopeItem
@@ -46,6 +47,24 @@ class ActiveRunExistsError(Exception):
 class ActiveRun:
     id: uuid.UUID
     stale: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimedRun:
+    """A run the worker has started: its project and the notes to analyze."""
+
+    project_id: uuid.UUID
+    sources: list[Source]
+
+
+def _readable_uploads(project_id: uuid.UUID) -> sa.ColumnElement[bool]:
+    """Uploaded documents of the project whose text was read."""
+    return sa.and_(
+        doc_t.c.project_id == project_id,
+        doc_t.c.kind != DocumentKind.TEXT,
+        doc_t.c.extraction_status == JobStatus.SUCCEEDED,
+        doc_t.c.content_text.is_not(None),
+    )
 
 
 def _run_select() -> sa.Select[Any]:
@@ -113,7 +132,18 @@ class IntakeRepository:
             .values(status=JobStatus.FAILED, error=error, finished_at=sa.func.now())
         )
 
+    async def has_readable_upload(self, project_id: uuid.UUID) -> bool:
+        """Whether an upload's text was read, so a run can start without pasted notes."""
+        stmt = sa.select(doc_t.c.id).where(_readable_uploads(project_id)).limit(1)
+        return (await self._conn.execute(stmt)).first() is not None
+
     async def create(self, project_id: uuid.UUID, text: str) -> uuid.UUID:
+        """Queue a run; non-empty pasted notes are stored as its 'text' document.
+
+        Both rows are written in this transaction, so they share `created_at`
+        (now() is the transaction start time): that is how the worker finds the
+        run's own notes without a link column.
+        """
         run_id = uuid.uuid4()
         try:
             await self._conn.execute(
@@ -123,15 +153,17 @@ class IntakeRepository:
             if pg_error_info(exc).sqlstate == "23505":
                 raise ActiveRunExistsError from exc
             raise
-        await self._conn.execute(
-            sa.insert(doc_t).values(
-                id=uuid.uuid4(),
-                project_id=project_id,
-                kind=DocumentKind.TEXT,
-                title="Pasted notes",
-                content_text=text,
+        if text:
+            await self._conn.execute(
+                sa.insert(doc_t).values(
+                    id=uuid.uuid4(),
+                    project_id=project_id,
+                    kind=DocumentKind.TEXT,
+                    title=PASTED_TITLE,
+                    content_text=text,
+                    extraction_status=JobStatus.SUCCEEDED,
+                )
             )
-        )
         return run_id
 
     async def get(self, project_id: uuid.UUID, run_id: uuid.UUID) -> IntakeRun | None:
@@ -201,27 +233,45 @@ class IntakeJobStore:
     def __init__(self, conn: AsyncConnection) -> None:
         self._conn = conn
 
-    async def claim(self, run_id: uuid.UUID) -> tuple[uuid.UUID, str] | None:
-        """Move a queued run to running; returns (project_id, pasted text), or None."""
+    async def claim(self, run_id: uuid.UUID) -> ClaimedRun | None:
+        """Move a queued run to running; returns its project and the notes to analyze.
+
+        The notes are the run's pasted text (the 'text' document written with the
+        run, see `IntakeRepository.create`) plus every uploaded document whose text
+        was read, oldest first.
+        """
         stmt = (
             sa.update(run_t)
             .where(run_t.c.id == run_id, run_t.c.status == JobStatus.QUEUED)
             .values(status=JobStatus.RUNNING, started_at=sa.func.now())
-            .returning(run_t.c.project_id)
+            .returning(run_t.c.project_id, run_t.c.created_at)
         )
         row = (await self._conn.execute(stmt)).first()
         if row is None:
             return None
         project_id = row.project_id
-        doc_row = (
+        pasted = (
             await self._conn.execute(
                 sa.select(doc_t.c.content_text)
-                .where(doc_t.c.project_id == project_id, doc_t.c.kind == DocumentKind.TEXT)
-                .order_by(doc_t.c.created_at.desc())
+                .where(
+                    doc_t.c.project_id == project_id,
+                    doc_t.c.kind == DocumentKind.TEXT,
+                    doc_t.c.created_at == row.created_at,
+                )
+                .order_by(doc_t.c.id)
                 .limit(1)
             )
         ).first()
-        return project_id, (doc_row.content_text if doc_row and doc_row.content_text else "")
+        sources = [Source(None, PASTED_TITLE, pasted.content_text)] if pasted else []
+        uploads = (
+            await self._conn.execute(
+                sa.select(doc_t.c.id, doc_t.c.title, doc_t.c.content_text)
+                .where(_readable_uploads(project_id))
+                .order_by(doc_t.c.created_at, doc_t.c.id)
+            )
+        ).all()
+        sources += [Source(upload.id, upload.title, upload.content_text) for upload in uploads]
+        return ClaimedRun(project_id, sources)
 
     async def finish(
         self,

@@ -44,7 +44,9 @@ class IntakeRun(CamelModel):
 
 
 class IntakeRunCreate(InputModel):
-    text: str = Field(min_length=1, max_length=50_000)
+    """Start an intake run; `text` (pasted notes) may be empty when an upload was read."""
+
+    text: str = Field(default="", max_length=50_000)
 
 
 class ScopeItemUpdate(InputModel):

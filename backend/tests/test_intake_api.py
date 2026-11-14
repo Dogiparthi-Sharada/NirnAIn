@@ -13,13 +13,22 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
+from app.ai.intake import Source
 from app.api import deps
 from app.core.security import CurrentPrincipal
-from app.domain.common import ItemOrigin, OrgRole, ScopeCategory, ScopeStatus
+from app.domain.common import (
+    DocumentKind,
+    ItemOrigin,
+    JobStatus,
+    OrgRole,
+    ScopeCategory,
+    ScopeStatus,
+)
 from app.domain.intake import IntakeRun, ScopeItem
 from app.repositories.intake import (
     ActiveRun,
     ActiveRunExistsError,
+    ClaimedRun,
     IntakeJobStore,
     IntakeRepository,
 )
@@ -35,7 +44,9 @@ NOW = datetime(2026, 11, 13, 12, 0, tzinfo=UTC)
 class IntakeStore:
     runs: dict[uuid.UUID, IntakeRun] = field(default_factory=dict)
     items: dict[uuid.UUID, ScopeItem] = field(default_factory=dict)
+    texts: dict[uuid.UUID, str] = field(default_factory=dict)
     race: bool = False
+    readable_upload: bool = False
 
 
 class FakeIntakes:
@@ -55,6 +66,9 @@ class FakeIntakes:
     async def active_run(self, project_id: uuid.UUID, stale_after_s: int) -> ActiveRun | None:
         return None
 
+    async def has_readable_upload(self, project_id: uuid.UUID) -> bool:
+        return self.d.readable_upload
+
     async def create(self, project_id: uuid.UUID, text: str) -> uuid.UUID:
         if self.d.race:
             raise ActiveRunExistsError
@@ -70,6 +84,7 @@ class FakeIntakes:
             started_at=None,
             finished_at=None,
         )
+        self.d.texts[rid] = text
         return rid
 
     async def get(self, project_id: uuid.UUID, run_id: uuid.UUID) -> IntakeRun | None:
@@ -149,6 +164,21 @@ def test_get_run_by_id_follows_location(
     assert intake_client.get(r.headers["location"], headers=auth(stranger)).status_code == 404
 
 
+def test_run_needs_notes_or_a_readable_upload(
+    intake_client: TestClient, store: Store, intake_data: IntakeStore, auth: Auth
+) -> None:
+    user, _, pid = _project(intake_client, store, auth)
+    url = f"/api/v1/projects/{pid}/intake/runs"
+    for body in ({}, {"text": "   "}):
+        r = intake_client.post(url, json=body, headers=auth(user))
+        assert r.status_code == 422
+        assert r.json()["detail"] == "Paste project notes or upload a document first."
+    intake_data.readable_upload = True
+    r = intake_client.post(url, json={"text": ""}, headers=auth(user))
+    assert r.status_code == 202
+    assert intake_data.texts[uuid.UUID(r.json()["id"])] == ""
+
+
 def test_create_run_conflict_on_race(
     intake_client: TestClient, store: Store, intake_data: IntakeStore, auth: Auth
 ) -> None:
@@ -221,6 +251,46 @@ async def test_create_inserts_run_first_and_maps_unique_violation() -> None:
     assert conn.sql[1].startswith("INSERT INTO public.source_documents")
     with pytest.raises(ActiveRunExistsError):
         await IntakeRepository(RaisingConn()).create(uuid.uuid4(), "notes")  # type: ignore[arg-type]
+
+
+async def test_create_without_pasted_text_stores_no_notes_document() -> None:
+    conn = Conn()
+    await IntakeRepository(conn).create(uuid.uuid4(), "")  # type: ignore[arg-type]
+    assert len(conn.sql) == 1
+    assert conn.sql[0].startswith("INSERT INTO public.intake_runs")
+
+
+async def test_claim_reads_the_runs_pasted_notes_and_readable_uploads() -> None:
+    pid, upload_id = uuid.uuid4(), uuid.uuid4()
+    conn = Conn(
+        Rows([{"project_id": pid, "created_at": NOW}]),
+        Rows([{"content_text": "Kickoff notes"}]),
+        Rows([{"id": upload_id, "title": "brief.pdf", "content_text": "Budget $375K"}]),
+    )
+    claimed = await IntakeJobStore(conn).claim(uuid.uuid4())  # type: ignore[arg-type]
+    assert claimed == ClaimedRun(
+        pid,
+        [
+            Source(None, "Pasted notes", "Kickoff notes"),
+            Source(upload_id, "brief.pdf", "Budget $375K"),
+        ],
+    )
+    claim, pasted, uploads = conn.sql
+    assert claim.startswith("UPDATE public.intake_runs")
+    assert "public.source_documents.created_at = " in pasted
+    assert conn.params[1]["created_at_1"] == NOW
+    assert conn.params[1]["kind_1"] == DocumentKind.TEXT
+    for fragment in (
+        "public.source_documents.kind != ",
+        "public.source_documents.extraction_status = ",
+        "public.source_documents.content_text IS NOT NULL",
+    ):
+        assert fragment in uploads
+    assert conn.params[2]["extraction_status_1"] == JobStatus.SUCCEEDED
+
+
+async def test_claim_of_a_run_that_is_not_queued() -> None:
+    assert await IntakeJobStore(Conn(Rows([]))).claim(uuid.uuid4()) is None  # type: ignore[arg-type]
 
 
 async def test_create_item_appends_manual_accepted() -> None:

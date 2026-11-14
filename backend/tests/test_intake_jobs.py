@@ -11,6 +11,7 @@ from typing import Any
 import anthropic
 import pytest
 
+from app.ai.intake import Source
 from app.core.config import Settings
 from app.jobs.intake import (
     EMPTY_ERROR,
@@ -22,11 +23,13 @@ from app.jobs.intake import (
     _Extraction,
     engine_store,
 )
+from app.repositories.intake import ClaimedRun
 
 
 class FakeJobStore:
-    def __init__(self, text: str = "Some notes") -> None:
-        self.claimed: tuple[uuid.UUID, str] | None = (uuid.uuid4(), text)
+    def __init__(self, text: str = "Some notes", uploads: tuple[Source, ...] = ()) -> None:
+        sources = [Source(None, "Pasted notes", text), *uploads]
+        self.claimed: ClaimedRun | None = ClaimedRun(uuid.uuid4(), sources)
         self.finished: list[tuple[uuid.UUID, uuid.UUID, str, list[dict[str, Any]], int, int]] = []
         self.failed: list[tuple[uuid.UUID, str]] = []
         self.stale = 0
@@ -38,7 +41,7 @@ class FakeJobStore:
             raise RuntimeError("db down")
         yield self
 
-    async def claim(self, run_id: uuid.UUID) -> tuple[uuid.UUID, str] | None:
+    async def claim(self, run_id: uuid.UUID) -> ClaimedRun | None:
         claimed, self.claimed = self.claimed, None  # claim once
         return claimed
 
@@ -212,5 +215,41 @@ async def test_background_task_schedules_on_the_event_loop(monkeypatch: pytest.M
     tasks = BackgroundTasks()
     tasks.add_task(runner.submit, uuid.uuid4())
     await tasks()  # what Starlette does after sending the response
+    await _drain(runner)
+    assert len(store.finished) == 1
+
+
+async def test_pasted_notes_and_uploads_are_analyzed_together(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[str] = []
+
+    def extract(self: IntakeRunner, notes: str) -> tuple[_Extraction, int, int]:
+        seen.append(notes)
+        return _Extraction(items=[]), 1, 1
+
+    monkeypatch.setattr(IntakeRunner, "_extract", extract)
+    upload = Source(uuid.uuid4(), 'brief "v2".pdf', "Budget <b>$375K</b>")
+    store = FakeJobStore(text="Kickoff notes", uploads=(upload, Source(uuid.uuid4(), "x", " ")))
+    runner = IntakeRunner(store, settings())  # type: ignore[arg-type]
+    await runner.submit(uuid.uuid4())
+    await _drain(runner)
+    (notes,) = seen
+    assert notes == (
+        "<project_notes>\n"
+        '<document title="Pasted notes">\nKickoff notes\n</document>\n'
+        '<document title="brief &quot;v2&quot;.pdf">\n'
+        "Budget &lt;b&gt;$375K&lt;/b&gt;\n</document>\n"
+        "</project_notes>"
+    )
+    assert len(store.finished) == 1
+
+
+async def test_uploads_alone_can_be_analyzed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(IntakeRunner, "_extract", _fake_extract(_Extraction(items=[])))
+    store = FakeJobStore()
+    store.claimed = ClaimedRun(uuid.uuid4(), [Source(uuid.uuid4(), "call.vtt", "Go-live in Q3")])
+    runner = IntakeRunner(store, settings())  # type: ignore[arg-type]
+    await runner.submit(uuid.uuid4())
     await _drain(runner)
     assert len(store.finished) == 1
