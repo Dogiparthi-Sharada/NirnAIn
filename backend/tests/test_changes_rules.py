@@ -1,0 +1,203 @@
+"""Step 7 change logic without a database: the rule-based notes reader, questions and
+overrides, structured edits, the checks on Claude's output, and the plan comparison.
+
+Shared fixtures (the Steering Committee notes from the approved mockup and a small project
+context) live in tests/changes_fixtures.py.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import date
+from typing import Any
+
+import pytest
+
+from app.ai.llm import LLM
+from app.changes.compare import build_comparison
+from app.changes.context import NodeRow, PlanRow, RunMeta
+from app.changes.derive import InvalidEditError, build_impact, derive_overrides, from_edits
+from app.changes.detect import detect
+from app.changes.llm import ChangeDetector, ProposedChange, ProposedChanges, to_changes
+from app.changes.questions import validate_answers
+from app.domain.changes import ChangeEdits, PlanOverrides
+from app.domain.common import SolverStatus
+from tests.changes_fixtures import ETL, MARK, NOTES, SALESFORCE, SAP, project_context
+
+
+# --------------------------------------------------------------------------- rules
+def test_rules_read_the_steering_committee_notes() -> None:
+    found = detect(NOTES, project_context())
+    kinds = [(change.kind, change.target, change.to) for change in found]
+    assert kinds == [
+        ("scope", None, "Workday has to be added as a data source."),
+        ("budget", None, 36_500_000),
+        ("duration", SALESFORCE, 0),
+        ("duration", None, None),  # "SAP" only partly names 1.1.2: asked, not guessed
+    ]
+    budget = found[1]
+    assert (budget.from_, budget.quote, budget.speaker) == (
+        37_500_000,
+        "Finance is trimming the budget to $365K.",
+        "Robert",
+    )
+    sap = found[3]
+    assert [(option.id, option.from_, option.to) for option in sap.candidates] == [(SAP, 20, 30)]
+    assert all(change.quote and change.quote in NOTES for change in found)
+
+
+def test_rules_never_invent() -> None:
+    context = project_context()
+    # A meeting date isn't a deadline, "on track" isn't a change, a vague slip names nothing.
+    assert detect("Kick-off — March 3, 2025\nEverything is on track.", context) == []
+    assert detect("Things might slip a bit.", context) == []
+    found = detect("Mark Chen is leaving the company. Go-live moves to Oct 17, 2025.", context)
+    assert [(change.kind, change.target, change.to) for change in found] == [
+        ("capacity", MARK, 0),
+        ("deadline", None, "2025-10-17"),
+    ]
+
+
+def test_questions_and_overrides_from_notes() -> None:
+    context = project_context()
+    impact = build_impact(detect(NOTES, context), "notes", context, "rules")
+    by_id = {question.id: question for question in impact.questions}
+    assert set(by_id) == {"budget", "target:c4"}
+    assert [option.value for option in by_id["budget"].options] == ["36500000", "keep"]
+    assert "Plan v1 uses $375,000" in by_id["budget"].text
+    assert {task.code for task in impact.affects.tasks} == {"1.1.1", "1.1.2", "1.2.2"}
+    assert [person.name for person in impact.affects.people] == ["Mark Chen"]
+
+    assert derive_overrides(impact, {"budget": "36500000"}) is None  # one still open
+    option = derive_overrides(impact, {"budget": "36500000", "target:c4": str(SAP)})
+    assert option == PlanOverrides(
+        budget_total_cents=36_500_000, duration_days={str(SALESFORCE): 0, str(SAP): 30}
+    )
+    assert option.model_dump(mode="json") == {
+        "budgetTotalCents": 36_500_000,
+        "durationDays": {str(SALESFORCE): 0, str(SAP): 30},
+    }
+    kept = derive_overrides(impact, {"budget": "keep", "target:c4": "none"})
+    assert kept == PlanOverrides(duration_days={str(SALESFORCE): 0})
+    assert validate_answers(impact.questions, {"budget": "1"}) is not None
+    assert validate_answers(impact.questions, {"nope": "keep"}) is not None
+
+
+def test_edits_and_progress_are_taken_as_they_are() -> None:
+    context = project_context()
+    edits = ChangeEdits(
+        budget_total_cents=36_500_000,
+        must_finish_by=date(2025, 9, 30),  # unchanged: not a change
+        hours_per_week={MARK: 20},
+        progress={SAP: 50, SALESFORCE: 100, ETL: 0},
+    )
+    found = from_edits(edits, context)
+    assert [(change.kind, change.target, change.to) for change in found] == [
+        ("budget", None, 36_500_000),
+        ("capacity", MARK, 20),
+        ("duration", SAP, 10),
+        ("duration", SALESFORCE, 0),
+    ]
+    impact = build_impact(found, "edits", context, "rules")
+    assert impact.questions == []
+    assert derive_overrides(impact, {}) == PlanOverrides(
+        budget_total_cents=36_500_000,
+        duration_days={str(SAP): 10, str(SALESFORCE): 0},
+        hours_per_week={str(MARK): 20},
+    )
+    with pytest.raises(InvalidEditError):
+        from_edits(ChangeEdits(duration_days={uuid.uuid4(): 5}), context)
+
+
+# --------------------------------------------------------------------------- Claude path
+def test_claude_changes_are_checked_against_notes_and_project() -> None:
+    context = project_context()
+    out = ProposedChanges(
+        changes=[
+            ProposedChange(
+                kind="budget",
+                value="$365,000",
+                quote="Finance is trimming the budget to $365K.",
+                confidence=0.9,
+            ),
+            ProposedChange(
+                kind="duration",
+                target="1.1.2",
+                value="30",
+                quote="sandbox access slips two weeks.",
+                confidence=0.7,
+            ),
+            # Not in the notes / unknown person: dropped.
+            ProposedChange(kind="budget", value="1", quote="Budget is $1.", confidence=1),
+            ProposedChange(
+                kind="capacity",
+                target="Nobody",
+                value="0",
+                quote="The Salesforce connector is done.",
+                confidence=1,
+            ),
+        ]
+    )
+    kept = to_changes(out, NOTES, context)
+    assert [(change.kind, change.target, change.to) for change in kept] == [
+        ("budget", None, 36_500_000),
+        ("duration", SAP, 30),
+    ]
+
+
+class _BrokenLLM(LLM):
+    def __init__(self) -> None:
+        super().__init__(client=None, model="claude-sonnet-5-5")
+
+    @property
+    def configured(self) -> bool:
+        return True
+
+    def parse(self, **_: Any) -> Any:
+        raise RuntimeError("boom")
+
+
+async def test_detector_falls_back_to_rules() -> None:
+    context = project_context()
+    found, model = await ChangeDetector(_BrokenLLM()).detect(NOTES, context)
+    assert model == "rules"
+    assert [change.kind for change in found] == ["scope", "budget", "duration", "duration"]
+    _, model = await ChangeDetector(None).detect(NOTES, context)
+    assert model == "rules"
+
+
+# --------------------------------------------------------------------------- compare
+def test_comparison_shows_what_moved_and_why() -> None:
+    context = project_context()
+    impact = build_impact(detect(NOTES, context), "notes", context, "rules")
+    snapshot = {
+        "start_date": "2025-01-13",
+        "constraints": {"budget_total_cents": 37_500_000, "working_days_per_week": 5},
+        "dependencies": [{"predecessor_id": str(SAP), "successor_id": str(ETL)}],
+    }
+    base = RunMeta(uuid.uuid4(), uuid.uuid4(), SolverStatus.OPTIMAL, 1, 1, None, snapshot)
+    proposed = RunMeta(uuid.uuid4(), base.project_id, SolverStatus.OPTIMAL, None, 2, None, snapshot)
+    root, group = uuid.uuid4(), uuid.uuid4()
+    nodes = [
+        NodeRow(root, None, 1, "1", "Platform"),
+        NodeRow(group, root, 2, "1.1", "Ingestion"),
+        NodeRow(SALESFORCE, group, 3, "1.1.1", "Salesforce connector development"),
+        NodeRow(SAP, group, 3, "1.1.2", "SAP integration setup"),
+        NodeRow(ETL, group, 3, "1.2.2", "ETL pipeline development"),
+    ]
+    before = [
+        PlanRow(SALESFORCE, MARK, None, 0, 2),
+        PlanRow(SAP, None, "SAP specialist", 3, 6),
+        PlanRow(ETL, MARK, None, 7, 11),
+    ]
+    after = [PlanRow(SAP, None, "SAP specialist", 3, 8), PlanRow(ETL, MARK, None, 9, 13)]
+    comparison = build_comparison(base, before, proposed, after, nodes, {MARK: "Mark Chen"}, impact)
+    rows = {row.code: row for row in comparison.rows}
+    assert rows["1.1.1"].after is None
+    assert rows["1.1.1"].why == "Done, nothing left to plan"
+    assert (rows["1.1.2"].shift_days, rows["1.1.2"].why) == (14, "Effort 4w → 6w")
+    assert (rows["1.2.2"].shift_days, rows["1.2.2"].why) == (14, "Follows 1.1.2")
+    assert rows["1.2.2"].group_code == "1.1"
+    assert rows["1.1.2"].before is not None
+    assert rows["1.1.2"].before.start == date(2025, 2, 3)
+    assert comparison.base.budget_cents == 37_500_000

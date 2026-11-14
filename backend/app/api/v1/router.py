@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.v1 import (
+    changes,
     dashboard,
     intake,
     me,
@@ -26,3 +27,4 @@ api_router.include_router(intake.router)
 api_router.include_router(wbs.router)
 api_router.include_router(planning.router)
 api_router.include_router(plan.router)
+api_router.include_router(changes.router)
