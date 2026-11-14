@@ -63,34 +63,34 @@ function money(cents: number | null): string {
 
 function longDate(iso: string | null): string {
   if (!iso) return 'the deadline'
-  const d = new Date(`${iso}T00:00:00`)
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const day = new Date(`${iso}T00:00:00`)
+  return day.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function shortDate(iso: string | null): string {
   if (!iso) return 'the deadline'
-  const d = new Date(`${iso}T00:00:00`)
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  const day = new Date(`${iso}T00:00:00`)
+  return day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
 /** 'hard' or 'soft' for one constraint. The deadline is hard unless the PM said it can move. */
-export function policyOf(key: PolicyKey, p: PolicyInputs): PolicyMode {
-  if (key === 'deadline') return p.deadlineAnswer === 'soft' ? 'soft' : 'hard'
-  if (key === 'budget') return p.budgetMode
-  if (key === 'capacity') return p.capacityMode
-  return p.skillMode
+export function policyOf(key: PolicyKey, inputs: PolicyInputs): PolicyMode {
+  if (key === 'deadline') return inputs.deadlineAnswer === 'soft' ? 'soft' : 'hard'
+  if (key === 'budget') return inputs.budgetMode
+  if (key === 'capacity') return inputs.capacityMode
+  return inputs.skillMode
 }
 
 /** What each choice means for the solver, and the recommended default with its reason. */
-export function policyHelp(key: PolicyKey, p: PolicyInputs): PolicyHelp {
-  const budget = money(p.budgetTotalCents)
-  const date = longDate(p.mustFinishBy)
+export function policyHelp(key: PolicyKey, inputs: PolicyInputs): PolicyHelp {
+  const budget = money(inputs.budgetTotalCents)
+  const date = longDate(inputs.mustFinishBy)
   switch (key) {
     case 'budget':
       return {
         rec: 'hard',
-        recWhy: p.budgetQuote
-          ? `Your notes say \u201C${p.budgetQuote}\u201D, so treat it as a ceiling.`
+        recWhy: inputs.budgetQuote
+          ? `Your notes say \u201C${inputs.budgetQuote}\u201D, so treat it as a ceiling.`
           : 'An approved budget is usually a ceiling; keep it unless the sponsor agreed to more.',
         hard: `The plan must cost ${budget} or less. If that is impossible, you get priced options instead of a plan.`,
         soft: `The plan may cost more than ${budget}, with a penalty, if that is the only way to meet the other limits.`,
@@ -120,10 +120,10 @@ export function policyHelp(key: PolicyKey, p: PolicyInputs): PolicyHelp {
 }
 
 /** Risky Must hold / Can flex combinations for the current inputs, in display order. */
-export function policyRisks(p: PolicyInputs): PolicyRisk[] {
+export function policyRisks(inputs: PolicyInputs): PolicyRisk[] {
   const out: PolicyRisk[] = []
-  const date = shortDate(p.mustFinishBy)
-  if (policyOf('deadline', p) === 'hard' && policyOf('capacity', p) === 'soft') {
+  const date = shortDate(inputs.mustFinishBy)
+  if (policyOf('deadline', inputs) === 'hard' && policyOf('capacity', inputs) === 'soft') {
     out.push({
       card: 'capacity',
       level: 'change',
@@ -132,23 +132,23 @@ export function policyRisks(p: PolicyInputs): PolicyRisk[] {
       fix: `Set Employee capacity to Must hold. If ${date} then cannot be met, you see it now, with priced options (a specialist, more hours, or a later date).`,
     })
   }
-  if (policyOf('skills', p) === 'soft' && p.skillGaps.length > 0) {
+  if (policyOf('skills', inputs) === 'soft' && inputs.skillGaps.length > 0) {
     out.push({
       card: 'skills',
       level: 'change',
       title: 'Hold required skills while there is a skill gap',
-      why: `Nobody on the team has ${p.skillGaps.join(', ')}. With skills set to Can flex, the solver may give that work to someone without the skill and only add ramp-up time, which is usually underestimated.`,
+      why: `Nobody on the team has ${inputs.skillGaps.join(', ')}. With skills set to Can flex, the solver may give that work to someone without the skill and only add ramp-up time, which is usually underestimated.`,
       fix: 'Set Required skills to Must hold, then allow an outside specialist or add someone who has the skill.',
     })
   }
-  if (policyOf('budget', p) === 'soft') {
-    const budget = money(p.budgetTotalCents)
+  if (policyOf('budget', inputs) === 'soft') {
+    const budget = money(inputs.budgetTotalCents)
     out.push({
       card: 'budget',
       level: 'check',
       title: `Confirm the budget may go over ${budget}`,
-      why: p.budgetQuote
-        ? `Your notes say \u201C${p.budgetQuote}\u201D. Letting it flex means a plan could cost more than was approved.`
+      why: inputs.budgetQuote
+        ? `Your notes say \u201C${inputs.budgetQuote}\u201D. Letting it flex means a plan could cost more than was approved.`
         : 'Letting the budget flex means a plan could cost more than was approved.',
       fix: 'Keep Budget at Must hold unless the sponsor has agreed to more.',
     })
