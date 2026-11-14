@@ -16,9 +16,9 @@ from datetime import date
 from app.optimization.baseline import dependency_offset, task_dependencies
 from app.optimization.calendar import week_index, workday_date
 from app.optimization.costing import daily_load, plan_cost
-from app.optimization.load import TENTHS, allocation_blocks, daily_capacity_tenths
+from app.optimization.load import TENTHS, allocation_blocks, daily_capacity_tenths, task_mode
 from app.optimization.model import Plan, PlanningInput, Resource, SolveOutcome, Task
-from app.optimization.speed import work_hours
+from app.optimization.speed import pace_percent, work_hours
 
 
 def planned_days(plan: Plan, task_id: str) -> int:
@@ -103,6 +103,15 @@ class ReportContext:
             return 0
         load = daily_load(self.inp, plan, res, self.blocks, self.paced(plan))
         return round(100 * max(load, default=0) / capacity)
+
+    def hours_label(self, task: Task, resource: Resource, days: int) -> str:
+        """'40h/week', and 'less other projects' bookings' when the plan stretches the task
+        beyond what those hours alone need (`load.booked_modes`)."""
+        hours = f"{resource.weekly_capacity_hours:g}h/week"
+        capacity = daily_capacity_tenths(resource.weekly_capacity_hours, self.per_week)
+        if days > task_mode(task, capacity, pace_percent(resource, task)).duration_days:
+            return f"{hours} less other projects' bookings"
+        return hours
 
     def name(self, resource_id: str | None) -> str:
         if resource_id is None:
