@@ -117,6 +117,8 @@ class ChangeStore:
     requirements: list[str] = field(default_factory=list)
     # The project inputs changes are read against (project_context() unless set).
     context: ChangeContext | None = None
+    # Hash of the saved planning inputs; runs are solved from it unless a test says otherwise.
+    inputs_hash: str = "saved-inputs"
 
 
 class FakeChanges:
@@ -239,7 +241,18 @@ class FakeChanges:
         run = self.change_store.runs.get(run_id)
         if run is None:
             return None
-        return RunState(run_id, run["project_id"], run["status"], run["applied"], run["version"])
+        return RunState(
+            run_id,
+            run["project_id"],
+            run["status"],
+            run["applied"],
+            run["version"],
+            inputs_hash=run.get("inputs_hash"),
+            baseline_run_id=run.get("baseline_run_id"),
+        )
+
+    async def saved_inputs_hash(self, project: ProjectRef, today: date) -> str:
+        return self.change_store.inputs_hash
 
     async def apply_run(self, run_id: uuid.UUID) -> None:
         run = self.change_store.runs[run_id]
@@ -315,5 +328,6 @@ def add_run(
         "status": SolverStatus.OPTIMAL,
         "applied": applied,
         "version": version,
+        "inputs_hash": change_store.inputs_hash,
     }
     return run_id

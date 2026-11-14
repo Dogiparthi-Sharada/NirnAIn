@@ -11,15 +11,19 @@
  * A failed or timed-out run shows its error with "Run again".
  *
  * Inputs stay editable after a plan is applied, so when the plan in force no longer matches them
- * (`hash !== appliedHash` on the inputs sheet) the plan view says so and offers a re-run.
+ * (`hash !== appliedHash` on the inputs sheet) the plan view says so and offers a re-run. A plan not
+ * applied yet that was solved from other inputs (`hash !== run.options.inputsHash`) can't be applied
+ * (the server refuses it too): Apply is disabled with the reason, next to "Run again".
  */
 import { useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { policyRisks } from '@/lib/constraintPolicy'
 import {
   comparableInputsHash,
+  OUTDATED_PLAN_REASON,
   policyInputsOf,
   shortHash,
+  solvedOnOtherInputs,
   useOptimizationInputs,
   useProjectSkillList,
   useStartOptimization,
@@ -72,6 +76,7 @@ export default function OptimizationResults() {
   const planShown = !solving && !showSheet && (status === 'optimal' || status === 'feasible')
   const appliedHash = inputs.data?.appliedHash
   const changedSinceApplied = Boolean(run?.version != null && appliedHash && inputs.data?.hash && inputs.data.hash !== appliedHash)
+  const outdatedPlan = solvedOnOtherInputs(run, inputs.data?.hash)
 
   /** Starts a run (with a remedy when re-solving an infeasible plan); success closes the sheet. */
   function start(remedy?: RemedyId) {
@@ -141,6 +146,7 @@ export default function OptimizationResults() {
         onUseRemedy={(remedy) => start(remedy)}
         remedyStarting={startRun.isPending}
         remedyError={startRun.error}
+        applyBlocked={outdatedPlan ? { reason: OUTDATED_PLAN_REASON, reasonId: 'opt-plan-outdated-reason' } : undefined}
       />
     )
   } else {
@@ -192,6 +198,14 @@ export default function OptimizationResults() {
             </span>
             <button className="btn sm" type="button" onClick={runAgain}>
               Check the inputs &amp; run
+            </button>
+          </div>
+        )}
+        {planShown && outdatedPlan && (
+          <div className="alert warn row between" id="opt-plan-outdated" role="status">
+            <span id="opt-plan-outdated-reason">{OUTDATED_PLAN_REASON}.</span>
+            <button className="btn sm" type="button" onClick={runAgain}>
+              Run again
             </button>
           </div>
         )}

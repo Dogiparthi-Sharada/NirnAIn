@@ -165,3 +165,40 @@ def test_edits_reject_and_permissions(
 
     response = change_client.post(f"/api/v1/changes/{body['id']}/reject", headers=headers)
     assert (response.status_code, response.json()["status"]) == (200, "rejected")
+
+
+def test_outdated_replan_is_not_approved(
+    change_client: TestClient, store: Store, change_store: ChangeStore, auth: Auth
+) -> None:
+    """R1: a re-plan solved on inputs edited since, or on another baseline, never goes into
+    force; a fresh re-plan on the current inputs does."""
+    user, _, project_id = new_project(change_client, store, auth)
+    headers = auth(user)
+    add_run(change_store, project_id, applied=True, version=1)
+    progress = {"source": "progress", "edits": {"progress": {str(SAP): 100}}}
+    response = change_client.post(
+        f"/api/v1/projects/{project_id}/changes", json=progress, headers=headers
+    )
+    assert response.status_code == 202, response.text
+    change_id = uuid.UUID(response.json()["id"])
+    approve_url = f"/api/v1/changes/{change_id}/approve"
+
+    stale = add_run(change_store, project_id, applied=False)
+    change_store.rows[change_id].update(status="replanning", proposed_run_id=stale)
+    outdated = "Plan v1 changed since this change was re-planned. Re-plan it again."
+    # Someone edits a skill on step 5 after the re-plan was solved.
+    change_store.inputs_hash = "inputs-after-a-skill-edit"
+    response = change_client.post(approve_url, headers=headers)
+    assert (response.status_code, response.json()["detail"]) == (409, outdated)
+
+    change_store.inputs_hash = "saved-inputs"
+    change_store.runs[stale]["baseline_run_id"] = uuid.uuid4()
+    response = change_client.post(approve_url, headers=headers)
+    assert (response.status_code, response.json()["detail"]) == (409, outdated)
+    assert (change_store.applied, change_store.written) == ([], [])
+
+    fresh = add_run(change_store, project_id, applied=False)
+    change_store.rows[change_id]["proposed_run_id"] = fresh
+    response = change_client.post(approve_url, headers=headers)
+    assert (response.status_code, response.json()["status"]) == (200, "approved")
+    assert change_store.applied == [fresh]

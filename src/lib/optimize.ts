@@ -315,6 +315,20 @@ export function comparableInputsHash(run: PlanRun | null): string | null {
   return options.inputsHash ?? null
 }
 
+/** Why Apply waits when the plan was solved from other inputs than the saved ones. */
+export const OUTDATED_PLAN_REASON = 'Inputs changed since this plan was computed \u2014 run again'
+
+/**
+ * Whether a proposal (not yet applied) was solved from other inputs than the saved ones (`hash`
+ * on the inputs sheet). Every run records the saved inputs' hash, remedy and re-plan runs too, and
+ * the apply endpoint refuses such a plan (409); a run without a recorded hash can't prove it is
+ * current either. False while the sheet's hash is unknown: the server still checks.
+ */
+export function solvedOnOtherInputs(run: PlanRun | null, savedHash: string | null | undefined): boolean {
+  if (!run || run.version != null || !savedHash) return false
+  return run.options?.inputsHash !== savedHash
+}
+
 /** A step-4/5 input the run endpoint reported missing (422 `missing` extension), with where to fix it. */
 export interface MissingInputHint {
   key: string

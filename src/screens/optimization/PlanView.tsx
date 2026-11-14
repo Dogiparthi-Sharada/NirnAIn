@@ -48,6 +48,8 @@ interface PlanViewProps {
   onUseRemedy: (remedy: RemedyId) => void
   remedyStarting: boolean
   remedyError: unknown
+  /** Why Apply can't be used (the plan was solved from other inputs) and the id of the element saying so. */
+  applyBlocked?: { reason: string; reasonId: string }
 }
 
 /** "$175/h". */
@@ -67,6 +69,7 @@ export function PlanView({
   onUseRemedy,
   remedyStarting,
   remedyError,
+  applyBlocked,
 }: PlanViewProps) {
   const navigateToStep = useStepNav()
   const applyRun = useApplyRun(projectId)
@@ -84,7 +87,7 @@ export function PlanView({
   // Until the constraint set loads we can't tell whether the rate is confirmed, so Apply waits.
   const rateKnown = !specialist || constraints !== undefined
   const needsRate = specialist && !applied && constraints !== undefined && !constraints.specialistRateConfirmed
-  const canApply = !applied && rateKnown && !needsRate && !applyRun.isPending
+  const canApply = !applied && !applyBlocked && rateKnown && !needsRate && !applyRun.isPending
   const deadline = constraints?.mustFinishBy ?? summary?.deadline ?? null
 
   /** Saves the current constraint set with the shown contractor rate as the confirmed one. */
@@ -139,6 +142,7 @@ export function PlanView({
   const slip = dateSlipOf(run)
   let accept: AcceptState
   if (applied) accept = { kind: 'applied', version: run.version ?? 0 }
+  else if (applyBlocked) accept = { kind: 'blocked', reason: applyBlocked.reason }
   else if (needsRate) accept = { kind: 'blocked', reason: 'Confirm the contractor rate above first.' }
   else if (!rateKnown) accept = { kind: 'blocked', reason: 'Checking the contractor rate\u2026' }
   else accept = { kind: 'ready', applying: applyRun.isPending, onAccept: apply }
@@ -255,7 +259,10 @@ export function PlanView({
               type="button"
               onClick={apply}
               disabled={!canApply}
-              title={needsRate ? 'Confirm the contractor rate first' : !rateKnown ? 'Checking the contractor rate\u2026' : undefined}
+              title={
+                applyBlocked?.reason ?? (needsRate ? 'Confirm the contractor rate first' : !rateKnown ? 'Checking the contractor rate\u2026' : undefined)
+              }
+              aria-describedby={applyBlocked?.reasonId}
             >
               {applyRun.isPending ? 'Applying\u2026' : 'Apply Optimized Plan'}
             </button>

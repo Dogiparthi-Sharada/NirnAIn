@@ -36,6 +36,7 @@ from app.domain.changes import (
 )
 from app.domain.common import SolverStatus
 from app.repositories.access import ProjectRef
+from app.repositories.change_plans import InForce, RunState
 from app.repositories.changes import SUCCESS, ChangeRepository
 
 router = APIRouter(tags=["changes"])
@@ -89,6 +90,24 @@ def _open(change: ChangeRequest) -> None:
     """409 once a change is approved or rejected: decisions are final."""
     if change.status in DECIDED:
         raise ConflictError(f"This change was already {change.status.value}.")
+
+
+def _replan_outdated(run: RunState, in_force: InForce | None, saved_hash: str) -> bool:
+    """Whether the re-plan answers an older question (round 3, R1).
+
+    It is outdated when the saved inputs changed since it was solved (the change's own
+    overrides are applied on top of the saved inputs and are never saved before approval,
+    so they don't count), or when its baseline is no longer the plan in force: another
+    baseline was named, or a plan was applied after the re-plan was queued. A run without
+    a recorded inputs hash can't prove it is current, so it is outdated too.
+    """
+    if run.inputs_hash != saved_hash:
+        return True
+    if in_force is None:
+        return False
+    if run.baseline_run_id is not None and run.baseline_run_id != in_force.run_id:
+        return True
+    return bool(in_force.applied_at and run.created_at and run.created_at < in_force.applied_at)
 
 
 @router.post(
@@ -201,7 +220,8 @@ async def approve_change(
     """Approve the re-plan: it becomes Plan vN+1 and the change's values become the inputs.
 
     Refused while the run is still solving (409), when it didn't solve (422), when it is
-    already applied, or when another plan was applied since the change was recorded.
+    already applied, when another plan was applied since the change was recorded, or when
+    the re-plan is outdated (409, `_replan_outdated`).
     """
     change = await _change(changes, change_id)
     project = await _writable_project(changes, change.project_id)
@@ -228,6 +248,11 @@ async def approve_change(
         raise ConflictError(
             "Another plan was applied since this change was recorded. Record the change again."
         )
+    saved_hash = await changes.saved_inputs_hash(project, datetime.now(UTC).date())
+    if _replan_outdated(run, in_force, saved_hash):
+        version = in_force.version if in_force else change.base_version
+        plan = f"Plan v{version}" if version is not None else "The plan"
+        raise ConflictError(f"{plan} changed since this change was re-planned. Re-plan it again.")
 
     await changes.apply_run(run_id)
     await changes.write_overrides(project, overrides)

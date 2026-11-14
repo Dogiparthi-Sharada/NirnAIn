@@ -11,15 +11,17 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.changes.context import ChangeContext, NodeRow, PersonRef, PlanRow, RunMeta, TaskRef
 from app.domain.common import SolverStatus
+from app.optimization.inputs import inputs_hash
 from app.repositories import access
 from app.repositories.access import ProjectRef
+from app.repositories.planning_input import PlanningInputReader, ProjectContext
 from app.repositories.tables import (
     constraint_sets,
     dependencies,
@@ -40,17 +42,22 @@ class InForce:
     version: int | None
     expected_cost_cents: int | None
     completion_date: date | None
+    applied_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class RunState:
-    """What approval needs to know about a proposed run."""
+    """What approval needs to know about a proposed run: its state, and what it was solved
+    from (the saved inputs' hash, an explicit baseline and when it was queued)."""
 
     id: uuid.UUID
     project_id: uuid.UUID
     status: SolverStatus
     applied: bool
     version: int | None
+    inputs_hash: str | None = None
+    baseline_run_id: uuid.UUID | None = None
+    created_at: datetime | None = None
 
 
 class ChangePlanReads:
@@ -76,6 +83,7 @@ class ChangePlanReads:
                 optimization_runs.c.version,
                 optimization_runs.c.expected_cost_cents,
                 optimization_runs.c.completion_date,
+                optimization_runs.c.applied_at,
             )
             .where(
                 optimization_runs.c.project_id == project_id,
@@ -90,27 +98,50 @@ class ChangePlanReads:
         row = (await self._connection.execute(statement)).first()
         if row is None:
             return None
-        return InForce(row.id, row.version, row.expected_cost_cents, row.completion_date)
+        return InForce(
+            row.id, row.version, row.expected_cost_cents, row.completion_date, row.applied_at
+        )
 
     async def run(self, run_id: uuid.UUID) -> RunState | None:
-        """A run's status, project and whether it is applied (None when not visible)."""
+        """A run's status, project, whether it is applied and what it was solved from
+        (None when not visible)."""
         statement = sa.select(
             optimization_runs.c.id,
             optimization_runs.c.project_id,
             optimization_runs.c.status,
             optimization_runs.c.applied_at,
             optimization_runs.c.version,
+            optimization_runs.c.options,
+            optimization_runs.c.created_at,
         ).where(optimization_runs.c.id == run_id)
         row = (await self._connection.execute(statement)).first()
         if row is None:
             return None
+        options = row.options or {}
+        baseline = options.get("baselineRunId")
         return RunState(
             row.id,
             row.project_id,
             SolverStatus(row.status),
             row.applied_at is not None,
             row.version,
+            inputs_hash=str(options["inputsHash"]) if options.get("inputsHash") else None,
+            baseline_run_id=uuid.UUID(str(baseline)) if baseline else None,
+            created_at=row.created_at,
         )
+
+    async def saved_inputs_hash(self, project: ProjectRef, today: date) -> str:
+        """The hash of the project's saved planning inputs, as `GET …/optimization/inputs`
+        shows it and `POST …/optimization/runs` records it in `options.inputsHash`."""
+        context = ProjectContext(
+            project.id,
+            project.org_id,
+            project.name,
+            project.start_date,
+            project.target_end_date,
+            project.budget_cents,
+        )
+        return inputs_hash(await PlanningInputReader(self._connection).load(context, today))
 
     async def run_meta(self, run_id: uuid.UUID) -> RunMeta | None:
         """A run's KPIs and frozen input snapshot, for the comparison."""

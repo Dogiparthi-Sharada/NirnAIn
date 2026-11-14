@@ -1,26 +1,37 @@
-"""Applying a plan, plan versions and plan exports."""
+"""Applying a plan, plan versions and plan exports.
+
+Business rule (round 3, R1): a run goes into force only while the project's saved inputs
+still hash to the `inputsHash` it was solved from; otherwise the plan answers a question
+nobody is asking any more (another team, other hours, other skills), so applying it is
+refused with 409 and the PM runs the optimizer again.
+"""
 
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Response
 
 from app.api.deps import OptimizationRuns, Plans, ProjectId, RunId
-from app.core.errors import NotFoundError, UnprocessableError
+from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableError
 from app.domain.common import SolverStatus
 from app.domain.optimization import OptimizationRun
 from app.domain.plan import PlanVersion
 from app.export.model import build_export
 from app.export.msproject import render_msproject
 from app.export.pdf import render_pdf
+from app.optimization.inputs import inputs_hash
 
 router = APIRouter(tags=["plan"])
 
 SUCCESSFUL = (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
 RUN_NOT_FOUND = "Optimization run not found"
+STALE_RUN_DETAIL = (
+    "The inputs changed since this plan was computed. Run the optimizer again before applying."
+)
 
 
 class ExportFormat(StrEnum):
@@ -32,13 +43,30 @@ class ExportFormat(StrEnum):
     "/projects/{projectId}/optimization/runs/{runId}/apply",
     response_model=OptimizationRun,
     summary="Apply a successful run: it becomes the project's next plan version",
-    responses={403: {"description": "Not a writer"}, 422: {"description": "Not appliable"}},
+    responses={
+        403: {"description": "Not a writer"},
+        409: {"description": "The inputs changed since the run was solved"},
+        422: {"description": "Not appliable"},
+    },
 )
 async def apply_run(
     project_id: ProjectId, run_id: RunId, runs: OptimizationRuns, plans: Plans
 ) -> OptimizationRun:
-    if await runs.get(project_id, run_id) is None:
+    """Make a successful run the next plan version (409 when its inputs are outdated)."""
+    candidate = await runs.get(project_id, run_id)
+    if candidate is None:
         raise NotFoundError(RUN_NOT_FOUND)
+    if not await runs.can_write(project_id):
+        raise ForbiddenError("You do not have permission to apply this run")
+    # Unsolved or already applied runs are refused by the apply function itself (422).
+    if candidate.status in SUCCESSFUL and candidate.version is None:
+        project = await runs.project(project_id)
+        if project is None:
+            raise NotFoundError("Project not found")
+        saved = await runs.load_input(project, datetime.now(UTC).date())
+        # A run without a recorded hash can't prove it is current: it is outdated too.
+        if candidate.options.get("inputsHash") != inputs_hash(saved):
+            raise ConflictError(STALE_RUN_DETAIL)
     await plans.apply(run_id)
     run = await runs.get(project_id, run_id)
     if run is None:
