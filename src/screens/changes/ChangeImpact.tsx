@@ -7,23 +7,28 @@
  * C1's optimization run with the plan in force as baseline; while it runs, and once it
  * finishes, `PlanComparison` takes over below. Conflicts with values you confirmed are
  * asked, never overwritten ("never invent"): the budget/deadline choice sits in an amber
- * flag under its change, like the mockup.
+ * flag under its change, like the mockup. When the re-plan slips the date or finds no plan,
+ * `KeepDateCard` offers the priced ways to keep it (round 2, D2); a change whose re-plan
+ * failed can always be dismissed ("Keep Plan vN" = reject), so it never stays stuck open.
  */
 import { useEffect, useRef } from 'react'
 import { errorMessage } from '@/lib/api'
 import {
   isRunning,
   isSolved,
+  keepDateOf,
   useAnswerChange,
   useCompare,
   useDecideChange,
   useReplan,
   type ChangeRequest,
+  type KeepDateRemedyId,
   type PlanVersion,
 } from '@/lib/changes'
 import type { OptimizationRun } from '@/lib/types'
 import { ChangeRow, Question, type PickAnswer } from './ChangeRows'
 import { Regenerated, RunProblem, Touches } from './ImpactCards'
+import { KeepDateCard } from './KeepDate'
 import { PlanComparison } from './PlanComparison'
 import { RunSteps, useSteps } from './ui'
 
@@ -74,12 +79,23 @@ export function ChangeImpact({
   const flags = impact.questions.filter((question) => question.kind === 'budget' || question.kind === 'deadline')
   const asked = impact.questions.filter((question) => question.kind !== 'budget' && question.kind !== 'deadline')
   const open = impact.questions.filter((question) => !(question.id in change.answers)).length
-  // Scope additions alone can't be re-planned: the optimizer only re-solves existing work.
-  const usable = impact.changes.some((detected) => detected.kind !== 'scope')
-  const ready = change.overrides !== null && usable && !decided
+  // New requirements alone change nothing until their work is in the WBS (step 4): the re-plan
+  // then plans it, and approving adds the requirements to the scope.
+  const onlyScope = impact.changes.every((detected) => detected.kind === 'scope')
+  const ready = change.overrides !== null && impact.changes.length > 0 && !decided
   const notes = change.source === 'notes'
   const count = impact.changes.length
   const lock = decided || answer.isPending
+  const replanWith = (remedy?: KeepDateRemedyId) => {
+    if (!change.overrides) return
+    replan.mutate(
+      { overrides: change.overrides, changeRequestId: change.id, baselineRunId: change.baseRunId, remedy },
+      { onSuccess: (replanRun) => onReplanned(replanRun.id) },
+    )
+  }
+  const approve = () => decide.mutate({ changeId: change.id, decision: 'approve', runId: run?.id }, { onSuccess: () => onDecided('approve') })
+  const keep = () => decide.mutate({ changeId: change.id, decision: 'reject' }, { onSuccess: () => onDecided('reject') })
+  const deciding = replan.isPending || decide.isPending
   // Newcomers as the re-plan staffs them (hours as answered); leavers by name.
   const team = {
     joining: change.overrides?.addMembers ?? [],
@@ -88,7 +104,7 @@ export function ChangeImpact({
 
   let hint: string
   if (replan.isError) hint = errorMessage(replan.error)
-  else if (!usable) hint = 'Nothing here changes the plan yet. Add new work in WBS Builder first.'
+  else if (onlyScope) hint = 'New requirements only: add their work in WBS Builder (step 4), then re-plan. Approving adds them to the scope.'
   else if (open > 0) hint = `Answer the item${open === 1 ? '' : 's'} above to continue (${open} open).`
   else hint = `Ready. Plan v${baseVersion} stays in force until you approve v${nextVersion}.`
 
@@ -144,13 +160,7 @@ export function ChangeImpact({
                     id="btn-replan"
                     type="button"
                     disabled={!ready || running}
-                    onClick={() => {
-                      if (!change.overrides) return
-                      replan.mutate(
-                        { overrides: change.overrides, changeRequestId: change.id, baselineRunId: change.baseRunId },
-                        { onSuccess: (replanRun) => onReplanned(replanRun.id) },
-                      )
-                    }}
+                    onClick={() => replanWith()}
                   >
                     {running ? 'Re-planning…' : solved ? 'Re-plan again' : 'Re-plan with minimal disruption'}
                   </button>
@@ -178,6 +188,21 @@ export function ChangeImpact({
             </div>
           )}
           {run && !running && !solved && <RunProblem run={run} />}
+          {run && !running && !decided && (solved || run.status === 'infeasible') && (
+            <KeepDateCard keepDate={keepDateOf(run)} infeasible={!solved} busy={deciding} onUse={(remedy) => replanWith(remedy)} onAccept={approve} />
+          )}
+          {!running && !solved && !decided && (runError || run) && (
+            <div className="row end">
+              {decide.isError && (
+                <span className="gate bad" role="alert">
+                  {errorMessage(decide.error)}
+                </span>
+              )}
+              <button className="btn sec" id="btn-keep-current" type="button" disabled={deciding} onClick={keep}>
+                Keep Plan v{baseVersion}
+              </button>
+            </div>
+          )}
           {solved && (
             <PlanComparison
               query={compare}
@@ -187,8 +212,8 @@ export function ChangeImpact({
               approved={change.status === 'approved'}
               busy={decide.isPending}
               error={decide.isError ? errorMessage(decide.error) : null}
-              onApprove={() => decide.mutate({ changeId: change.id, decision: 'approve', runId: run?.id }, { onSuccess: () => onDecided('approve') })}
-              onKeep={() => decide.mutate({ changeId: change.id, decision: 'reject' }, { onSuccess: () => onDecided('reject') })}
+              onApprove={approve}
+              onKeep={keep}
             />
           )}
         </div>

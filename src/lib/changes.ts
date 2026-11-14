@@ -12,7 +12,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch, isApiError } from './api'
 import { queryKeys } from './queries'
-import type { OptimizationRun, RunStatus, TeamMember } from './types'
+import type { OptimizationRun, RunResult, RunStatus, TeamMember } from './types'
 
 /* ───────────────────────────── Types (backend: app/domain/changes.py) ───────────────────────────── */
 
@@ -40,15 +40,20 @@ export interface TargetOption {
   to: number | null
 }
 
-/** Someone joining the project mid-way (a hire, a specialist or a contractor). No rate = priced like the team. */
+/** Employees are already in the company (costed from their company record); contractors bring their own rate. */
+export type WorkerType = 'employee' | 'contractor'
+
+/**
+ * Someone joining the project mid-way. An employee has no rate here; a contractor needs one
+ * (the project's contractor rate is the default when set; otherwise the API answers 422).
+ */
 export interface NewMember {
   fullName: string
   roleTitle: string
   /** Whole hours per week on this project, 1–80. */
   hoursPerWeek: number
-  skills: string[]
+  workerType: WorkerType
   hourlyRateCents?: number | null
-  isContractor?: boolean
 }
 
 /** A newcomer in the re-plan overrides, with the organization employee the change reserved for them. */
@@ -78,7 +83,7 @@ export interface DetectedChange {
 
 export interface ChangeQuestion {
   id: string
-  kind: 'budget' | 'deadline' | 'duration' | 'capacity' | 'target' | 'team'
+  kind: 'budget' | 'deadline' | 'duration' | 'capacity' | 'target' | 'team' | 'rate'
   changeId: string
   tier: 'high' | 'blocking'
   text: string
@@ -174,6 +179,45 @@ export interface ChangeComparison {
   base: PlanSide
   proposed: PlanSide
   rows: CompareRow[]
+}
+
+/** A priced way to keep the target date after a re-plan slips (C1/H11 `result.remedies[]`). */
+export type KeepDateRemedyId = 'specialist' | 'overtime' | 'move_deadline'
+
+export interface KeepDateRemedy {
+  id: KeepDateRemedyId
+  title: string
+  detail: string
+  /** Extra cost versus the re-planned plan, in cents. */
+  costCents: number | null
+  completionDate: string | null
+}
+
+/** What the re-plan says about the date: the date it tried to keep and how far it slipped. */
+export interface KeepDate {
+  completionDate: string | null
+  /** For a step 7 re-plan: the completion date of the plan in force. */
+  targetDate: string | null
+  /** Working days after `targetDate` (0 = on time). */
+  slipDays: number
+  remedies: KeepDateRemedy[]
+}
+
+interface DateSummary {
+  completionDate?: string | null
+  targetDate?: string | null
+  slipDays?: number | null
+}
+
+/** The date facts of a run (`result.summary` and `result.remedies`; absent on older runs). */
+export function keepDateOf(run: OptimizationRun): KeepDate {
+  const result = run.result as (RunResult & { summary?: DateSummary | null; remedies?: KeepDateRemedy[] }) | null
+  return {
+    completionDate: result?.summary?.completionDate ?? null,
+    targetDate: result?.summary?.targetDate ?? null,
+    slipDays: result?.summary?.slipDays ?? 0,
+    remedies: result?.remedies ?? [],
+  }
 }
 
 /** Who is on the project and the hours each gives it (B's team, else the org pool). */
@@ -275,7 +319,7 @@ export function useAnswerChange(projectId: string) {
 export function useReplan(projectId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (body: { overrides: PlanOverrides; changeRequestId: string; baselineRunId: string | null }) =>
+    mutationFn: (body: { overrides: PlanOverrides; changeRequestId: string; baselineRunId: string | null; remedy?: KeepDateRemedyId }) =>
       apiFetch<OptimizationRun>(project(projectId, '/optimization/runs'), { method: 'POST', json: body }),
     onSuccess: (run) => {
       queryClient.setQueryData(keys.run(projectId, run.id), run)
@@ -324,7 +368,6 @@ export function useDecideChange(projectId: string) {
         queryKeys.capacity(projectId),
         keys.team(projectId),
         ['projects', projectId, 'team'],
-        ['projects', projectId, 'skills'],
         queryKeys.scopeItems(projectId),
         ['projects', projectId, 'overview'],
         queryKeys.notifications,

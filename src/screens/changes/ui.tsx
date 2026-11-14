@@ -114,12 +114,12 @@ export function kindLabel(change: DetectedChange): string {
   return { budget: 'Budget', deadline: 'Deadline', capacity: 'Team', team: 'Team' }[change.kind]
 }
 
-/** "Dana Lee · Security Specialist · 24 h/wk · contractor" (the role only when it isn't the name). */
+/** "Dana Lee · Security Specialist · 24 h/wk · contractor at $175/h" (the role only when it isn't the name). */
 export function memberSummary(member: NewMember, hours: number | null | undefined = member.hoursPerWeek): string {
   const parts = [member.fullName]
   if (member.roleTitle.toLowerCase() !== member.fullName.toLowerCase()) parts.push(member.roleTitle)
   if (hours != null) parts.push(`${hours} h/wk`)
-  if (member.isContractor) parts.push('contractor')
+  if (member.workerType === 'contractor') parts.push(member.hourlyRateCents != null ? `contractor at ${formatMoney(member.hourlyRateCents)}/h` : 'contractor')
   return parts.join(' · ')
 }
 

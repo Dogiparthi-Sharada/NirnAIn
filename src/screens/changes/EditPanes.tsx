@@ -12,7 +12,7 @@ import { errorMessage } from '@/lib/api'
 import { useChangeTeam, type ChangeEdits, type NewMember, type PlanVersion } from '@/lib/changes'
 import { formatDate, formatMoney } from '@/lib/format'
 import { useConstraints, useWbs } from '@/lib/queries'
-import type { WbsNode } from '@/lib/types'
+import type { ConstraintSet, WbsNode } from '@/lib/types'
 import { NewcomerForm, NewcomerList } from './TeamEdits'
 import { DAYS_PER_WEEK, weeks } from './ui'
 
@@ -24,6 +24,17 @@ function workPackages(nodes: WbsNode[] | undefined): WbsNode[] {
   if (!nodes) return []
   const parents = new Set(nodes.map((node) => node.parentId).filter(Boolean))
   return nodes.filter((node) => node.level === 3 || (node.level === 2 && !parents.has(node.id)))
+}
+
+/** Why typed weekly hours can't be used (null when they can, or when the box is empty). */
+function hoursProblem(raw: string | undefined): string | null {
+  const text = raw?.trim()
+  if (!text) return null
+  const value = Number(text)
+  if (!Number.isFinite(value)) return 'Enter a number of hours.'
+  if (value < 0) return 'Hours can’t be negative.'
+  if (value > 80) return 'At most 80 hours a week.'
+  return null
 }
 
 /** "$365,000", "365000" or "365k" → cents; null when empty, NaN when not a number. */
@@ -90,12 +101,16 @@ export function EditsPane({ projectId, current, busy, onSubmit }: { projectId: s
   const edits: ChangeEdits = {}
   if (budgetCents !== null && !Number.isNaN(budgetCents) && budgetCents !== constraintSet.budgetTotalCents) edits.budgetTotalCents = budgetCents
   if (deadline && deadline !== constraintSet.mustFinishBy) edits.mustFinishBy = deadline
+  // The project's contractor rate: the default for a contractor who joins.
+  const projectRateCents = (constraintSet as ConstraintSet & { contractorRateCents?: number | null }).contractorRateCents ?? null
   const hoursEdits: Record<string, number> = {}
+  const hoursProblems: Record<string, string> = {}
   for (const member of team.data) {
     if (leaving.has(member.employeeId)) continue
-    const raw = hoursBy[member.employeeId]?.trim()
-    const hoursValue = raw ? Number(raw) : NaN
-    if (Number.isFinite(hoursValue) && hoursValue >= 0 && hoursValue <= 80 && hoursValue !== member.hoursPerWeek) hoursEdits[member.employeeId] = hoursValue
+    const raw = hoursBy[member.employeeId]
+    const problem = hoursProblem(raw)
+    if (problem) hoursProblems[member.employeeId] = problem
+    else if (raw?.trim() && Number(raw) !== member.hoursPerWeek) hoursEdits[member.employeeId] = Number(raw)
   }
   if (Object.keys(hoursEdits).length) edits.hoursPerWeek = hoursEdits
   if (newcomers.length) edits.addMembers = newcomers
@@ -110,7 +125,7 @@ export function EditsPane({ projectId, current, busy, onSubmit }: { projectId: s
       return next
     })
   if (workPackage && workPackageDays !== null && Number.isFinite(workPackageDays) && workPackageDays >= 0 && workPackageDays !== workPackage.durationDays) edits.durationDays = { [workPackage.id]: workPackageDays }
-  const invalid = nobodyLeft || (budgetCents !== null && Number.isNaN(budgetCents)) || (workPackageDays !== null && (!Number.isFinite(workPackageDays) || workPackageDays < 0))
+  const invalid = nobodyLeft || Object.keys(hoursProblems).length > 0 || (budgetCents !== null && Number.isNaN(budgetCents)) || (workPackageDays !== null && (!Number.isFinite(workPackageDays) || workPackageDays < 0))
   const was = { fontWeight: 400 }
 
   return (
@@ -161,6 +176,7 @@ export function EditsPane({ projectId, current, busy, onSubmit }: { projectId: s
             <tbody>
               {team.data.map((member) => {
                 const leaves = leaving.has(member.employeeId)
+                const problem = hoursProblems[member.employeeId]
                 return (
                   <tr key={member.employeeId}>
                     <td>
@@ -176,9 +192,16 @@ export function EditsPane({ projectId, current, busy, onSubmit }: { projectId: s
                         aria-label={`New hours per week for ${member.fullName}`}
                         placeholder={String(member.hoursPerWeek)}
                         disabled={leaves}
+                        aria-invalid={problem ? true : undefined}
+                        aria-describedby={problem ? `chg-hours-error-${member.employeeId}` : undefined}
                         value={leaves ? '' : (hoursBy[member.employeeId] ?? '')}
                         onChange={(event) => setHoursBy((previous) => ({ ...previous, [member.employeeId]: event.target.value }))}
                       />
+                      {problem && (
+                        <div className="note bad" id={`chg-hours-error-${member.employeeId}`}>
+                          {problem}
+                        </div>
+                      )}
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <button
@@ -206,7 +229,7 @@ export function EditsPane({ projectId, current, busy, onSubmit }: { projectId: s
         <NewcomerList newcomers={newcomers} onDrop={(fullName) => setNewcomers((previous) => previous.filter((member) => member.fullName !== fullName))} />
         {adding ? (
           <NewcomerForm
-            projectId={projectId}
+            projectRateCents={projectRateCents}
             takenNames={[...team.data.map((member) => member.fullName), ...newcomers.map((member) => member.fullName)]}
             onAdd={(member) => {
               setNewcomers((previous) => [...previous, member])
