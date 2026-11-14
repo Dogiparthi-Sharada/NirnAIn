@@ -1,13 +1,11 @@
 """Step 7 team writes: people joining or leaving the project through an approved change.
 
-What: reserves an organization employee for each newcomer when the change is recorded,
-releases the reservations nobody uses, and on approval writes who joins (team row, skills,
-rate) and who leaves (team row, work package ownership), plus the change's new requirements.
-Why: step 7 records why a plan changed; a mid-project hire, contractor or departure is a
-change that is re-planned and approved, and only approval changes the team.
-How it fits: `ChangeRepository` (app/repositories/changes.py) extends this class; everything
-runs on the caller's RLS session (adding people needs the organization role that may add
-employees: owner, admin, pm).
+Purpose: A mid-project hire, contractor or departure is a change that is re-planned and approved,
+and only approval changes the team: newcomers get a reserved employee record when the change is
+recorded, unused reservations are released, and approval writes who joins and who leaves.
+How it fits: `ChangeRepository` (app/repositories/changes.py) extends this class; everything runs on
+the caller's RLS session (adding people needs the owner, admin or pm role); layer: repositories.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -59,7 +57,9 @@ class ChangeTeamWrites(ChangePlanReads):
             if not is_addition(change) or member is None or change.target is not None:
                 reserved.append(change)
                 continue
-            employee_id = await self._active_employee(project.org_id, member.full_name)
+            employee_id = await TeamRepository(self._connection).find_employee(
+                project.org_id, member.full_name
+            )
             if employee_id is None:
                 employee_id = uuid.uuid4()
                 await self._connection.execute(
@@ -76,20 +76,6 @@ class ChangeTeamWrites(ChangePlanReads):
                 )
             reserved.append(change.model_copy(update={"target": employee_id}))
         return reserved
-
-    async def _active_employee(self, org_id: uuid.UUID, full_name: str) -> uuid.UUID | None:
-        """An active employee of the organization with this name (case-insensitive)."""
-        statement = (
-            sa.select(employees.c.id)
-            .where(
-                employees.c.org_id == org_id,
-                employees.c.active.is_(True),
-                sa.func.lower(employees.c.full_name) == full_name.lower(),
-            )
-            .order_by(employees.c.full_name, employees.c.id)
-            .limit(1)
-        )
-        return (await self._connection.execute(statement)).scalar()
 
     async def release_members(self, project: ProjectRef, employee_ids: list[uuid.UUID]) -> None:
         """Delete the candidates reserved for newcomers who don't join (rejected or declined).

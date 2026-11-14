@@ -1,11 +1,12 @@
 """What the optimizer's confirmation sheet needs beyond the planning input.
 
-Runs under the caller's RLS session. Reads the answers to the step-5
-questions, which AI estimates a person confirmed, the dependency types as
-the PM entered them (before summary nodes are expanded), the project's
-skill list and whether the budget is stated in the notes, and combines them
-with the loaded input via `facts_from_input`. Rendering is pure:
-`app/optimization/input_sheet.py`.
+Purpose: Show the PM where every input comes from: the step-5 answers, which AI estimates a person
+confirmed, the dependency types as entered (before summary nodes are expanded), the project's skill
+list and whether the budget is stated in the notes.
+How it fits: Called by `OptimizationRepository.input_facts` under the caller's RLS session; combines
+its reads with the loaded input via `facts_from_input`; rendering is pure
+(app/optimization/input_sheet.py); layer: repositories.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -19,7 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app.domain.common import ItemOrigin, ScopeStatus
 from app.optimization.inputs import InputFacts, SkillFact, facts_from_input, quote_states_amount
 from app.optimization.model import PlanningInput
-from app.repositories.planning_input import ProjectContext, read_constraint_set
+from app.repositories.constraint_input import read_constraint_set
+from app.repositories.planning_input import ProjectContext
 from app.repositories.tables import (
     dependencies,
     project_skills,
@@ -34,12 +36,18 @@ class InputFactsReader:
     """Queries behind the confirmation sheet."""
 
     def __init__(self, conn: AsyncConnection) -> None:
+        """Use the caller's RLS-scoped connection."""
         self._conn = conn
 
-    async def facts(self, project: ProjectContext, inp: PlanningInput) -> InputFacts:
-        """What the confirmation sheet needs beyond `inp`: answers, confirmations, sources."""
+    async def facts(self, project: ProjectContext, planning_input: PlanningInput) -> InputFacts:
+        """Return what the sheet needs beyond `planning_input`: answers, confirmations and sources.
+
+        The budget quote is looked up only when the budget does not come from the constraint set.
+        """
         constraint_set = await read_constraint_set(self._conn, project.id)
-        confirmed_ai, unconfirmed = await self._estimate_counts([task.id for task in inp.tasks])
+        confirmed_ai, unconfirmed = await self._estimate_counts(
+            [task.id for task in planning_input.tasks]
+        )
         dependency_types = {
             str(row.type): int(row.total)
             for row in (
@@ -67,11 +75,11 @@ class InputFactsReader:
                 .order_by(sa.desc(project_skills.c.required), skills.c.name)
             )
         ).all()
-        held = {skill_id for employee in inp.employees for skill_id in employee.skills}
+        held = {skill_id for employee in planning_input.employees for skill_id in employee.skills}
         budget_from_constraints = (
             constraint_set is not None and constraint_set.budget_total_cents is not None
         )
-        budget = inp.constraints.budget_total_cents
+        budget = planning_input.constraints.budget_total_cents
         quote = None
         if budget is not None and not budget_from_constraints:
             quote = await self._budget_quote(project.id, budget)
@@ -84,7 +92,7 @@ class InputFactsReader:
                 "contingency_pct": float(constraint_set.contingency_pct),
             }
         return facts_from_input(
-            inp,
+            planning_input,
             confirmed_ai_estimates=confirmed_ai,
             unconfirmed_estimates=unconfirmed,
             dependency_types=dependency_types,
@@ -99,7 +107,7 @@ class InputFactsReader:
         )
 
     async def _estimate_counts(self, task_ids: list[str]) -> tuple[int, int]:
-        """(AI estimates a person confirmed, AI estimates nobody confirmed yet)."""
+        """Return (AI estimates a person confirmed, AI estimates nobody confirmed yet)."""
         if not task_ids:
             return 0, 0
         rows = (
@@ -114,7 +122,7 @@ class InputFactsReader:
         return len(rows) - unconfirmed, unconfirmed
 
     async def _budget_quote(self, project_id: uuid.UUID, budget_cents: int) -> str | None:
-        """A notes quote that states this budget (shown as the source), if any."""
+        """Return a notes quote that states this budget (shown as its source), if any."""
         rows = (
             await self._conn.execute(
                 sa.select(scope_items.c.source_quote)

@@ -220,7 +220,7 @@ class FakeProjects:
         org_id: uuid.UUID,
         *,
         statuses: list[ProjectStatus] | None,
-        q: str | None,
+        search: str | None,
         limit: int,
         cursor: Cursor | None,
     ) -> tuple[list[Project], Cursor | None]:
@@ -229,8 +229,12 @@ class FakeProjects:
             rows = [p for p in rows if p.status in statuses]
         else:
             rows = [p for p in rows if p.status != ProjectStatus.ARCHIVED]
-        if q:
-            rows = [p for p in rows if q.lower() in p.name.lower() or q.lower() in p.code.lower()]
+        if search:
+            rows = [
+                p
+                for p in rows
+                if search.lower() in p.name.lower() or search.lower() in p.code.lower()
+            ]
         rows.sort(key=lambda p: (p.created_at, p.id), reverse=True)
         if cursor:
             rows = [p for p in rows if (p.created_at, p.id) < (cursor.created_at, cursor.id)]

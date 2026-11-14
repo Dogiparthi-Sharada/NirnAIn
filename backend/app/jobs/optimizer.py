@@ -34,7 +34,7 @@ from app.optimization.model import PlanningInput, SnapshotError, SolveOutcome
 from app.optimization.remedies import price_remedies
 from app.optimization.runtime import solver_settings
 from app.optimization.solver import SolveControl, SolveOptions, solve
-from app.repositories.optimization import OptimizationJobStore
+from app.repositories.optimization_store import OptimizationJobStore
 
 logger = logging.getLogger("app.jobs.optimizer")
 

@@ -1,9 +1,11 @@
 """Uploaded intake documents, queried under the caller's RLS session.
 
-Pasted notes are also `source_documents` rows (kind 'text') but they belong to
-intake runs (see `app.repositories.intake`); this repository only lists and
-manages uploaded files (kind <> 'text'). RLS lets project readers see a
-project's documents and only project writers insert or delete them.
+Purpose: Pasted notes are also `source_documents` rows (kind 'text') but they belong to intake runs;
+this repository lists and manages uploaded files only. RLS lets project readers see a project's
+documents and only project writers insert or delete them.
+How it fits: Used by app/api/v1/documents.py; the extracted text comes from app/ai/documents.py;
+layer: repositories.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from app.repositories.tables import source_documents
 
 
 def _document_select() -> sa.Select[Any]:
+    """Return the document select, with the stored text's length instead of the text itself."""
     return sa.select(
         source_documents.c.id,
         source_documents.c.project_id,
@@ -38,10 +41,12 @@ def _document_select() -> sa.Select[Any]:
 
 
 def _is_upload() -> sa.ColumnElement[bool]:
+    """Return the filter that keeps uploads and leaves out pasted notes."""
     return source_documents.c.kind != DocumentKind.TEXT
 
 
 def _to_document(row: sa.Row[Any]) -> SourceDocument:
+    """Turn a result row into the API model."""
     return SourceDocument.model_validate(dict(row._mapping))
 
 
@@ -49,6 +54,7 @@ class DocumentRepository:
     """Uploaded documents of the projects the caller can see."""
 
     def __init__(self, conn: AsyncConnection) -> None:
+        """Use the caller's RLS-scoped connection."""
         self._conn = conn
 
     async def project_exists(self, project_id: uuid.UUID) -> bool:

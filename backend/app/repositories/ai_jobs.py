@@ -1,8 +1,11 @@
-"""AI jobs (WBS generate / validate).
+"""AI jobs (WBS generate / validate): queueing and reading them, and the worker's job rows.
 
-`AiJobRepository` runs under the caller's RLS session (queue and read jobs);
-`AiJobStore` is the worker's service connection: it reads the project's
-planning data and writes the generated WBS and the job outcome.
+Purpose: Allow one active job per project and kind, show its progress and result, and give the
+worker the project data a generation or review reads (scope, team, skills, WBS checks input).
+How it fits: `AiJobRepository` runs under the caller's RLS session for app/api/v1/ai.py;
+`AiJobStore` is the worker's service connection in app/jobs/ai_jobs.py and writes generated WBSs
+through `GeneratedWbsWriter` (app/repositories/ai_wbs_writer.py); layer: repositories.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -14,39 +17,33 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.ai.wbs_generate import (
-    MIN_PROFICIENCY,
     GenerationInput,
     ScopeEntry,
     TeamMember,
-    WbsPlan,
 )
 from app.ai.wbs_validate import ValidationInput
 from app.core.errors import pg_error_info
 from app.domain.ai import AiJob
-from app.domain.common import AiJobKind, ItemOrigin, JobStatus
+from app.domain.common import AiJobKind, JobStatus
 from app.repositories import access
+from app.repositories.ai_wbs_writer import GeneratedWbsWriter, project_has_wbs
+from app.repositories.job_rows import started_before
 from app.repositories.tables import (
     ai_jobs,
-    dependencies,
     employee_skills,
     employees,
-    project_skills,
     project_team_members,
     projects,
     scope_items,
     skills,
-    task_skill_requirements,
-    wbs_nodes,
 )
 from app.repositories.wbs_checks import read_validation_input
 
 ACTIVE = (JobStatus.QUEUED, JobStatus.RUNNING)
-job_t = ai_jobs
 
 
 class ActiveJobExistsError(Exception):
@@ -55,65 +52,65 @@ class ActiveJobExistsError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class ActiveJob:
+    """A queued or running AI job and whether it has been active for too long (orphaned)."""
+
     id: uuid.UUID
     stale: bool
 
 
 @dataclass(frozen=True, slots=True)
 class ClaimedJob:
+    """A job the worker has started: its project and kind."""
+
     project_id: uuid.UUID
     kind: AiJobKind
 
 
 def _job_select() -> sa.Select[Any]:
+    """Return the select of the AI job columns the API shows."""
     return sa.select(
-        job_t.c.id,
-        job_t.c.project_id,
-        job_t.c.kind,
-        job_t.c.status,
-        job_t.c.model,
-        job_t.c.error,
-        job_t.c.result,
-        job_t.c.created_at,
-        job_t.c.started_at,
-        job_t.c.finished_at,
+        ai_jobs.c.id,
+        ai_jobs.c.project_id,
+        ai_jobs.c.kind,
+        ai_jobs.c.status,
+        ai_jobs.c.model,
+        ai_jobs.c.error,
+        ai_jobs.c.result,
+        ai_jobs.c.created_at,
+        ai_jobs.c.started_at,
+        ai_jobs.c.finished_at,
     )
-
-
-def _older_than(seconds: int) -> sa.ColumnElement[bool]:
-    cutoff = sa.func.now() - sa.func.make_interval(0, 0, 0, 0, 0, 0, seconds)
-    return sa.func.coalesce(job_t.c.started_at, job_t.c.created_at) < cutoff
-
-
-async def _has_wbs(conn: AsyncConnection, project_id: uuid.UUID) -> bool:
-    stmt = sa.select(wbs_nodes.c.id).where(wbs_nodes.c.project_id == project_id).limit(1)
-    return (await conn.execute(stmt)).first() is not None
 
 
 class AiJobRepository:
     """User-facing queries: everything runs under the caller's RLS session."""
 
     def __init__(self, conn: AsyncConnection) -> None:
+        """Use the caller's RLS-scoped connection."""
         self._conn = conn
 
     async def project_exists(self, project_id: uuid.UUID) -> bool:
+        """Tell whether the caller can see the project."""
         return await access.visible_project(self._conn, project_id) is not None
 
     async def can_write(self, project_id: uuid.UUID) -> bool:
+        """Tell whether the caller may change the project."""
         return await access.can_write_project(self._conn, project_id)
 
     async def has_wbs(self, project_id: uuid.UUID) -> bool:
-        return await _has_wbs(self._conn, project_id)
+        """Tell whether the project already has a WBS."""
+        return await project_has_wbs(self._conn, project_id)
 
     async def active_job(
         self, project_id: uuid.UUID, kind: AiJobKind, stale_after_s: int
     ) -> ActiveJob | None:
+        """Return the active job of this kind, flagged stale after `stale_after_s`, or None."""
         stmt = (
-            sa.select(job_t.c.id, _older_than(stale_after_s).label("stale"))
+            sa.select(ai_jobs.c.id, started_before(ai_jobs, stale_after_s).label("stale"))
             .where(
-                job_t.c.project_id == project_id,
-                job_t.c.kind == kind,
-                job_t.c.status.in_(ACTIVE),
+                ai_jobs.c.project_id == project_id,
+                ai_jobs.c.kind == kind,
+                ai_jobs.c.status.in_(ACTIVE),
             )
             .limit(1)
         )
@@ -121,10 +118,14 @@ class AiJobRepository:
         return ActiveJob(id=row.id, stale=bool(row.stale)) if row else None
 
     async def create(self, project_id: uuid.UUID, kind: AiJobKind) -> uuid.UUID:
+        """Queue a job and return its id.
+
+        Raises `ActiveJobExistsError` when the one-active-job unique index rejects it.
+        """
         job_id = uuid.uuid4()
         try:
             await self._conn.execute(
-                sa.insert(job_t).values(
+                sa.insert(ai_jobs).values(
                     id=job_id, project_id=project_id, kind=kind, status=JobStatus.QUEUED
                 )
             )
@@ -135,15 +136,17 @@ class AiJobRepository:
         return job_id
 
     async def get(self, project_id: uuid.UUID, job_id: uuid.UUID) -> AiJob | None:
-        stmt = _job_select().where(job_t.c.project_id == project_id, job_t.c.id == job_id)
+        """Return one of the project's AI jobs, or None."""
+        stmt = _job_select().where(ai_jobs.c.project_id == project_id, ai_jobs.c.id == job_id)
         row = (await self._conn.execute(stmt)).first()
         return AiJob.model_validate(dict(row._mapping)) if row else None
 
     async def latest(self, project_id: uuid.UUID, kind: AiJobKind) -> AiJob | None:
+        """Return the project's newest job of this kind, or None."""
         stmt = (
             _job_select()
-            .where(job_t.c.project_id == project_id, job_t.c.kind == kind)
-            .order_by(job_t.c.created_at.desc(), job_t.c.id.desc())
+            .where(ai_jobs.c.project_id == project_id, ai_jobs.c.kind == kind)
+            .order_by(ai_jobs.c.created_at.desc(), ai_jobs.c.id.desc())
             .limit(1)
         )
         row = (await self._conn.execute(stmt)).first()
@@ -151,22 +154,24 @@ class AiJobRepository:
 
 
 # --------------------------------------------------------------------------- worker side
-class AiJobStore:
+class AiJobStore(GeneratedWbsWriter):
     """Reads and writes made by the background worker on a service connection (bypasses RLS).
 
     Every query is scoped to the job's project explicitly, since RLS doesn't apply.
     """
 
     def __init__(self, conn: AsyncConnection) -> None:
+        """Use the worker's service connection."""
         self._conn = conn
 
     # ----------------------------------------------------------------- job rows
     async def claim(self, job_id: uuid.UUID) -> ClaimedJob | None:
+        """Move a queued job to running; returns its project and kind (None if it is not queued)."""
         stmt = (
-            sa.update(job_t)
-            .where(job_t.c.id == job_id, job_t.c.status == JobStatus.QUEUED)
+            sa.update(ai_jobs)
+            .where(ai_jobs.c.id == job_id, ai_jobs.c.status == JobStatus.QUEUED)
             .values(status=JobStatus.RUNNING, started_at=sa.func.now())
-            .returning(job_t.c.project_id, job_t.c.kind)
+            .returning(ai_jobs.c.project_id, ai_jobs.c.kind)
         )
         row = (await self._conn.execute(stmt)).first()
         return ClaimedJob(row.project_id, AiJobKind(row.kind)) if row else None
@@ -179,9 +184,10 @@ class AiJobStore:
         input_tokens: int | None = None,
         output_tokens: int | None = None,
     ) -> None:
+        """Store a job's result, the model that made it and its token use, and mark it succeeded."""
         await self._conn.execute(
-            sa.update(job_t)
-            .where(job_t.c.id == job_id)
+            sa.update(ai_jobs)
+            .where(ai_jobs.c.id == job_id)
             .values(
                 status=JobStatus.SUCCEEDED,
                 result=result,
@@ -193,79 +199,96 @@ class AiJobStore:
         )
 
     async def fail(self, job_id: uuid.UUID, error: str) -> None:
+        """Mark an active job failed with the error shown to the user."""
         await self._conn.execute(
-            sa.update(job_t)
-            .where(job_t.c.id == job_id, job_t.c.status.in_(ACTIVE))
+            sa.update(ai_jobs)
+            .where(ai_jobs.c.id == job_id, ai_jobs.c.status.in_(ACTIVE))
             .values(status=JobStatus.FAILED, error=error, finished_at=sa.func.now())
         )
 
     async def fail_stale(self, older_than_s: int, error: str) -> int:
+        """Fail jobs active for over `older_than_s` (orphaned by a restart); return the count."""
         result = await self._conn.execute(
-            sa.update(job_t)
-            .where(job_t.c.status.in_(ACTIVE), _older_than(older_than_s))
+            sa.update(ai_jobs)
+            .where(ai_jobs.c.status.in_(ACTIVE), started_before(ai_jobs, older_than_s))
             .values(status=JobStatus.FAILED, error=error, finished_at=sa.func.now())
         )
         return int(result.rowcount)
 
     # ----------------------------------------------------------------- inputs
     async def _scope(self, project_id: uuid.UUID) -> tuple[ScopeEntry, ...]:
-        s = scope_items
+        """Return the project's scope items by category and order."""
         stmt = (
-            sa.select(s.c.id, s.c.category, s.c.text, s.c.status)
-            .where(s.c.project_id == project_id)
-            .order_by(s.c.category, s.c.sort_order, s.c.created_at)
+            sa.select(
+                scope_items.c.id, scope_items.c.category, scope_items.c.text, scope_items.c.status
+            )
+            .where(scope_items.c.project_id == project_id)
+            .order_by(scope_items.c.category, scope_items.c.sort_order, scope_items.c.created_at)
         )
         rows = (await self._conn.execute(stmt)).all()
-        return tuple(ScopeEntry(r.id, r.category, r.text, r.status) for r in rows)
+        return tuple(ScopeEntry(row.id, row.category, row.text, row.status) for row in rows)
 
     async def team(self, project_id: uuid.UUID, org_id: uuid.UUID) -> tuple[list[TeamMember], bool]:
         """The project's team, or every active org employee when it has none.
 
         Returns the members (with skill name -> proficiency) and whether a team was set.
         """
-        e, t = employees, project_team_members
         team_stmt = (
-            sa.select(e.c.id, e.c.full_name, sa.func.coalesce(t.c.role_title, e.c.role_title))
-            .select_from(t.join(e, e.c.id == t.c.employee_id))
-            .where(t.c.project_id == project_id, e.c.active.is_(True))
-            .order_by(e.c.full_name)
+            sa.select(
+                employees.c.id,
+                employees.c.full_name,
+                sa.func.coalesce(project_team_members.c.role_title, employees.c.role_title),
+            )
+            .select_from(
+                project_team_members.join(
+                    employees, employees.c.id == project_team_members.c.employee_id
+                )
+            )
+            .where(project_team_members.c.project_id == project_id, employees.c.active.is_(True))
+            .order_by(employees.c.full_name)
         )
         rows = (await self._conn.execute(team_stmt)).all()
         has_team = bool(rows)
         if not has_team:
             pool_stmt = (
-                sa.select(e.c.id, e.c.full_name, e.c.role_title)
-                .where(e.c.org_id == org_id, e.c.active.is_(True))
-                .order_by(e.c.full_name)
+                sa.select(employees.c.id, employees.c.full_name, employees.c.role_title)
+                .where(employees.c.org_id == org_id, employees.c.active.is_(True))
+                .order_by(employees.c.full_name)
             )
             rows = (await self._conn.execute(pool_stmt)).all()
-        ids = [r[0] for r in rows]
-        held: dict[uuid.UUID, dict[str, int]] = {i: {} for i in ids}
+        ids = [row[0] for row in rows]
+        held: dict[uuid.UUID, dict[str, int]] = {employee_id: {} for employee_id in ids}
         if ids:
-            es, sk = employee_skills, skills
             skill_stmt = (
-                sa.select(es.c.employee_id, sk.c.name, es.c.proficiency)
-                .select_from(es.join(sk, sk.c.id == es.c.skill_id))
-                .where(es.c.employee_id.in_(ids))
+                sa.select(
+                    employee_skills.c.employee_id, skills.c.name, employee_skills.c.proficiency
+                )
+                .select_from(
+                    employee_skills.join(skills, skills.c.id == employee_skills.c.skill_id)
+                )
+                .where(employee_skills.c.employee_id.in_(ids))
             )
-            for r in (await self._conn.execute(skill_stmt)).all():
-                held[r.employee_id][str(r.name)] = int(r.proficiency)
-        members = [TeamMember(r[0], r[1], r[2], held[r[0]]) for r in rows]
+            for row in (await self._conn.execute(skill_stmt)).all():
+                held[row.employee_id][str(row.name)] = int(row.proficiency)
+        members = [TeamMember(row[0], row[1], row[2], held[row[0]]) for row in rows]
         return members, has_team
 
     async def generation_input(self, project_id: uuid.UUID) -> GenerationInput | None:
-        p = projects
+        """Return what WBS generation reads: the project, its scope, the org's skills and the team.
+
+        Returns None when the project is gone.
+        """
         row = (
             await self._conn.execute(
                 sa.select(
-                    p.c.org_id,
-                    p.c.name,
-                    p.c.description,
-                    p.c.type,
-                    p.c.methodology,
-                    p.c.start_date,
-                    p.c.target_end_date,
-                ).where(p.c.id == project_id)
+                    projects.c.org_id,
+                    projects.c.name,
+                    projects.c.description,
+                    projects.c.type,
+                    projects.c.methodology,
+                    projects.c.start_date,
+                    projects.c.target_end_date,
+                ).where(projects.c.id == project_id)
             )
         ).first()
         if row is None:
@@ -290,7 +313,7 @@ class AiJobStore:
             start_date=row.start_date,
             target_end_date=row.target_end_date,
             scope=await self._scope(project_id),
-            org_skills=tuple(str(s) for s in org_skills),
+            org_skills=tuple(str(skill_name) for skill_name in org_skills),
             team=tuple(team),
         )
 
@@ -299,149 +322,9 @@ class AiJobStore:
     ) -> ValidationInput | None:
         """The checks' input (`wbs_checks.py`, the same as `GET …/wbs/checks`) plus the
         scope items the review reads; `today` defaults to the UTC date, like the optimizer."""
-        inp = await read_validation_input(self._conn, project_id, today or datetime.now(UTC).date())
-        if inp is None:
-            return None
-        return replace(inp, scope=await self._scope(project_id))
-
-    # ----------------------------------------------------------------- WBS write
-    async def has_wbs(self, project_id: uuid.UUID) -> bool:
-        return await _has_wbs(self._conn, project_id)
-
-    async def _skill_ids(self, org_id: uuid.UUID, names: list[str]) -> dict[str, uuid.UUID]:
-        """Org skill ids by casefolded name, creating the missing skills (citext unique)."""
-
-        async def existing() -> dict[str, uuid.UUID]:
-            stmt = sa.select(skills.c.id, skills.c.name).where(skills.c.org_id == org_id)
-            return {str(r.name).casefold(): r.id for r in (await self._conn.execute(stmt)).all()}
-
-        known = await existing()
-        missing = [n for n in names if n.casefold() not in known]
-        if not missing:
-            return known
-        await self._conn.execute(
-            pg_insert(skills)
-            .values([{"id": uuid.uuid4(), "org_id": org_id, "name": n} for n in missing])
-            .on_conflict_do_nothing()
+        checks_input = await read_validation_input(
+            self._conn, project_id, today or datetime.now(UTC).date()
         )
-        return await existing()
-
-    async def write_plan(
-        self,
-        project_id: uuid.UUID,
-        plan: WbsPlan,
-        owners: dict[str, uuid.UUID],
-    ) -> dict[str, int] | None:
-        """Write the root, deliverables, work packages, skills and dependencies.
-
-        Returns the counts, or None when the project already has a WBS (or is gone).
-        Work packages keep `estimate_confirmed_at` null: the PM confirms AI estimates.
-        """
-        project = (
-            await self._conn.execute(
-                sa.select(projects.c.org_id, projects.c.name).where(projects.c.id == project_id)
-            )
-        ).first()
-        if project is None or await self.has_wbs(project_id):
+        if checks_input is None:
             return None
-
-        def node(
-            parent: uuid.UUID | None, level: int, order: int, name: str, **extra: Any
-        ) -> dict[str, Any]:
-            return {
-                "id": uuid.uuid4(),
-                "project_id": project_id,
-                "parent_id": parent,
-                "level": level,
-                "sort_order": order,
-                "name": name,
-                "description": extra.get("description"),
-                "duration_days": extra.get("duration_days"),
-                "owner_employee_id": extra.get("owner_employee_id"),
-                "scope_item_id": extra.get("scope_item_id"),
-                "origin": ItemOrigin.AI,
-            }
-
-        root = node(None, 1, 0, str(project.name)[:300])
-        await self._conn.execute(sa.insert(wbs_nodes), [root])
-        level2: list[dict[str, Any]] = []
-        level3: list[dict[str, Any]] = []
-        package_ids: dict[str, uuid.UUID] = {}
-        package_skills: list[tuple[uuid.UUID, str]] = []
-        for di, deliverable in enumerate(plan.deliverables):
-            d_row = node(
-                root["id"],
-                2,
-                di,
-                deliverable.name,
-                description=deliverable.description,
-                scope_item_id=deliverable.scope_item_id,
-            )
-            level2.append(d_row)
-            for pi, package in enumerate(deliverable.packages):
-                p_row = node(
-                    d_row["id"],
-                    3,
-                    pi,
-                    package.name,
-                    description=package.description,
-                    duration_days=package.duration_days,
-                    owner_employee_id=owners.get(package.key),
-                    scope_item_id=package.scope_item_id,
-                )
-                level3.append(p_row)
-                package_ids[package.key] = p_row["id"]
-                package_skills.extend((p_row["id"], s) for s in package.skills)
-        if level2:
-            await self._conn.execute(sa.insert(wbs_nodes), level2)
-        if level3:
-            await self._conn.execute(sa.insert(wbs_nodes), level3)
-
-        if package_skills:
-            names = list({s.casefold(): s for _, s in package_skills}.values())
-            ids = await self._skill_ids(project.org_id, names)
-            requirements = {
-                (node_id, ids[s.casefold()]) for node_id, s in package_skills if s.casefold() in ids
-            }
-            await self._conn.execute(
-                sa.insert(task_skill_requirements),
-                [
-                    {"wbs_node_id": n, "skill_id": s, "min_proficiency": MIN_PROFICIENCY}
-                    for n, s in sorted(requirements, key=str)
-                ],
-            )
-            skill_ids = sorted({s for _, s in requirements}, key=str)
-            upsert = pg_insert(project_skills).values(
-                [{"project_id": project_id, "skill_id": s, "required": True} for s in skill_ids]
-            )
-            await self._conn.execute(
-                upsert.on_conflict_do_update(
-                    index_elements=[project_skills.c.project_id, project_skills.c.skill_id],
-                    set_={"required": True},
-                )
-            )
-
-        added = 0
-        for dep in plan.dependencies:
-            pred, succ = package_ids.get(dep.predecessor), package_ids.get(dep.successor)
-            if pred is None or succ is None:
-                continue
-            try:
-                # A savepoint per link: the cycle trigger may reject one without
-                # aborting the whole WBS.
-                async with self._conn.begin_nested():
-                    await self._conn.execute(
-                        sa.insert(dependencies).values(
-                            id=uuid.uuid4(),
-                            project_id=project_id,
-                            predecessor_id=pred,
-                            successor_id=succ,
-                            type=dep.type,
-                            lag_days=dep.lag_days,
-                            origin=ItemOrigin.AI,
-                        )
-                    )
-            except DBAPIError:
-                continue
-            added += 1
-        return {"deliverables": len(level2), "workPackages": len(level3), "dependencies": added}
+        return replace(checks_input, scope=await self._scope(project_id))

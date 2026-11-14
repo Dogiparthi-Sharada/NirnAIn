@@ -1,4 +1,10 @@
-"""Plan versions, applying a run and export data (caller's RLS session)."""
+"""Repository of plan versions, applying a run and the data behind plan exports.
+
+Purpose: List Plan v1, v2, ..., apply a successful run as the next version and read a run's header
+and planned rows for the MS Project / PDF exports (caller's RLS session).
+How it fits: Used by app/api/v1/plan.py; export rows feed app/export; layer: repositories.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -21,14 +27,19 @@ runs = optimization_runs
 
 
 class PlanRepository:
+    """Plan versions, applying runs and export data for one caller."""
+
     def __init__(self, conn: AsyncConnection) -> None:
+        """Use the caller's RLS-scoped connection."""
         self._conn = conn
 
     async def project_visible(self, project_id: uuid.UUID) -> bool:
+        """Tell whether the caller can see the project."""
         stmt = sa.select(projects.c.id).where(projects.c.id == project_id)
         return (await self._conn.execute(stmt)).first() is not None
 
     async def versions(self, project_id: uuid.UUID) -> list[PlanVersion]:
+        """List the project's applied plan versions in version order."""
         stmt = (
             sa.select(
                 runs.c.version,
@@ -55,10 +66,14 @@ class PlanRepository:
         ]
 
     async def apply(self, run_id: uuid.UUID) -> None:
-        """Runs `public.apply_optimization_run`, which checks the caller can write the project."""
+        """Apply the run as the project's next plan version.
+
+        Runs `public.apply_optimization_run`, which checks the caller can write the project.
+        """
         await self._conn.execute(sa.select(sa.func.public.apply_optimization_run(run_id)))
 
     async def export_header(self, project_id: uuid.UUID, run_id: uuid.UUID) -> RunHeader | None:
+        """Return a run's header (status, result and input snapshot) for an export, or None."""
         stmt = (
             sa.select(
                 runs.c.id,
@@ -94,6 +109,7 @@ class PlanRepository:
         )
 
     async def export_rows(self, run_id: uuid.UUID) -> list[PlannedRow]:
+        """Return the run's planned assignments with work package and person names, in WBS order."""
         assignments, nodes = planned_assignments, wbs_nodes_with_code
         stmt = (
             sa.select(

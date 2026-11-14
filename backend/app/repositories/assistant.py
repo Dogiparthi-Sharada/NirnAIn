@@ -1,4 +1,11 @@
-"""Read-only project context for the planning assistant (caller's RLS session)."""
+"""Read-only project context for the planning assistant (caller's RLS session).
+
+Purpose: Give the assistant the facts of the project the user is looking at (accepted scope,
+WBS, constraints, the latest run and its recommendations) and nothing the user could not see.
+How it fits: Used by app/api/v1/assistant.py; builds `app.ai.assistant.ProjectContext`, which
+the prompt is rendered from; layer: repositories.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -22,9 +29,11 @@ from app.repositories.tables import (
 )
 
 MODE = {"hard": "Must hold", "soft": "Can flex"}
+MAX_RECOMMENDATIONS = 5
 
 
 def _constraints(row: Any) -> tuple[str, ...]:
+    """Describe a constraint set row as short lines with each policy in words."""
     out: list[str] = []
     if row.budget_total_cents is not None:
         out.append(f"Budget: {money(row.budget_total_cents)} ({MODE.get(row.budget_mode, '-')})")
@@ -39,92 +48,37 @@ def _constraints(row: Any) -> tuple[str, ...]:
 
 
 class AssistantRepository:
+    """Reads the project facts the assistant may talk about."""
+
     def __init__(self, conn: AsyncConnection) -> None:
+        """Use the caller's RLS-scoped connection."""
         self._conn = conn
 
     async def context(self, project_id: uuid.UUID) -> ProjectContext | None:
-        """The project as the caller can see it, or None when it isn't visible."""
-        p = projects
+        """Return the project as the caller can see it, or None when it isn't visible."""
         project = (
             await self._conn.execute(
                 sa.select(
-                    p.c.name,
-                    p.c.description,
-                    p.c.status,
-                    p.c.current_step,
-                    p.c.start_date,
-                    p.c.target_end_date,
-                    p.c.budget_cents,
-                ).where(p.c.id == project_id)
+                    projects.c.name,
+                    projects.c.description,
+                    projects.c.status,
+                    projects.c.current_step,
+                    projects.c.start_date,
+                    projects.c.target_end_date,
+                    projects.c.budget_cents,
+                ).where(projects.c.id == project_id)
             )
         ).first()
         if project is None:
             return None
-
-        s = scope_items
-        scope: dict[str, list[str]] = defaultdict(list)
-        for row in (
+        scope = await self._accepted_scope(project_id)
+        wbs = await self._wbs_lines(project_id)
+        constraint_row = (
             await self._conn.execute(
-                sa.select(s.c.category, s.c.text)
-                .where(s.c.project_id == project_id, s.c.status == ScopeStatus.ACCEPTED)
-                .order_by(s.c.category, s.c.sort_order)
-            )
-        ).all():
-            scope[str(row.category)].append(row.text)
-
-        w, e = wbs_nodes_with_code, employees
-        wbs = tuple(
-            WbsLine(r.code, r.name, r.level, r.duration_days, r.owner)
-            for r in (
-                await self._conn.execute(
-                    sa.select(
-                        w.c.code,
-                        w.c.name,
-                        w.c.level,
-                        w.c.duration_days,
-                        e.c.full_name.label("owner"),
-                    )
-                    .select_from(w.outerjoin(e, e.c.id == w.c.owner_employee_id))
-                    .where(w.c.project_id == project_id)
-                    .order_by(w.c.path)
-                )
-            ).all()
-        )
-
-        c = constraint_sets
-        crow = (await self._conn.execute(sa.select(c).where(c.c.project_id == project_id))).first()
-
-        r = optimization_runs
-        run = (
-            await self._conn.execute(
-                sa.select(r.c.id, r.c.status, r.c.result, r.c.version)
-                .where(r.c.project_id == project_id)
-                .order_by(r.c.created_at.desc())
-                .limit(1)
+                sa.select(constraint_sets).where(constraint_sets.c.project_id == project_id)
             )
         ).first()
-        run_status: str | None = None
-        kpis: tuple[str, ...] = ()
-        recs: tuple[str, ...] = ()
-        if run is not None:
-            run_status = str(run.status) + (
-                f" (applied as Plan v{run.version})" if run.version else ""
-            )
-            result = run.result if isinstance(run.result, dict) else {}
-            kpis = kpi_lines(result.get("kpis") or [])
-            rec = recommendations
-            recs = tuple(
-                str(x.reason)
-                for x in (
-                    await self._conn.execute(
-                        sa.select(rec.c.reason)
-                        .where(rec.c.run_id == run.id)
-                        .order_by(rec.c.sort_order)
-                        .limit(5)
-                    )
-                ).all()
-            )
-
+        run_status, kpis, reasons = await self._latest_run(project_id)
         return ProjectContext(
             name=project.name,
             description=project.description,
@@ -133,10 +87,78 @@ class AssistantRepository:
             start_date=project.start_date,
             target_end_date=project.target_end_date,
             budget_cents=project.budget_cents,
-            scope=dict(scope),
+            scope=scope,
             wbs=wbs,
-            constraints=_constraints(crow) if crow else (),
+            constraints=_constraints(constraint_row) if constraint_row else (),
             run_status=run_status,
             run_kpis=kpis,
-            recommendations=recs,
+            recommendations=reasons,
         )
+
+    async def _accepted_scope(self, project_id: uuid.UUID) -> dict[str, list[str]]:
+        """Return the accepted scope item texts by category."""
+        scope: dict[str, list[str]] = defaultdict(list)
+        for row in (
+            await self._conn.execute(
+                sa.select(scope_items.c.category, scope_items.c.text)
+                .where(
+                    scope_items.c.project_id == project_id,
+                    scope_items.c.status == ScopeStatus.ACCEPTED,
+                )
+                .order_by(scope_items.c.category, scope_items.c.sort_order)
+            )
+        ).all():
+            scope[str(row.category)].append(row.text)
+        return dict(scope)
+
+    async def _wbs_lines(self, project_id: uuid.UUID) -> tuple[WbsLine, ...]:
+        """Return the WBS in tree order with durations and owner names."""
+        view, owners = wbs_nodes_with_code, employees
+        return tuple(
+            WbsLine(row.code, row.name, row.level, row.duration_days, row.owner)
+            for row in (
+                await self._conn.execute(
+                    sa.select(
+                        view.c.code,
+                        view.c.name,
+                        view.c.level,
+                        view.c.duration_days,
+                        owners.c.full_name.label("owner"),
+                    )
+                    .select_from(view.outerjoin(owners, owners.c.id == view.c.owner_employee_id))
+                    .where(view.c.project_id == project_id)
+                    .order_by(view.c.path)
+                )
+            ).all()
+        )
+
+    async def _latest_run(
+        self, project_id: uuid.UUID
+    ) -> tuple[str | None, tuple[str, ...], tuple[str, ...]]:
+        """Return the latest run's status, KPI lines and top recommendation reasons."""
+        runs = optimization_runs
+        run = (
+            await self._conn.execute(
+                sa.select(runs.c.id, runs.c.status, runs.c.result, runs.c.version)
+                .where(runs.c.project_id == project_id)
+                .order_by(runs.c.created_at.desc())
+                .limit(1)
+            )
+        ).first()
+        if run is None:
+            return None, (), ()
+        run_status = str(run.status) + (f" (applied as Plan v{run.version})" if run.version else "")
+        result = run.result if isinstance(run.result, dict) else {}
+        kpis = kpi_lines(result.get("kpis") or [])
+        reasons = tuple(
+            str(row.reason)
+            for row in (
+                await self._conn.execute(
+                    sa.select(recommendations.c.reason)
+                    .where(recommendations.c.run_id == run.id)
+                    .order_by(recommendations.c.sort_order)
+                    .limit(MAX_RECOMMENDATIONS)
+                )
+            ).all()
+        )
+        return run_status, kpis, reasons

@@ -15,13 +15,13 @@ from app.domain.common import SolverStatus
 from app.optimization.explain import build_report
 from app.optimization.model import Constraints, PlanningInput, Task
 from app.optimization.solver import solve
+from app.repositories.constraint_input import build_constraints
 from app.repositories.optimization import (
     ActiveRunExistsError,
-    OptimizationJobStore,
     OptimizationRepository,
     ProjectContext,
 )
-from app.repositories.planning_input import build_constraints
+from app.repositories.optimization_store import OptimizationJobStore
 from tests.test_optimization_solver import FAST, make_input
 from tests.test_repositories import Conn, Result
 

@@ -1,8 +1,11 @@
-"""Optimization runs: user-side queries (RLS) and the worker's service-side writes.
+"""Optimization runs as the user sees them: queueing, reading and linking re-plans (RLS session).
 
-Reading the planning data itself lives in `planning_input.py`; this module
-creates and reads runs, links re-plans to change requests and stores what
-the background worker produced.
+Purpose: Enforce one run at a time per project (NFR-005), freeze a run's input at queue time and
+show runs, the plan in force and its inputs hash, so the screen can tell when a plan is outdated.
+How it fits: Used by app/api/v1/optimization.py; planning data is read by
+app/repositories/planning_input.py and app/repositories/input_facts.py; the worker's writes live in
+app/repositories/optimization_store.py; layer: repositories.
+Created: 2026-10-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -19,17 +22,16 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app.core.errors import pg_error_info
 from app.domain.common import SolverStatus
 from app.domain.optimization import OptimizationRun
-from app.optimization.explain import Report
 from app.optimization.inputs import InputFacts
 from app.optimization.model import PlanningInput
+from app.repositories import access
 from app.repositories.input_facts import InputFactsReader
+from app.repositories.job_rows import started_before
 from app.repositories.planning_input import PlanningInputReader, ProjectContext
 from app.repositories.tables import (
     change_requests,
     optimization_runs,
     planned_assignments,
-    projects,
-    recommendations,
 )
 from app.repositories.work_packages import packages_without_duration
 
@@ -37,13 +39,12 @@ __all__ = [
     "ActiveRun",
     "ActiveRunExistsError",
     "AppliedRun",
-    "OptimizationJobStore",
     "OptimizationRepository",
     "ProjectContext",
 ]
 
 ACTIVE = (SolverStatus.QUEUED, SolverStatus.RUNNING)
-r = optimization_runs
+runs = optimization_runs
 
 
 class ActiveRunExistsError(Exception):
@@ -52,6 +53,8 @@ class ActiveRunExistsError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class ActiveRun:
+    """A queued or running run and whether it has been active for too long (orphaned)."""
+
     id: uuid.UUID
     stale: bool
 
@@ -65,68 +68,64 @@ class AppliedRun:
 
 
 def _run_select() -> sa.Select[Any]:
+    """Return the select of the run columns the API shows."""
     return sa.select(
-        r.c.id,
-        r.c.project_id,
-        r.c.status,
-        r.c.solver,
-        r.c.runtime_ms,
-        r.c.error,
-        r.c.infeasibility,
-        r.c.result,
-        r.c.created_at,
-        r.c.started_at,
-        r.c.finished_at,
-        r.c.version,
-        r.c.applied_at,
-        r.c.options,
+        runs.c.id,
+        runs.c.project_id,
+        runs.c.status,
+        runs.c.solver,
+        runs.c.runtime_ms,
+        runs.c.error,
+        runs.c.infeasibility,
+        runs.c.result,
+        runs.c.created_at,
+        runs.c.started_at,
+        runs.c.finished_at,
+        runs.c.version,
+        runs.c.applied_at,
+        runs.c.options,
     )
 
 
 def _to_run(row: sa.Row[Any]) -> OptimizationRun:
-    m = row._mapping
+    """Turn a run row into the API model (runtime in seconds, infeasibility as `iis`)."""
+    mapping = row._mapping
     return OptimizationRun.model_validate(
         {
-            "id": m["id"],
-            "project_id": m["project_id"],
-            "status": m["status"],
-            "solver": m["solver"],
-            "solve_seconds": None if m["runtime_ms"] is None else m["runtime_ms"] / 1000,
-            "error": m["error"],
-            "iis": m["infeasibility"],
-            "result": m["result"],
-            "created_at": m["created_at"],
-            "started_at": m["started_at"],
-            "finished_at": m["finished_at"],
-            "version": m.get("version"),
-            "applied_at": m.get("applied_at"),
-            "options": m.get("options") or {},
+            "id": mapping["id"],
+            "project_id": mapping["project_id"],
+            "status": mapping["status"],
+            "solver": mapping["solver"],
+            "solve_seconds": None
+            if mapping["runtime_ms"] is None
+            else mapping["runtime_ms"] / 1000,
+            "error": mapping["error"],
+            "iis": mapping["infeasibility"],
+            "result": mapping["result"],
+            "created_at": mapping["created_at"],
+            "started_at": mapping["started_at"],
+            "finished_at": mapping["finished_at"],
+            "version": mapping.get("version"),
+            "applied_at": mapping.get("applied_at"),
+            "options": mapping.get("options") or {},
         }
     )
-
-
-def _older_than(seconds: int) -> sa.ColumnElement[bool]:
-    cutoff = sa.func.now() - sa.func.make_interval(0, 0, 0, 0, 0, 0, seconds)
-    return sa.func.coalesce(r.c.started_at, r.c.created_at) < cutoff
 
 
 class OptimizationRepository:
     """User-facing queries: everything runs under the caller's RLS session."""
 
     def __init__(self, conn: AsyncConnection) -> None:
+        """Use the caller's RLS-scoped connection."""
         self._conn = conn
 
     async def project(self, project_id: uuid.UUID) -> ProjectContext | None:
-        p = projects
-        stmt = sa.select(
-            p.c.id, p.c.org_id, p.c.name, p.c.start_date, p.c.target_end_date, p.c.budget_cents
-        ).where(p.c.id == project_id)
-        row = (await self._conn.execute(stmt)).first()
-        return ProjectContext(**row._mapping) if row else None
+        """Return the project when the caller can see it, else None."""
+        return await access.visible_project(self._conn, project_id)
 
     async def can_write(self, project_id: uuid.UUID) -> bool:
-        stmt = sa.select(sa.func.private.can_write_project(project_id))
-        return bool((await self._conn.execute(stmt)).scalar())
+        """Tell whether the caller may change the project."""
+        return await access.can_write_project(self._conn, project_id)
 
     async def lock_run_creation(self, project_id: uuid.UUID) -> bool:
         """Claim the right to start the project's next run until this transaction ends.
@@ -141,18 +140,20 @@ class OptimizationRepository:
         return bool(claimed.scalar())
 
     async def active_run(self, project_id: uuid.UUID, stale_after_s: int) -> ActiveRun | None:
+        """Return the project's active run, flagged stale after `stale_after_s`, or None."""
         stmt = (
-            sa.select(r.c.id, _older_than(stale_after_s).label("stale"))
-            .where(r.c.project_id == project_id, r.c.status.in_(ACTIVE))
+            sa.select(runs.c.id, started_before(runs, stale_after_s).label("stale"))
+            .where(runs.c.project_id == project_id, runs.c.status.in_(ACTIVE))
             .limit(1)
         )
         row = (await self._conn.execute(stmt)).first()
         return ActiveRun(id=row.id, stale=bool(row.stale)) if row else None
 
     async def fail_run(self, run_id: uuid.UUID, error: str) -> None:
+        """Mark an active run failed with the error shown to the user."""
         await self._conn.execute(
-            sa.update(r)
-            .where(r.c.id == run_id, r.c.status.in_(ACTIVE))
+            sa.update(runs)
+            .where(runs.c.id == run_id, runs.c.status.in_(ACTIVE))
             .values(status=SolverStatus.FAILED, error=error, finished_at=sa.func.now())
         )
 
@@ -162,12 +163,16 @@ class OptimizationRepository:
         snapshot: dict[str, Any],
         options: dict[str, Any] | None = None,
     ) -> uuid.UUID:
+        """Queue a run with its frozen input snapshot and options; returns the new id.
+
+        Raises `ActiveRunExistsError` when the one-active-run unique index rejects it.
+        """
         # Id generated here and the row re-selected, as for projects (RETURNING
         # visibility depends on SELECT policies).
         run_id = uuid.uuid4()
         try:
             await self._conn.execute(
-                sa.insert(r).values(
+                sa.insert(runs).values(
                     id=run_id,
                     project_id=project_id,
                     input_snapshot=snapshot,
@@ -181,15 +186,17 @@ class OptimizationRepository:
         return run_id
 
     async def get(self, project_id: uuid.UUID, run_id: uuid.UUID) -> OptimizationRun | None:
-        stmt = _run_select().where(r.c.project_id == project_id, r.c.id == run_id)
+        """Return one of the project's runs, or None."""
+        stmt = _run_select().where(runs.c.project_id == project_id, runs.c.id == run_id)
         row = (await self._conn.execute(stmt)).first()
         return _to_run(row) if row else None
 
     async def latest(self, project_id: uuid.UUID) -> OptimizationRun | None:
+        """Return the project's newest run, or None."""
         stmt = (
             _run_select()
-            .where(r.c.project_id == project_id)
-            .order_by(r.c.created_at.desc(), r.c.id.desc())
+            .where(runs.c.project_id == project_id)
+            .order_by(runs.c.created_at.desc(), runs.c.id.desc())
             .limit(1)
         )
         row = (await self._conn.execute(stmt)).first()
@@ -200,9 +207,11 @@ class OptimizationRepository:
         """The project's planning data, frozen into the optimizer's input (see planning_input)."""
         return await PlanningInputReader(self._conn).load(project, today)
 
-    async def input_facts(self, project: ProjectContext, inp: PlanningInput) -> InputFacts:
-        """What the confirmation sheet shows beyond `inp` (answers, confirmations, sources)."""
-        return await InputFactsReader(self._conn).facts(project, inp)
+    async def input_facts(
+        self, project: ProjectContext, planning_input: PlanningInput
+    ) -> InputFacts:
+        """Return what the confirmation sheet shows beyond the input (answers and sources)."""
+        return await InputFactsReader(self._conn).facts(project, planning_input)
 
     async def packages_without_duration(self, project_id: uuid.UUID) -> list[str]:
         """'code name' of the work packages the optimizer can't plan (see work_packages)."""
@@ -234,9 +243,9 @@ class OptimizationRepository:
     async def applied_run(self, project_id: uuid.UUID) -> AppliedRun | None:
         """The plan in force: the run applied last (None while nothing is applied)."""
         statement = (
-            sa.select(r.c.id, r.c.options)
-            .where(r.c.project_id == project_id, r.c.applied_at.is_not(None))
-            .order_by(r.c.applied_at.desc(), r.c.version.desc().nulls_last())
+            sa.select(runs.c.id, runs.c.options)
+            .where(runs.c.project_id == project_id, runs.c.applied_at.is_not(None))
+            .order_by(runs.c.applied_at.desc(), runs.c.version.desc().nulls_last())
             .limit(1)
         )
         row = (await self._conn.execute(statement)).first()
@@ -271,104 +280,3 @@ class OptimizationRepository:
             .where(changes.c.project_id == project_id, changes.c.id == change_request_id)
             .values(proposed_run_id=run_id, status="replanning", error=None)
         )
-
-
-# --------------------------------------------------------------------------- worker side
-class OptimizationJobStore:
-    """Writes made by the background worker on a service connection (bypasses RLS).
-
-    `planned_assignments` and `recommendations` have no user write policies:
-    only this trusted job writes them.
-    """
-
-    def __init__(self, conn: AsyncConnection) -> None:
-        self._conn = conn
-
-    async def claim(self, run_id: uuid.UUID) -> dict[str, Any] | None:
-        """Move a queued run to running; returns its input snapshot (None if not queued)."""
-        stmt = (
-            sa.update(r)
-            .where(r.c.id == run_id, r.c.status == SolverStatus.QUEUED)
-            .values(status=SolverStatus.RUNNING, started_at=sa.func.now())
-            .returning(r.c.input_snapshot)
-        )
-        row = (await self._conn.execute(stmt)).first()
-        return dict(row.input_snapshot) if row else None
-
-    async def finish(self, run_id: uuid.UUID, report: Report) -> None:
-        await self._conn.execute(
-            sa.update(r)
-            .where(r.c.id == run_id)
-            .values(
-                status=report.status,
-                solver=report.solver,
-                solver_version=report.solver_version,
-                runtime_ms=report.runtime_ms,
-                mip_gap=report.mip_gap,
-                objective_value=report.objective_value,
-                expected_cost_cents=report.expected_cost_cents,
-                completion_date=report.completion_date,
-                avg_utilization=report.avg_utilization,
-                critical_path=report.critical_path,
-                result=report.result,
-                infeasibility=report.iis,
-                error=report.error,
-                finished_at=sa.func.now(),
-            )
-        )
-        if report.assignments:
-            await self._conn.execute(
-                sa.insert(planned_assignments).values(
-                    [
-                        {
-                            "run_id": run_id,
-                            "wbs_node_id": uuid.UUID(a.wbs_node_id),
-                            "employee_id": uuid.UUID(a.employee_id) if a.employee_id else None,
-                            "contractor_label": a.contractor_label,
-                            "start_week": a.start_week,
-                            "end_week": a.end_week,
-                            "hours_per_week": a.hours_per_week,
-                            "baseline_start_week": a.baseline_start_week,
-                            "baseline_end_week": a.baseline_end_week,
-                            "baseline_employee_id": (
-                                uuid.UUID(a.baseline_employee_id)
-                                if a.baseline_employee_id
-                                else None
-                            ),
-                        }
-                        for a in report.assignments
-                    ]
-                )
-            )
-        if report.recommendations:
-            await self._conn.execute(
-                sa.insert(recommendations).values(
-                    [
-                        {
-                            "run_id": run_id,
-                            "type": rec.type,
-                            "wbs_node_id": uuid.UUID(rec.wbs_node_id) if rec.wbs_node_id else None,
-                            "before_value": rec.before_value,
-                            "after_value": rec.after_value,
-                            "reason": rec.reason,
-                            "sort_order": rec.sort_order,
-                        }
-                        for rec in report.recommendations
-                    ]
-                )
-            )
-
-    async def fail(self, run_id: uuid.UUID, error: str) -> None:
-        await self._conn.execute(
-            sa.update(r)
-            .where(r.c.id == run_id, r.c.status.in_(ACTIVE))
-            .values(status=SolverStatus.FAILED, error=error, finished_at=sa.func.now())
-        )
-
-    async def fail_stale(self, older_than_s: int, error: str) -> int:
-        result = await self._conn.execute(
-            sa.update(r)
-            .where(r.c.status.in_(ACTIVE), _older_than(older_than_s))
-            .values(status=SolverStatus.FAILED, error=error, finished_at=sa.func.now())
-        )
-        return int(result.rowcount)

@@ -88,7 +88,9 @@ async def test_project_list_sql() -> None:
     conn = Conn(Result(rows))
     repo = ProjectRepository(conn)  # type: ignore[arg-type]
     cursor = Cursor(NOW, uuid.uuid4())
-    items, nxt = await repo.list_page(uuid.uuid4(), statuses=None, q="100%", limit=2, cursor=cursor)
+    items, nxt = await repo.list_page(
+        uuid.uuid4(), statuses=None, search="100%", limit=2, cursor=cursor
+    )
     sql = conn.sql[0]
     assert "LEFT OUTER JOIN public.profiles AS pm" in sql
     assert "public.projects.status != " in sql
@@ -106,7 +108,7 @@ async def test_project_list_status_filter() -> None:
     conn = Conn(Result([project_row()]))
     repo = ProjectRepository(conn)  # type: ignore[arg-type]
     items, nxt = await repo.list_page(
-        uuid.uuid4(), statuses=[ProjectStatus.ARCHIVED], q=None, limit=5, cursor=None
+        uuid.uuid4(), statuses=[ProjectStatus.ARCHIVED], search=None, limit=5, cursor=None
     )
     assert "public.projects.status IN" in conn.sql[0]
     assert nxt is None

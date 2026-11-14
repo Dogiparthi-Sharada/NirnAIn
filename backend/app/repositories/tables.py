@@ -1,7 +1,10 @@
-"""SQLAlchemy Core mappings of the existing Supabase tables.
+"""SQLAlchemy Core mappings of the existing Supabase tables, views and enum types.
 
-The schema is owned by `supabase/migrations`; these definitions only describe
-the columns the API reads/writes. Never call `metadata.create_all()`.
+Purpose: The schema is owned by `supabase/migrations`; these definitions only describe the columns
+the API reads and writes, so queries are type-checked. Never call `metadata.create_all()`.
+How it fits: Imported by every repository; enum types map onto the mirrors in app/domain/common.py;
+layer: repositories.
+Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -36,12 +39,13 @@ metadata = sa.MetaData(schema="public")
 
 
 def _pg_enum(enum_cls: type[StrEnum], name: str) -> ENUM:
+    """Map a Python enum onto an existing Postgres enum type (by value; never created here)."""
     return ENUM(
         enum_cls,
         name=name,
         schema="public",
         create_type=False,
-        values_callable=lambda e: [m.value for m in e],
+        values_callable=lambda enum_type: [member.value for member in enum_type],
         validate_strings=True,
     )
 
@@ -56,7 +60,7 @@ project_step = _pg_enum(ProjectStep, "project_step")
 notification_level = _pg_enum(NotificationLevel, "notification_level")
 
 _uuid = UUID(as_uuid=True)
-_ts = sa.DateTime(timezone=True)
+_timestamptz = sa.DateTime(timezone=True)
 
 profiles = sa.Table(
     "profiles",
@@ -66,8 +70,8 @@ profiles = sa.Table(
     sa.Column("full_name", sa.Text),
     sa.Column("avatar_url", sa.Text),
     sa.Column("job_title", sa.Text),
-    sa.Column("created_at", _ts, nullable=False),
-    sa.Column("updated_at", _ts, nullable=False),
+    sa.Column("created_at", _timestamptz, nullable=False),
+    sa.Column("updated_at", _timestamptz, nullable=False),
 )
 
 organizations = sa.Table(
@@ -77,8 +81,8 @@ organizations = sa.Table(
     sa.Column("name", sa.Text, nullable=False),
     sa.Column("slug", sa.Text, nullable=False),  # citext
     sa.Column("created_by", _uuid),
-    sa.Column("created_at", _ts, nullable=False),
-    sa.Column("updated_at", _ts, nullable=False),
+    sa.Column("created_at", _timestamptz, nullable=False),
+    sa.Column("updated_at", _timestamptz, nullable=False),
 )
 
 organization_members = sa.Table(
@@ -87,7 +91,7 @@ organization_members = sa.Table(
     sa.Column("org_id", _uuid, primary_key=True),
     sa.Column("user_id", _uuid, primary_key=True),
     sa.Column("role", org_role, nullable=False),
-    sa.Column("created_at", _ts, nullable=False),
+    sa.Column("created_at", _timestamptz, nullable=False),
 )
 
 projects = sa.Table(
@@ -113,9 +117,9 @@ projects = sa.Table(
     sa.Column("current_step", project_step, nullable=False),
     sa.Column("progress_pct", sa.SmallInteger, nullable=False),
     sa.Column("created_by", _uuid),
-    sa.Column("created_at", _ts, nullable=False),
-    sa.Column("updated_at", _ts, nullable=False),
-    sa.Column("archived_at", _ts),
+    sa.Column("created_at", _timestamptz, nullable=False),
+    sa.Column("updated_at", _timestamptz, nullable=False),
+    sa.Column("archived_at", _timestamptz),
 )
 
 notifications = sa.Table(
@@ -127,8 +131,8 @@ notifications = sa.Table(
     sa.Column("project_id", _uuid),
     sa.Column("level", notification_level, nullable=False),
     sa.Column("message", sa.Text, nullable=False),
-    sa.Column("read_at", _ts),
-    sa.Column("created_at", _ts, nullable=False),
+    sa.Column("read_at", _timestamptz),
+    sa.Column("created_at", _timestamptz, nullable=False),
 )
 
 # --------------------------------------------------------------------------- planning / optimizer
@@ -158,7 +162,7 @@ source_documents = sa.Table(
     sa.Column("extraction_status", job_status, nullable=False, server_default=sa.FetchedValue()),
     sa.Column("extraction_error", sa.Text),
     sa.Column("content_truncated", sa.Boolean, nullable=False, server_default=sa.FetchedValue()),
-    sa.Column("created_at", _ts, nullable=False, server_default=sa.FetchedValue()),
+    sa.Column("created_at", _timestamptz, nullable=False, server_default=sa.FetchedValue()),
 )
 
 intake_runs = sa.Table(
@@ -172,9 +176,9 @@ intake_runs = sa.Table(
     sa.Column("output_tokens", sa.Integer),
     sa.Column("items_extracted", sa.Integer),
     sa.Column("error", sa.Text),
-    sa.Column("created_at", _ts, nullable=False),
-    sa.Column("started_at", _ts),
-    sa.Column("finished_at", _ts),
+    sa.Column("created_at", _timestamptz, nullable=False),
+    sa.Column("started_at", _timestamptz),
+    sa.Column("finished_at", _timestamptz),
 )
 
 scope_items = sa.Table(
@@ -195,8 +199,8 @@ scope_items = sa.Table(
     sa.Column("status", scope_status, nullable=False),
     sa.Column("origin", item_origin, nullable=False),
     sa.Column("sort_order", sa.Integer, nullable=False),
-    sa.Column("created_at", _ts, nullable=False),
-    sa.Column("updated_at", _ts, nullable=False),
+    sa.Column("created_at", _timestamptz, nullable=False),
+    sa.Column("updated_at", _timestamptz, nullable=False),
 )
 
 skills = sa.Table(
@@ -244,9 +248,9 @@ wbs_nodes = sa.Table(
     sa.Column("owner_employee_id", _uuid),
     sa.Column("scope_item_id", _uuid),
     sa.Column("origin", item_origin, nullable=False),
-    sa.Column("created_at", _ts, nullable=False),
-    sa.Column("updated_at", _ts, nullable=False),
-    sa.Column("estimate_confirmed_at", _ts),
+    sa.Column("created_at", _timestamptz, nullable=False),
+    sa.Column("updated_at", _timestamptz, nullable=False),
+    sa.Column("estimate_confirmed_at", _timestamptz),
     sa.Column("estimate_confirmed_by", _uuid),
 )
 
@@ -266,8 +270,8 @@ wbs_nodes_with_code = sa.Table(
     sa.Column("owner_employee_id", _uuid),
     sa.Column("scope_item_id", _uuid),
     sa.Column("origin", item_origin, nullable=False),
-    sa.Column("created_at", _ts, nullable=False),
-    sa.Column("updated_at", _ts, nullable=False),
+    sa.Column("created_at", _timestamptz, nullable=False),
+    sa.Column("updated_at", _timestamptz, nullable=False),
     sa.Column("code", sa.Text, nullable=False),
     sa.Column("path", ARRAY(sa.Integer), nullable=False),
 )
@@ -290,7 +294,7 @@ dependencies = sa.Table(
     sa.Column("type", dependency_type, nullable=False),
     sa.Column("lag_days", sa.Integer, nullable=False),
     sa.Column("origin", item_origin, nullable=False),
-    sa.Column("created_at", _ts, nullable=False),
+    sa.Column("created_at", _timestamptz, nullable=False),
 )
 
 constraint_sets = sa.Table(
@@ -316,7 +320,7 @@ constraint_sets = sa.Table(
     sa.Column("specialist_answer", sa.Text),  # yes | no | unknown
     sa.Column("deadline_answer", sa.Text),  # hard | soft | unknown
     sa.Column("specialist_rate_confirmed", sa.Boolean, nullable=False),
-    sa.Column("updated_at", _ts, nullable=False),
+    sa.Column("updated_at", _timestamptz, nullable=False),
 )
 
 milestones = sa.Table(
@@ -328,7 +332,7 @@ milestones = sa.Table(
     sa.Column("due_date", sa.Date, nullable=False),
     sa.Column("wbs_node_id", _uuid),
     sa.Column("mode", constraint_mode, nullable=False),
-    sa.Column("created_at", _ts, nullable=False),
+    sa.Column("created_at", _timestamptz, nullable=False),
 )
 
 allocations = sa.Table(
@@ -361,13 +365,13 @@ optimization_runs = sa.Table(
     sa.Column("result", JSONB),
     sa.Column("error", sa.Text),
     sa.Column("requested_by", _uuid),
-    sa.Column("applied_at", _ts),
+    sa.Column("applied_at", _timestamptz),
     sa.Column("applied_by", _uuid),
     sa.Column("version", sa.Integer),
     sa.Column("options", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
-    sa.Column("started_at", _ts),
-    sa.Column("finished_at", _ts),
-    sa.Column("created_at", _ts, nullable=False),
+    sa.Column("started_at", _timestamptz),
+    sa.Column("finished_at", _timestamptz),
+    sa.Column("created_at", _timestamptz, nullable=False),
 )
 
 planned_assignments = sa.Table(
@@ -417,9 +421,9 @@ ai_jobs = sa.Table(
     sa.Column("result", JSONB),
     sa.Column("error", sa.Text),
     sa.Column("requested_by", _uuid),
-    sa.Column("created_at", _ts, nullable=False),
-    sa.Column("started_at", _ts),
-    sa.Column("finished_at", _ts),
+    sa.Column("created_at", _timestamptz, nullable=False),
+    sa.Column("started_at", _timestamptz),
+    sa.Column("finished_at", _timestamptz),
 )
 
 # --------------------------------------------------------------------------- workflow inputs
@@ -430,7 +434,7 @@ project_team_members = sa.Table(
     sa.Column("employee_id", _uuid, primary_key=True),
     sa.Column("hours_per_week", sa.Numeric(5, 1), nullable=False),
     sa.Column("role_title", sa.Text),
-    sa.Column("created_at", _ts, nullable=False, server_default=sa.FetchedValue()),
+    sa.Column("created_at", _timestamptz, nullable=False, server_default=sa.FetchedValue()),
 )
 
 project_skills = sa.Table(
@@ -439,7 +443,7 @@ project_skills = sa.Table(
     sa.Column("project_id", _uuid, primary_key=True),
     sa.Column("skill_id", _uuid, primary_key=True),
     sa.Column("required", sa.Boolean, nullable=False),
-    sa.Column("created_at", _ts, nullable=False, server_default=sa.FetchedValue()),
+    sa.Column("created_at", _timestamptz, nullable=False, server_default=sa.FetchedValue()),
 )
 
 change_requests = sa.Table(
@@ -456,6 +460,6 @@ change_requests = sa.Table(
     sa.Column("proposed_run_id", _uuid),
     sa.Column("error", sa.Text),
     sa.Column("requested_by", _uuid),
-    sa.Column("created_at", _ts, nullable=False, server_default=sa.FetchedValue()),
-    sa.Column("decided_at", _ts),
+    sa.Column("created_at", _timestamptz, nullable=False, server_default=sa.FetchedValue()),
+    sa.Column("decided_at", _timestamptz),
 )

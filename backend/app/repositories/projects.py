@@ -1,3 +1,11 @@
+"""Repository of projects: paging, reading, creating, updating, deleting and the dashboard KPIs.
+
+Purpose: Persist projects while letting RLS decide what the caller may see and change.
+How it fits: Used by app/api/v1/projects.py and app/api/v1/dashboard.py; returns
+app/domain/projects.py models; layer: repositories.
+Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+"""
+
 from __future__ import annotations
 
 import uuid
@@ -13,14 +21,16 @@ from app.domain.dashboard import DashboardSummary
 from app.domain.projects import Project
 from app.repositories.tables import profiles, projects
 
-_ts = sa.DateTime(timezone=True)
+TIMESTAMP_TZ = sa.DateTime(timezone=True)
 
 
 def escape_like(value: str) -> str:
+    """Escape `%`, `_` and backslashes so user text matches literally in a LIKE pattern."""
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _project_select() -> sa.Select[Any]:
+    """Return the project select with the PM's display name joined in."""
     pm = profiles.alias("pm")
     return sa.select(
         *projects.c,
@@ -29,6 +39,7 @@ def _project_select() -> sa.Select[Any]:
 
 
 def _to_project(row: sa.Row[Any]) -> Project:
+    """Turn a result row into the API model."""
     return Project.model_validate(dict(row._mapping))
 
 
@@ -36,6 +47,7 @@ class ProjectRepository:
     """Project persistence. Visibility and write permissions come from RLS."""
 
     def __init__(self, conn: AsyncConnection) -> None:
+        """Use the caller's RLS-scoped connection."""
         self._conn = conn
 
     async def list_page(
@@ -43,33 +55,41 @@ class ProjectRepository:
         org_id: uuid.UUID,
         *,
         statuses: Sequence[ProjectStatus] | None,
-        q: str | None,
+        search: str | None,
         limit: int,
         cursor: Cursor | None,
     ) -> tuple[list[Project], Cursor | None]:
-        p = projects
-        stmt = _project_select().where(p.c.org_id == org_id)
+        """Return one page of the organization's projects, newest first, and the next page's cursor.
+
+        Archived projects are left out unless `statuses` asks for them; `search` matches name or
+        code.
+        """
+        table = projects
+        stmt = _project_select().where(table.c.org_id == org_id)
         if statuses:
-            stmt = stmt.where(p.c.status.in_(list(statuses)))
+            stmt = stmt.where(table.c.status.in_(list(statuses)))
         else:
-            stmt = stmt.where(p.c.status != ProjectStatus.ARCHIVED)
-        if q:
-            pattern = f"%{escape_like(q)}%"
+            stmt = stmt.where(table.c.status != ProjectStatus.ARCHIVED)
+        if search:
+            pattern = f"%{escape_like(search)}%"
             stmt = stmt.where(
-                sa.or_(p.c.name.ilike(pattern, escape="\\"), p.c.code.ilike(pattern, escape="\\"))
+                sa.or_(
+                    table.c.name.ilike(pattern, escape="\\"),
+                    table.c.code.ilike(pattern, escape="\\"),
+                )
             )
         if cursor is not None:
             stmt = stmt.where(
-                sa.tuple_(p.c.created_at, p.c.id)
+                sa.tuple_(table.c.created_at, table.c.id)
                 < sa.tuple_(
-                    sa.literal(cursor.created_at, _ts),
-                    sa.literal(cursor.id, p.c.id.type),
+                    sa.literal(cursor.created_at, TIMESTAMP_TZ),
+                    sa.literal(cursor.id, table.c.id.type),
                 )
             )
-        stmt = stmt.order_by(p.c.created_at.desc(), p.c.id.desc()).limit(limit + 1)
+        stmt = stmt.order_by(table.c.created_at.desc(), table.c.id.desc()).limit(limit + 1)
 
         rows = (await self._conn.execute(stmt)).all()
-        items = [_to_project(r) for r in rows[:limit]]
+        items = [_to_project(row) for row in rows[:limit]]
         next_cursor = None
         if len(rows) > limit and items:
             last = items[-1]
@@ -77,6 +97,7 @@ class ProjectRepository:
         return items, next_cursor
 
     async def get(self, project_id: uuid.UUID) -> Project | None:
+        """Return the project, or None when missing or not visible."""
         stmt = _project_select().where(projects.c.id == project_id)
         row = (await self._conn.execute(stmt)).first()
         return _to_project(row) if row else None
@@ -84,6 +105,7 @@ class ProjectRepository:
     async def create(
         self, org_id: uuid.UUID, created_by: uuid.UUID, values: dict[str, Any]
     ) -> uuid.UUID:
+        """Insert a project and return its new id."""
         # The id is generated here and the row re-selected afterwards instead of
         # using RETURNING, whose visibility depends on SELECT policies.
         project_id = uuid.uuid4()
@@ -94,7 +116,10 @@ class ProjectRepository:
         return project_id
 
     async def update(self, project_id: uuid.UUID, changes: dict[str, Any]) -> bool:
-        """Returns False if no row was updated (missing or not writable under RLS)."""
+        """Update the given columns; archiving stamps `archived_at`, other statuses clear it.
+
+        Returns False if no row was updated (missing or not writable under RLS).
+        """
         values = dict(changes)
         if "status" in values:
             values["archived_at"] = (
@@ -107,28 +132,33 @@ class ProjectRepository:
         return result.rowcount > 0
 
     async def delete(self, project_id: uuid.UUID) -> bool:
+        """Delete the project; False when RLS left nothing to delete."""
         result = await self._conn.execute(sa.delete(projects).where(projects.c.id == project_id))
         return result.rowcount > 0
 
     async def dashboard(self, org_id: uuid.UUID) -> DashboardSummary:
-        p = projects
+        """Return the KPI cards over the organization's active (non-archived) projects.
+
+        "Created this month" counts from the start of the current UTC month.
+        """
+        table = projects
         month_start = sa.func.timezone(
             "UTC", sa.func.date_trunc("month", sa.func.timezone("UTC", sa.func.now()))
         )
         stmt = sa.select(
             sa.func.count().label("total_projects"),
-            sa.func.count().filter(p.c.status == ProjectStatus.ON_TRACK).label("on_track"),
+            sa.func.count().filter(table.c.status == ProjectStatus.ON_TRACK).label("on_track"),
             sa.func.count()
-            .filter(p.c.status.in_([ProjectStatus.AT_RISK, ProjectStatus.DELAYED]))
+            .filter(table.c.status.in_([ProjectStatus.AT_RISK, ProjectStatus.DELAYED]))
             .label("at_risk_or_delayed"),
-            sa.cast(sa.func.coalesce(sa.func.sum(p.c.budget_cents), 0), sa.BigInteger).label(
+            sa.cast(sa.func.coalesce(sa.func.sum(table.c.budget_cents), 0), sa.BigInteger).label(
                 "total_budget_cents"
             ),
-            sa.func.count().filter(p.c.created_at >= month_start).label("created_this_month"),
+            sa.func.count().filter(table.c.created_at >= month_start).label("created_this_month"),
         ).where(
-            p.c.org_id == org_id,
-            p.c.status != ProjectStatus.ARCHIVED,
-            p.c.archived_at.is_(None),
+            table.c.org_id == org_id,
+            table.c.status != ProjectStatus.ARCHIVED,
+            table.c.archived_at.is_(None),
         )
         row = (await self._conn.execute(stmt)).one()
         return DashboardSummary.model_validate(dict(row._mapping))

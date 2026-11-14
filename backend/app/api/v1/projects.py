@@ -44,7 +44,9 @@ async def list_projects(
             "unless requested explicitly.",
         ),
     ] = None,
-    q: Annotated[str | None, Query(max_length=200, description="Search name or code")] = None,
+    search: Annotated[
+        str | None, Query(alias="q", max_length=200, description="Search name or code")
+    ] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
     cursor: Annotated[str | None, Query(max_length=512)] = None,
 ) -> Page[Project]:
@@ -52,7 +54,7 @@ async def list_projects(
     items, next_cursor = await projects.list_page(
         org_id,
         statuses=status_filter,
-        q=q.strip() if q and q.strip() else None,
+        search=search.strip() if search and search.strip() else None,
         limit=limit,
         cursor=Cursor.decode(cursor) if cursor else None,
     )

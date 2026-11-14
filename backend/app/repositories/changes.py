@@ -1,11 +1,12 @@
 """Change requests of step 7 (table `change_requests`), under the caller's RLS session.
 
-Writes: recording a change, saving answers, the decision, and on approval applying the
-proposed run (`public.apply_optimization_run`, security definer, checks write access) and
-writing the change's values into the project's inputs so every later run uses them: the
-constraint set, WBS durations, the team (hours, who joins, who leaves) and new requirements.
-RLS on change_requests (migration 20261113000050) limits all of this to project writers;
-adding people also needs the organization role that may add employees (owner, admin, pm).
+Purpose: Record a change, save its answers and decision and, on approval, apply the proposed run
+(`public.apply_optimization_run`) and write the change's values into the project's inputs so every
+later run uses them: constraint set, WBS durations, team and new requirements.
+How it fits: The API (app/api/v1/changes.py) uses `ChangeRepository`, which extends the team writes
+and plan reads; RLS on change_requests (migration 20261113000050) limits all of this to project
+writers; layer: repositories.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -67,6 +68,7 @@ def to_change(row: Any) -> ChangeRequest:
 
 
 def _select() -> sa.Select[Any]:
+    """Return the change select with base run version and proposed run status joined in."""
     base = optimization_runs.alias("base_run")
     proposed_run = optimization_runs.alias("proposed_run")
     return sa.select(
@@ -188,50 +190,63 @@ class ChangeRepository(ChangeTeamWrites):
         )
 
     async def write_overrides(self, project: ProjectRef, overrides: PlanOverrides) -> None:
-        """The approved change becomes the project's inputs for every later run:
-        constraint set budget / must-finish-by (and the policy stated with them), WBS
-        durations and team hours.
+        """Make the approved change the project's inputs for every later run.
+
+        Writes the constraint set budget / must-finish-by (and the policy stated with them),
+        WBS durations, team hours and the team changes, in that order.
         """
         if overrides.budget_total_cents is not None or overrides.must_finish_by is not None:
-            changes: dict[str, Any] = {"updated_at": sa.func.now()}
-            if overrides.budget_total_cents is not None:
-                changes["budget_total_cents"] = overrides.budget_total_cents
-            if overrides.must_finish_by is not None:
-                changes["must_finish_by"] = overrides.must_finish_by
-            # A policy the notes stated ("must hold") is kept; the deadline answer drives
-            # the deadline mode of later runs.
-            policies: dict[str, Any] = {}
-            if overrides.budget_mode is not None:
-                policies["budget_mode"] = ConstraintMode(overrides.budget_mode)
-            if overrides.deadline_mode is not None:
-                policies["deadline_mode"] = ConstraintMode(overrides.deadline_mode)
-                policies["deadline_answer"] = overrides.deadline_mode
-            changes.update(policies)
-            statement = pg_insert(constraint_sets).values(
-                project_id=project.id,
-                budget_total_cents=(
-                    overrides.budget_total_cents
-                    if overrides.budget_total_cents is not None
-                    else project.budget_cents
-                ),
-                start_date=project.start_date,
-                must_finish_by=overrides.must_finish_by or project.target_end_date,
-                **policies,
+            await self._write_limits(project, overrides)
+        await self._write_durations(project, overrides)
+        if overrides.add_members or overrides.remove_members:
+            await self.materialize_team(project)
+        await self._write_hours(project, overrides)
+        await self.write_team(project, overrides)
+
+    async def _write_limits(self, project: ProjectRef, overrides: PlanOverrides) -> None:
+        """Upsert the new budget / deadline (and stated policies) and mirror them on the project."""
+        changes: dict[str, Any] = {"updated_at": sa.func.now()}
+        if overrides.budget_total_cents is not None:
+            changes["budget_total_cents"] = overrides.budget_total_cents
+        if overrides.must_finish_by is not None:
+            changes["must_finish_by"] = overrides.must_finish_by
+        # A policy the notes stated ("must hold") is kept; the deadline answer drives
+        # the deadline mode of later runs.
+        policies: dict[str, Any] = {}
+        if overrides.budget_mode is not None:
+            policies["budget_mode"] = ConstraintMode(overrides.budget_mode)
+        if overrides.deadline_mode is not None:
+            policies["deadline_mode"] = ConstraintMode(overrides.deadline_mode)
+            policies["deadline_answer"] = overrides.deadline_mode
+        changes.update(policies)
+        statement = pg_insert(constraint_sets).values(
+            project_id=project.id,
+            budget_total_cents=(
+                overrides.budget_total_cents
+                if overrides.budget_total_cents is not None
+                else project.budget_cents
+            ),
+            start_date=project.start_date,
+            must_finish_by=overrides.must_finish_by or project.target_end_date,
+            **policies,
+        )
+        await self._connection.execute(
+            statement.on_conflict_do_update(
+                index_elements=[constraint_sets.c.project_id], set_=changes
             )
-            await self._connection.execute(
-                statement.on_conflict_do_update(
-                    index_elements=[constraint_sets.c.project_id], set_=changes
-                )
-            )
-            # Mirror on the project row so lists and the dashboard show the approved values.
-            mirror: dict[str, Any] = {}
-            if overrides.budget_total_cents is not None:
-                mirror["budget_cents"] = overrides.budget_total_cents
-            if overrides.must_finish_by is not None:
-                mirror["target_end_date"] = overrides.must_finish_by
-            await self._connection.execute(
-                sa.update(projects).where(projects.c.id == project.id).values(**mirror)
-            )
+        )
+        # Mirror on the project row so lists and the dashboard show the approved values.
+        mirror: dict[str, Any] = {}
+        if overrides.budget_total_cents is not None:
+            mirror["budget_cents"] = overrides.budget_total_cents
+        if overrides.must_finish_by is not None:
+            mirror["target_end_date"] = overrides.must_finish_by
+        await self._connection.execute(
+            sa.update(projects).where(projects.c.id == project.id).values(**mirror)
+        )
+
+    async def _write_durations(self, project: ProjectRef, overrides: PlanOverrides) -> None:
+        """Store the new work package durations as confirmed estimates."""
         # Approving the change confirms the new estimate (AI estimates count only once confirmed).
         for node_id, days in (overrides.duration_days or {}).items():
             await self._connection.execute(
@@ -243,8 +258,9 @@ class ChangeRepository(ChangeTeamWrites):
                     estimate_confirmed_by=sa.func.auth.uid(),
                 )
             )
-        if overrides.add_members or overrides.remove_members:
-            await self.materialize_team(project)
+
+    async def _write_hours(self, project: ProjectRef, overrides: PlanOverrides) -> None:
+        """Store the team members' new weekly hours; 0 hours takes them off the project."""
         # 0 hours = off the project; hours_per_week must stay within 1..80, so the row goes.
         # People only in the org-wide fallback pool (no project team yet) have no row to update.
         for employee_id, hours in (overrides.hours_per_week or {}).items():
@@ -260,4 +276,3 @@ class ChangeRepository(ChangeTeamWrites):
                     .where(*where)
                     .values(hours_per_week=max(hours, 1))
                 )
-        await self.write_team(project, overrides)

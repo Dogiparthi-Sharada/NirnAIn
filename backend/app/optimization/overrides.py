@@ -24,7 +24,7 @@ from typing import Any
 from app.optimization.model import ConstraintMode, Employee, PlanningInput, Task
 
 # A newcomer's skills count at the level the Team screen gives anyone added there
-# (app.repositories.team.DEFAULT_PROFICIENCY).
+# (app.repositories.team_skills.DEFAULT_PROFICIENCY).
 NEW_MEMBER_PROFICIENCY = 3
 
 
