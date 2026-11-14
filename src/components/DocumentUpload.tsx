@@ -136,7 +136,8 @@ export default function DocumentUpload({
             aria-describedby={hintId}
             aria-label={`Upload ${tile.label} (${tile.sub})`}
           >
-            <span aria-hidden="true">{tile.icon}</span>
+            {/* A bare text node like the design (`.tile` sizes it; `.tile span` would shrink it); the aria-label names the tile. */}
+            {tile.icon}
             <b>{tile.label}</b>
             <span>{tile.sub}</span>
           </button>

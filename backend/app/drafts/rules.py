@@ -327,9 +327,9 @@ def find_dates(text: str) -> tuple[DateField, DateField]:
     for sentence in sentences(text):
         hits = _date_hits(sentence)
         for index, hit in enumerate(hits):
-            prev_end = hits[index - 1].end if index else 0
+            previous_end = hits[index - 1].end if index else 0
             next_start = hits[index + 1].start if index + 1 < len(hits) else len(sentence)
-            role = _role(sentence[prev_end : hit.start], sentence[hit.end : next_start])
+            role = _role(sentence[previous_end : hit.start], sentence[hit.end : next_start])
             if role is None or (role, hit.exact) in found:
                 continue
             day = hit.first if role == "start" else hit.last

@@ -9,7 +9,7 @@
 import type { ReactNode } from 'react'
 import { Field, OptionsSelect, SectionHead, SectionHeadBody } from '@/components/CreateForm'
 import { DEPARTMENTS } from '@/lib/createForm'
-import { displayValue, markOf, REVIEW_IDS, REVIEW_LABELS, type Mark, type ReviewKey, type ReviewState } from '@/lib/draftReview'
+import { confirmTarget, markOf, REVIEW_IDS, REVIEW_LABELS, type Mark, type ReviewKey, type ReviewState } from '@/lib/draftReview'
 import {
   METHODOLOGIES,
   METHODOLOGY_LABELS,
@@ -93,7 +93,7 @@ export default function DraftReviewForm({
         <div className="note" id={`${REVIEW_IDS[key]}-note`}>
           {item.quote ? 'Worked out from your notes, not stated in them. ' : 'Not quoted from your notes. '}
           <button className="linkbtn" id={`pf-fix-${REVIEW_IDS[key].slice(3)}`} type="button" onClick={() => onConfirm(key)}>
-            Confirm {displayValue(key, item.value)}
+            Confirm {confirmTarget(key, item.value)}
           </button>
         </div>
       )

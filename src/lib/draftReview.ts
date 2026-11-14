@@ -108,11 +108,14 @@ export function markOf(item: ReviewValue): Mark {
   return item.origin
 }
 
-/** The value as the "Confirm …" button and the banner show it. */
-export function displayValue(key: ReviewKey, value: string): string {
+/**
+ * What "Confirm …" names: the date or amount itself ("Confirm Sep 30, 2025"); null for text, whose
+ * value is already in the field right above.
+ */
+export function confirmTarget(key: ReviewKey, value: string): string | null {
   if (key === 'startDate' || key === 'targetEndDate') return formatDate(value)
   if (key === 'budget') return `$${value}`
-  return value.length > 60 ? `“${value.slice(0, 59)}…”` : `“${value}”`
+  return null
 }
 
 function preview(quote: string): string {
@@ -145,7 +148,7 @@ export function reviewNeeds(state: ReviewState, intent: ReviewIntent): ReviewNee
     if (problem) {
       needs.push({ key, message: problem })
     } else if (intent === 'create' && markOf(item) === 'inferred') {
-      const value = displayValue(key, item.value)
+      const value = confirmTarget(key, item.value) ?? 'it'
       needs.push({
         key,
         message: item.quote
