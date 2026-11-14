@@ -403,7 +403,8 @@ Then click **+ Create Project** to try the whole flow.
 
 The demo seed script fills the hosted demo with sample users, projects and plans. It talks to the same public
 addresses as the website, so it needs `<SUPABASE-URL>`, `<PUBLISHABLE-KEY>` and `<YOUR-API-URL>`. **Follow the
-seed script's README** for the exact command. Before you run it:
+seed script's README** ([scripts/seed_demo/README.md](../scripts/seed_demo/README.md)) for the exact command.
+Before you run it:
 
 - Wake the API (step 2.3).
 - Keep **Confirm email** off (step 1.6) if the script creates users.
