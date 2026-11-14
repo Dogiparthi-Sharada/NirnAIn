@@ -11,6 +11,9 @@ applied while reading (approved NirnAIn workflow, step 5):
   (hard, Don't know, not answered) -> hard.
 * Outside specialists only when the PM answered 'yes', at the contractor
   rate or the $175/h estimate.
+* Hourly rates are read as stored; people without one are planned at the
+  $85/h default (`model.DEFAULT_HOURLY_RATE_CENTS`) and the confirmation
+  sheet says so.
 * Budget, capacity and skill policies are used as stored.
 
 `input_facts.py` gathers what the confirmation sheet needs beyond the input.
