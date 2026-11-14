@@ -1,3 +1,12 @@
+"""Team endpoints: who is on the project, their hours, type and rate, and the skills it needs.
+
+Purpose: Let the PM staff the project from the organization (reusing an employee by name) and keep
+the skill list; rule D1: employees are costed at their company rate, contractors need their own rate
+(the project's confirmed contractor rate being the default).
+How it fits: Uses app/repositories/team.py (with its skill queries); layer: api.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
+
 from __future__ import annotations
 
 import uuid
@@ -24,6 +33,7 @@ router = APIRouter(tags=["team"])
 
 
 async def _project(team: Team, project_id: uuid.UUID) -> ProjectRef:
+    """Return the project; 404 when it is hidden."""
     project = await team.project(project_id)
     if project is None:
         raise NotFoundError("Project not found")
@@ -31,6 +41,7 @@ async def _project(team: Team, project_id: uuid.UUID) -> ProjectRef:
 
 
 async def _editable_project(team: Team, project_id: uuid.UUID) -> ProjectRef:
+    """Return the project; 404 when hidden, 403 when the caller can't edit its team."""
     project = await _project(team, project_id)
     if not await team.can_write(project_id):
         raise ForbiddenError("You do not have permission to edit this project's team")
@@ -38,6 +49,7 @@ async def _editable_project(team: Team, project_id: uuid.UUID) -> ProjectRef:
 
 
 async def _members(team: Team, project: ProjectRef) -> list[TeamMember]:
+    """Return the team with hours booked elsewhere over the project's planning window."""
     start, end = await team.window(project)
     return await team.members(project, planning_weeks(start, end, datetime.now(UTC).date()))
 
@@ -54,7 +66,11 @@ async def _contractor_rate(team: Team, project_id: uuid.UUID, *rates: int | None
 
 
 async def _member(team: Team, project: ProjectRef, employee_id: uuid.UUID) -> TeamMember:
-    found = next((m for m in await _members(team, project) if m.employee_id == employee_id), None)
+    """Return one team member; 404 when they are not on the team."""
+    found = next(
+        (member for member in await _members(team, project) if member.employee_id == employee_id),
+        None,
+    )
     if found is None:
         raise NotFoundError("Team member not found")
     return found
@@ -67,6 +83,7 @@ async def _member(team: Team, project: ProjectRef, employee_id: uuid.UUID) -> Te
     summary="The team on this project, with hours already booked elsewhere",
 )
 async def list_team(project_id: ProjectId, team: Team) -> list[TeamMember]:
+    """Return the project's team with the hours each person is already booked elsewhere."""
     return await _members(team, await _project(team, project_id))
 
 
@@ -77,6 +94,11 @@ async def list_team(project_id: ProjectId, team: Team) -> list[TeamMember]:
     summary="Add a person to the team (reuses the organization's employee with that name)",
 )
 async def add_team_member(project_id: ProjectId, body: TeamMemberCreate, team: Team) -> TeamMember:
+    """Put a person on the team (reusing the organization's employee of that name); return them.
+
+    Returns 409 when they are already on it and 422 when an employee is given a rate or a contractor
+    has none (and the project has no confirmed contractor rate).
+    """
     project = await _editable_project(team, project_id)
     current = await team.member_names(project_id)
     if body.full_name.casefold() in {name.casefold() for name in current.values()}:
@@ -123,6 +145,10 @@ async def add_team_member(project_id: ProjectId, body: TeamMemberCreate, team: T
 async def update_team_member(
     project_id: ProjectId, employee_id: EmployeeId, body: TeamMemberUpdate, team: Team
 ) -> TeamMember:
+    """Change a member's role, hours, type, rate, skills or name and return them.
+
+    Returns 404 when they are not on the team and 409 when the new name is taken on it.
+    """
     project = await _editable_project(team, project_id)
     current = await team.member_names(project_id)
     if employee_id not in current:
@@ -175,6 +201,7 @@ async def _update_pay(
 async def remove_team_member(
     project_id: ProjectId, employee_id: EmployeeId, team: Team
 ) -> Response:
+    """Take a person off the team (they stay in the organization; their packages lose the owner)."""
     await _editable_project(team, project_id)
     if not await team.remove_member(project_id, employee_id):
         raise NotFoundError("Team member not found")
@@ -183,7 +210,10 @@ async def remove_team_member(
 
 # --------------------------------------------------------------------------- skills
 async def _skill(team: Team, project_id: uuid.UUID, skill_id: uuid.UUID) -> ProjectSkill:
-    found = next((s for s in await team.skills(project_id) if s.skill_id == skill_id), None)
+    """Return one skill of the project's list; 404 when it is not on it."""
+    found = next(
+        (skill for skill in await team.skills(project_id) if skill.skill_id == skill_id), None
+    )
     if found is None:
         raise NotFoundError("Skill not found in this project's list")
     return found
@@ -195,6 +225,7 @@ async def _skill(team: Team, project_id: uuid.UUID, skill_id: uuid.UUID) -> Proj
     summary="Skills this project needs and who on the team has them",
 )
 async def list_skills(project_id: ProjectId, team: Team) -> list[ProjectSkill]:
+    """Return the skills the project needs and who on the team holds each."""
     await _project(team, project_id)
     return await team.skills(project_id)
 
@@ -206,9 +237,12 @@ async def list_skills(project_id: ProjectId, team: Team) -> list[ProjectSkill]:
     summary="Add a skill to the project's list",
 )
 async def add_skill(project_id: ProjectId, body: ProjectSkillCreate, team: Team) -> ProjectSkill:
+    """Add a skill to the project's list and return it; 409 when it is already listed."""
     project = await _editable_project(team, project_id)
     await team.materialize_skills(project_id)
-    if any(s.name.casefold() == body.name.casefold() for s in await team.skills(project_id)):
+    if any(
+        skill.name.casefold() == body.name.casefold() for skill in await team.skills(project_id)
+    ):
         raise ConflictError(f"{body.name} is already in the list")
     ids = await team.ensure_skills(project.org_id, [body.name])
     if not ids:
@@ -226,16 +260,21 @@ async def add_skill(project_id: ProjectId, body: ProjectSkillCreate, team: Team)
 async def update_skill(
     project_id: ProjectId, skill_id: SkillId, body: ProjectSkillUpdate, team: Team
 ) -> ProjectSkill:
+    """Rename a skill or switch it between required and optional, and return it.
+
+    Renaming to another existing organization skill moves the project (and its holders) to that one.
+    """
     project = await _editable_project(team, project_id)
     await team.materialize_skills(project_id)
     listed = await team.skills(project_id)
-    current = next((s for s in listed if s.skill_id == skill_id), None)
+    current = next((skill for skill in listed if skill.skill_id == skill_id), None)
     if current is None:
         raise NotFoundError("Skill not found in this project's list")
     required = current.required if body.required is None else body.required
     if body.name is not None and body.name != current.name:
         if any(
-            s.skill_id != skill_id and s.name.casefold() == body.name.casefold() for s in listed
+            skill.skill_id != skill_id and skill.name.casefold() == body.name.casefold()
+            for skill in listed
         ):
             raise ConflictError(f"{body.name} is already in the list")
         existing = await team.org_skill(project.org_id, body.name)
@@ -255,6 +294,7 @@ async def update_skill(
     summary="Remove a skill from the project's list",
 )
 async def remove_skill(project_id: ProjectId, skill_id: SkillId, team: Team) -> Response:
+    """Remove a skill from the project's list; 404 when it is not on it."""
     await _editable_project(team, project_id)
     await team.materialize_skills(project_id)
     if not await team.remove_skill(project_id, skill_id):

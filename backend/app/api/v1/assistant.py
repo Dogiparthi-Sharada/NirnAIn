@@ -1,3 +1,12 @@
+"""The planning assistant endpoint.
+
+Purpose: Answer questions about the open project with Claude, using only what the caller can see; it
+is unavailable (503) rather than wrong when AI is not configured or does not answer in time.
+How it fits: Context from app/repositories/assistant.py, prompt from app/ai/assistant.py, model call
+through app/ai/llm.py; layer: api.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -22,6 +31,10 @@ logger = logging.getLogger("app.api.assistant")
 async def ask_assistant(
     body: AssistantRequest, request: Request, llm: AssistantLLM, contexts: AssistantContexts
 ) -> AssistantReply:
+    """Answer the conversation's last question about the page (and project) the user is on.
+
+    Returns 404 for a project the caller cannot see and 503 when AI is off, slow or fails.
+    """
     if not llm.configured:
         raise ServiceUnavailableError(NOT_CONFIGURED)
     context = None
@@ -36,7 +49,9 @@ async def ask_assistant(
             asyncio.to_thread(
                 llm.text,
                 system=system_prompt(body.page, context),
-                messages=chat_messages([(m.role, m.content) for m in body.messages]),
+                messages=chat_messages(
+                    [(message.role, message.content) for message in body.messages]
+                ),
                 timeout_s=timeout_s,
             ),
             timeout=timeout_s,

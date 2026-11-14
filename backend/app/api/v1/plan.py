@@ -1,9 +1,11 @@
-"""Applying a plan, plan versions and plan exports.
+"""Plan endpoints: applying a run, listing plan versions and exporting a plan.
 
-Business rule (round 3, R1): a run goes into force only while the project's saved inputs
-still hash to the `inputsHash` it was solved from; otherwise the plan answers a question
-nobody is asking any more (another team, other hours, other skills), so applying it is
-refused with 409 and the PM runs the optimizer again.
+Purpose: Round 3, R1: a run goes into force only while the project's saved inputs still hash to the
+`inputsHash` it was solved from; otherwise applying it is refused with 409 and the PM runs the
+optimizer again. Applied plans become versions that can be downloaded as PDF or MS Project XML.
+How it fits: Uses app/repositories/plan.py and app/repositories/optimization.py; renders through
+app/export; layer: api.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -35,6 +37,8 @@ STALE_RUN_DETAIL = (
 
 
 class ExportFormat(StrEnum):
+    """The file formats a plan can be downloaded in."""
+
     PDF = "pdf"
     MSPROJECT = "msproject"
 
@@ -80,6 +84,7 @@ async def apply_run(
     summary="Applied plan versions, oldest first",
 )
 async def plan_versions(project_id: ProjectId, plans: Plans) -> list[PlanVersion]:
+    """Return the project's applied plan versions, oldest first; 404 when the project is hidden."""
     if not await plans.project_visible(project_id):
         raise NotFoundError("Project not found")
     return await plans.versions(project_id)
@@ -100,6 +105,10 @@ async def export_run(
     plans: Plans,
     export_format: Annotated[ExportFormat, Query(alias="format")] = ExportFormat.PDF,
 ) -> Response:
+    """Return a successful run's plan as a PDF or MS Project XML download.
+
+    Returns 404 for an unknown run and 422 for a run without a plan.
+    """
     header = await plans.export_header(project_id, run_id)
     if header is None:
         raise NotFoundError(RUN_NOT_FOUND)

@@ -1,11 +1,10 @@
-"""`POST /orgs/{orgId}/project-drafts/extract`: project details read from a source.
+"""Project-draft endpoint: project details read from a transcript, document or pasted notes.
 
-Step 1b of the planning flow ("Create from a transcript or document"): the web app
-sends one file (multipart `file`) or pasted notes (JSON `{text}`) and gets back a
-`ProjectDraft` — each field with its verbatim quote and status — to pre-fill the
-review form. Nothing is stored; the project and its document are created later
-through the regular endpoints. Only members of the organization may call it (404
-otherwise, like other org endpoints, checked under the caller's RLS session).
+Purpose: Step 1b ("Create from a transcript or document") pre-fills the project form with each
+field's verbatim quote and status; nothing is stored, and only organization members may call it.
+How it fits: Reads files with app/api/v1/documents.py `uploaded_file` and app/drafts, then
+`DraftReader` (Claude or the rules reader); layer: api.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations

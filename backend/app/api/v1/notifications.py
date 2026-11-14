@@ -1,3 +1,10 @@
+"""Notification endpoints: list mine and mark one read.
+
+Purpose: Let users page through their notifications and clear them.
+How it fits: Uses app/repositories/notifications.py (RLS keeps users to their own); layer: api.
+Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+"""
+
 from __future__ import annotations
 
 from typing import Annotated
@@ -24,6 +31,7 @@ async def list_notifications(
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
     cursor: Annotated[str | None, Query(max_length=512)] = None,
 ) -> Page[Notification]:
+    """Return a page of the caller's notifications, newest first, optionally unread/read only."""
     items, next_cursor = await notifications.list_page(
         principal.user_id,
         unread=unread,
@@ -43,6 +51,7 @@ async def list_notifications(
 async def mark_notification_read(
     notification_id: NotificationId, principal: CurrentPrincipal, notifications: Notifications
 ) -> Notification:
+    """Mark a notification read and return it; 404 when it is not the caller's."""
     if not await notifications.mark_read(notification_id, principal.user_id):
         raise NotFoundError("Notification not found")
     notification = await notifications.get(notification_id)

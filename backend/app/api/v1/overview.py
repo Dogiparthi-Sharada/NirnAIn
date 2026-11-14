@@ -1,3 +1,11 @@
+"""Per-project dashboard endpoint.
+
+Purpose: Return everything the project overview shows in one call, derived from stored facts.
+How it fits: Facts from app/repositories/overview.py, derived by app/domain/overview.py with today's
+UTC date; layer: api.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -23,6 +31,7 @@ async def get_project_overview(
     projects: Projects,
     overviews: Overviews,
 ) -> ProjectOverview:
+    """Return the project's overview as the caller sees it; 404 when the project is not visible."""
     project = await projects.get(project_id)
     if project is None:
         raise NotFoundError("Project not found")

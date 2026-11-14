@@ -1,3 +1,10 @@
+"""The `/api/v1` router that collects every resource router.
+
+Purpose: Mount all version-1 endpoints under one prefix so the app includes a single router.
+How it fits: Included by app/main.py next to the unversioned health router; layer: api.
+Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+"""
+
 from __future__ import annotations
 
 from fastapi import APIRouter

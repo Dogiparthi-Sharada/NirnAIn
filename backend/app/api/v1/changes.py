@@ -1,10 +1,13 @@
 """Changes & Versions (step 7): record a change, answer its questions, approve or keep the plan.
 
-The re-plan itself is C1's `POST /projects/{projectId}/optimization/runs` with
-`{overrides, changeRequestId, baselineRunId}`; this module reads the change, derives
-the overrides, and applies the proposed run on approval. People who join get an
-organization employee reserved when the change is recorded (so the re-plan can staff
-them); approval puts them on the team, a rejection or a "Don't bring them in" releases it.
+Purpose: Something changed after a plan was applied: read what changed, ask what is unclear, re-plan
+and let the PM approve or reject the new plan. People who join get an organization employee reserved
+when the change is recorded (so the re-plan can staff them); approval puts them on the team, a
+rejection or "Don't bring them in" releases it.
+How it fits: The re-plan itself is `POST /projects/{projectId}/optimization/runs` with `{overrides,
+changeRequestId, baselineRunId}`; this module uses app/repositories/changes.py and the pure rules in
+app/changes; layer: api.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
