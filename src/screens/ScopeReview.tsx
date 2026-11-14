@@ -66,7 +66,7 @@ export default function ScopeReview() {
   }
 
   function continueToWbs() {
-    if (gate.blocked) setTried((n) => n + 1)
+    if (gate.blocked) setTried((attempts) => attempts + 1)
     else nav('wbs')
   }
 
