@@ -155,8 +155,8 @@ export function DependenciesCard({ projectId }: { projectId: string }) {
           <td className="row-acts">
             {isEditing ? (
               <>
-                <button className="btn sm" type="button" onClick={() => saveEdit(dependency)} disabled={updateDependency.isPending}>
-                  Save
+                <button className="btn sm" type="button" onClick={() => saveEdit(dependency)} disabled={updateDependency.isPending} aria-busy={updateDependency.isPending || undefined}>
+                  {updateDependency.isPending ? 'Saving\u2026' : 'Save'}
                 </button>{' '}
                 <button className="btn sec sm" type="button" onClick={() => setEditing(null)}>
                   Cancel
@@ -236,7 +236,13 @@ export function DependenciesCard({ projectId }: { projectId: string }) {
             </div>
           )}
           <div className="row mt">
-            <button className="btn sm" type="button" onClick={add} disabled={createDependency.isPending || workPackages.length === 0}>
+            <button
+              className="btn sm"
+              type="button"
+              onClick={add}
+              disabled={createDependency.isPending || workPackages.length === 0}
+              title={!createDependency.isPending && workPackages.length === 0 ? 'Add work packages on step 4 first.' : undefined}
+            >
               {createDependency.isPending ? 'Adding\u2026' : 'Add dependency'}
             </button>
             <button className="btn sec sm" type="button" onClick={() => setDraft(null)}>

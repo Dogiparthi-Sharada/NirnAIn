@@ -123,6 +123,11 @@ export function PlanView({
     }
   }
 
+  /** Why an export button waits: the other format is still downloading. */
+  function exportBusy(format: ExportFormat): string | undefined {
+    return exporting !== null && exporting !== format ? 'Wait for the other export to finish.' : undefined
+  }
+
   if (!result) {
     return <QuietNote>The solver finished but returned no plan details. Run it again to rebuild the plan.</QuietNote>
   }
@@ -233,14 +238,14 @@ export function PlanView({
           &larr; Adjust Constraints
         </button>
         <div className="row">
-          <button className="btn sec" type="button" onClick={() => void download('pdf')} disabled={exporting !== null}>
+          <button className="btn sec" type="button" onClick={() => void download('pdf')} disabled={exporting !== null} title={exportBusy('pdf')}>
             {exporting === 'pdf' ? 'Exporting\u2026' : 'Export PDF Report'}
           </button>
-          <button className="btn sec" type="button" onClick={() => void download('msproject')} disabled={exporting !== null}>
+          <button className="btn sec" type="button" onClick={() => void download('msproject')} disabled={exporting !== null} title={exportBusy('msproject')}>
             {exporting === 'msproject' ? 'Exporting\u2026' : 'Export to MS Project'}
           </button>
           {applied ? (
-            <button className="btn" id="btn-apply" type="button" disabled>
+            <button className="btn" id="btn-apply" type="button" disabled title="This plan is already applied.">
               {'\u2713'} Applied as Plan v{run.version}
             </button>
           ) : (
@@ -250,7 +255,7 @@ export function PlanView({
               type="button"
               onClick={apply}
               disabled={!canApply}
-              title={needsRate ? 'Confirm the contractor rate first' : undefined}
+              title={needsRate ? 'Confirm the contractor rate first' : !rateKnown ? 'Checking the contractor rate\u2026' : undefined}
             >
               {applyRun.isPending ? 'Applying\u2026' : 'Apply Optimized Plan'}
             </button>

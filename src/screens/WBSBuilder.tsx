@@ -19,6 +19,7 @@ import { Link, useParams } from 'react-router'
 import { GapBanner, useBannerFocus, type GapItem } from '@/components/CreateForm'
 import { PlanInForceBanner } from '@/components/InputsKit'
 import WbsTable, { estimateControlId } from '@/components/WbsTable'
+import WbsToolbar from '@/components/WbsToolbar'
 import WbsEmptyState from '@/components/WbsEmptyState'
 import WbsValidationCard from '@/components/WbsValidationCard'
 import { errorMessage } from '@/lib/api'
@@ -207,25 +208,16 @@ export default function WBSBuilder() {
             <h1>WBS Builder</h1>
             <div className="sub">Review and refine the hierarchical Work Breakdown Structure. AI has pre-populated based on scope.</div>
           </div>
-          <div className="row">
-            <span className="seg" role="group" aria-label="View">
-              <button className={flat ? undefined : 'on'} type="button" aria-pressed={!flat} onClick={() => setFlat(false)}>
-                Chart
-              </button>
-              <button className={flat ? 'on' : undefined} type="button" aria-pressed={flat} onClick={() => setFlat(true)}>
-                List
-              </button>
-            </span>
-            <button className="btn sec" type="button" onClick={addDeliverable}>
-              + Add Deliverable
-            </button>
-            <button className="btn sec" type="button" onClick={addWorkPackage} disabled={deliverables.length === 0}>
-              + Add Work Package
-            </button>
-            <button className="btn" id="btn-validate" type="button" onClick={() => startValidate.mutate()} disabled={validating || nodes.length === 0}>
-              {validating ? 'Validating…' : 'AI Validate'}
-            </button>
-          </div>
+          <WbsToolbar
+            flat={flat}
+            onFlat={setFlat}
+            onAddDeliverable={addDeliverable}
+            onAddWorkPackage={addWorkPackage}
+            canAddWorkPackage={deliverables.length > 0}
+            onValidate={() => startValidate.mutate()}
+            validating={validating}
+            canValidate={nodes.length > 0}
+          />
         </div>
 
         <PlanInForceBanner projectId={projectId} id="wbs-in-force" />
@@ -265,6 +257,7 @@ export default function WBSBuilder() {
               onClick={() => confirmEstimates.mutate(undefined)}
               disabled={confirmEstimates.isPending}
               aria-busy={confirmEstimates.isPending || undefined}
+              title={confirmEstimates.isPending ? 'Saving the confirmation in progress\u2026' : undefined}
             >
               {confirmEstimates.isPending && confirming.size === 0 ? 'Confirming…' : 'Confirm all estimates'}
             </button>
