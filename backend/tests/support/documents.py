@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import docx
 from fastapi.testclient import TestClient
@@ -15,6 +15,7 @@ from app.ai.documents import (
 )
 from app.domain.common import DocumentKind, OrgRole
 from app.domain.intake import SourceDocument
+from tests.support.clock import NOW
 from tests.support.store import Store
 
 
@@ -126,6 +127,3 @@ def upload_file(
         headers=headers,
     )
     return {"status": response.status_code, **response.json()}
-
-
-NOW = datetime(2026, 11, 13, 12, 0, tzinfo=UTC)

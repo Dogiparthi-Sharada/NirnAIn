@@ -15,15 +15,10 @@ from typing import Any
 
 import pytest
 
-from app.ai.llm import LLM
-from app.changes.compare import build_comparison, schedule_dates
-from app.changes.context import NodeRow, PlanRow, RunMeta
 from app.changes.derive import InvalidEditError, build_impact, derive_overrides, from_edits
 from app.changes.detect import detect
-from app.changes.llm import ChangeDetector, ProposedChange, ProposedChanges, to_changes
 from app.changes.questions import validate_answers
-from app.domain.changes import AddedMember, ChangeEdits, NewMember, PlanOverrides
-from app.domain.common import SolverStatus
+from app.domain.changes import AddedMember, ChangeEdits, PlanOverrides
 from tests.changes_fixtures import (
     ANA,
     ETL,
@@ -33,16 +28,9 @@ from tests.changes_fixtures import (
     QA_NOTES,
     SALESFORCE,
     SAP,
+    SPECIALIST,
     project_context,
     qa_context,
-)
-
-SPECIALIST = NewMember(
-    full_name="Security Specialist",
-    role_title="Security Specialist",
-    hours_per_week=40,
-    skills=["Security & Compliance Review"],
-    worker_type="contractor",
 )
 
 
@@ -229,188 +217,3 @@ def test_edits_and_progress_are_taken_as_they_are() -> None:
     )
     with pytest.raises(InvalidEditError):
         from_edits(ChangeEdits(duration_days={uuid.uuid4(): 5}), context)
-
-
-# --------------------------------------------------------------------------- Claude path
-def test_claude_changes_are_checked_against_notes_and_project() -> None:
-    context = project_context()
-    out = ProposedChanges(
-        changes=[
-            ProposedChange(
-                kind="budget",
-                value="$365,000",
-                quote="Finance is trimming the budget to $365K.",
-                confidence=0.9,
-            ),
-            ProposedChange(
-                kind="duration",
-                target="1.1.2",
-                value="30",
-                quote="sandbox access slips two weeks.",
-                confidence=0.7,
-            ),
-            # Not in the notes / unknown person: dropped.
-            ProposedChange(kind="budget", value="1", quote="Budget is $1.", confidence=1),
-            ProposedChange(
-                kind="capacity",
-                target="Nobody",
-                value="0",
-                quote="The Salesforce connector is done.",
-                confidence=1,
-            ),
-        ]
-    )
-    kept = to_changes(out, NOTES, context)
-    assert [(change.kind, change.target, change.to) for change in kept] == [
-        ("budget", None, 36_500_000),
-        ("duration", SAP, 30),
-    ]
-
-
-class _FakeLLM(LLM):
-    """Answers every call with `out` and records the prompts; never calls Claude."""
-
-    def __init__(self, out: ProposedChanges) -> None:
-        super().__init__(client=None, model="claude-sonnet-5-5")
-        self.out = out
-        self.prompts: list[str] = []
-
-    @property
-    def configured(self) -> bool:
-        return True
-
-    def parse(self, **fields: Any) -> Any:
-        self.prompts.append(fields["prompt"])
-        return self.out, None
-
-
-async def test_claude_may_report_a_newcomer_and_hours() -> None:
-    quote = "We agreed to bring in an outside security specialist for the compliance review."
-    llm = _FakeLLM(
-        ProposedChanges(
-            changes=[
-                ProposedChange(
-                    kind="team",
-                    role="Security Specialist",
-                    contractor=True,
-                    skills=["security & compliance review", "Knitting"],
-                    quote=quote,
-                    confidence=0.8,
-                ),
-                ProposedChange(
-                    kind="capacity",
-                    target="Leo Martins",
-                    value="16",
-                    quote="Leo can only give 16 hours a week from February.",
-                    confidence=0.9,
-                ),
-                # Already on the team, or without a role: dropped.
-                ProposedChange(
-                    kind="team", target="Leo Martins", role="Dev", quote=quote, confidence=1
-                ),
-                ProposedChange(kind="team", quote=quote, confidence=1),
-            ]
-        )
-    )
-    found, model = await ChangeDetector(llm).detect(QA_NOTES, qa_context())
-    assert model == "claude-sonnet-5-5"
-    assert [
-        (change.kind, change.action, change.to, change.member and change.member.model_dump())
-        for change in found
-    ] == [
-        ("team", "add", None, SPECIALIST.model_dump()),
-        ("capacity", None, 16, None),
-    ]
-    assert "- Security & Compliance Review" in llm.prompts[0]
-
-
-class _BrokenLLM(LLM):
-    def __init__(self) -> None:
-        super().__init__(client=None, model="claude-sonnet-5-5")
-
-    @property
-    def configured(self) -> bool:
-        return True
-
-    def parse(self, **_: Any) -> Any:
-        raise RuntimeError("boom")
-
-
-async def test_detector_falls_back_to_rules() -> None:
-    context = project_context()
-    found, model = await ChangeDetector(_BrokenLLM()).detect(NOTES, context)
-    assert model == "rules"
-    assert [change.kind for change in found] == ["scope", "budget", "duration", "duration"]
-    _, model = await ChangeDetector(None).detect(NOTES, context)
-    assert model == "rules"
-
-
-# --------------------------------------------------------------------------- compare
-def test_comparison_shows_what_moved_and_why() -> None:
-    context = project_context()
-    impact = build_impact(detect(NOTES, context), "notes", context, "rules")
-    snapshot = {
-        "start_date": "2025-01-13",
-        "constraints": {"budget_total_cents": 37_500_000, "working_days_per_week": 5},
-        "dependencies": [{"predecessor_id": str(SAP), "successor_id": str(ETL)}],
-    }
-    base = RunMeta(uuid.uuid4(), uuid.uuid4(), SolverStatus.OPTIMAL, 1, 1, None, snapshot)
-    proposed = RunMeta(uuid.uuid4(), base.project_id, SolverStatus.OPTIMAL, None, 2, None, snapshot)
-    root, group = uuid.uuid4(), uuid.uuid4()
-    nodes = [
-        NodeRow(root, None, 1, "1", "Platform"),
-        NodeRow(group, root, 2, "1.1", "Ingestion"),
-        NodeRow(SALESFORCE, group, 3, "1.1.1", "Salesforce connector development"),
-        NodeRow(SAP, group, 3, "1.1.2", "SAP integration setup"),
-        NodeRow(ETL, group, 3, "1.2.2", "ETL pipeline development"),
-    ]
-    before = [
-        PlanRow(SALESFORCE, MARK, None, 0, 2),
-        PlanRow(SAP, None, "SAP specialist", 3, 6),
-        PlanRow(ETL, MARK, None, 7, 11),
-    ]
-    after = [PlanRow(SAP, None, "SAP specialist", 3, 8), PlanRow(ETL, MARK, None, 9, 13)]
-    comparison = build_comparison(base, before, proposed, after, nodes, {MARK: "Mark Chen"}, impact)
-    rows = {row.code: row for row in comparison.rows}
-    assert rows["1.1.1"].after is None
-    assert rows["1.1.1"].why == "Done, nothing left to plan"
-    assert (rows["1.1.2"].shift_days, rows["1.1.2"].why) == (14, "Effort 4w → 6w")
-    assert (rows["1.2.2"].shift_days, rows["1.2.2"].why) == (14, "Follows 1.1.2")
-    assert rows["1.2.2"].group_code == "1.1"
-    assert rows["1.1.2"].before is not None
-    assert rows["1.1.2"].before.start == date(2025, 2, 3)
-    assert comparison.base.budget_cents == 37_500_000
-
-
-def test_comparison_uses_the_days_each_plan_schedules() -> None:
-    """QA pack CHANGE-009: ETL moves one day (Jan 11 → Jan 12), not a whole week."""
-    snapshot = {"start_date": "2027-01-04", "constraints": {"working_days_per_week": 5}}
-
-    def meta(ends: dict[uuid.UUID, str]) -> RunMeta:
-        schedule = schedule_dates(
-            [
-                {"wbsNodeId": str(node), "start": "2027-01-04", "end": end}
-                for node, end in ends.items()
-            ]
-            + [{"wbsNodeId": "not-a-uuid", "start": "2027-01-04", "end": "2027-01-04"}]
-        )
-        return RunMeta(
-            uuid.uuid4(), uuid.uuid4(), SolverStatus.OPTIMAL, 1, 1, None, snapshot, schedule
-        )
-
-    base = meta({SAP: "2027-01-05", ETL: "2027-01-11"})
-    proposed = meta({SAP: "2027-01-05", ETL: "2027-01-12"})
-    rows = [PlanRow(SAP, MARK, None, 0, 0), PlanRow(ETL, MARK, None, 1, 1)]
-    nodes = [
-        NodeRow(SAP, None, 2, "1.1", "SAP integration setup"),
-        NodeRow(ETL, None, 2, "1.2", "ETL"),
-    ]
-    comparison = build_comparison(base, rows, proposed, rows, nodes, {MARK: "Mark Chen"}, None)
-    by_code = {row.code: row for row in comparison.rows}
-    assert by_code["1.1"].before is not None
-    assert (by_code["1.1"].before.start, by_code["1.1"].before.end) == (
-        date(2027, 1, 4),
-        date(2027, 1, 5),
-    )
-    assert by_code["1.1"].shift_days == 0
-    assert by_code["1.2"].shift_days == 1

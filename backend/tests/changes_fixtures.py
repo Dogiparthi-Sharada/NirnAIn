@@ -27,6 +27,7 @@ from app.domain.changes import (
     ChangeSource,
     ChangeStatus,
     DetectedChange,
+    NewMember,
     PlanOverrides,
 )
 from app.domain.common import OrgRole, SolverStatus
@@ -332,3 +333,12 @@ def add_run(
         "inputs_hash": change_store.inputs_hash,
     }
     return run_id
+
+
+SPECIALIST = NewMember(
+    full_name="Security Specialist",
+    role_title="Security Specialist",
+    hours_per_week=40,
+    skills=["Security & Compliance Review"],
+    worker_type="contractor",
+)

@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 
 from app.domain.ai import AiJob
 from app.domain.common import AiJobKind, JobStatus, OrgRole
 from app.repositories.ai_jobs import ActiveJob, ActiveJobExistsError
+from tests.support.clock import NOW
 from tests.support.store import Store
-
-NOW = datetime(2026, 11, 13, 12, 0, tzinfo=UTC)
 
 
 # --------------------------------------------------------------------------- API
