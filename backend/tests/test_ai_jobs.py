@@ -32,13 +32,8 @@ from app.ai.wbs_generate import (
     TeamMember,
     WbsPlan,
 )
-from app.ai.wbs_validate import (
-    REVIEW_UNAVAILABLE,
-    NodeInfo,
-    ReviewIssue,
-    ValidationInput,
-    WbsReview,
-)
+from app.ai.wbs_review import REVIEW_UNAVAILABLE, ReviewIssue, WbsReview
+from app.ai.wbs_validate import NodeInfo, ValidationInput
 from app.api import deps
 from app.core.config import Settings
 from app.core.security import CurrentPrincipal

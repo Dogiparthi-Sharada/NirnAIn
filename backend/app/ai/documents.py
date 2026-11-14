@@ -1,22 +1,18 @@
 """Text extraction for documents uploaded to AI intake.
 
-Pure and blocking (pypdf / python-docx parse in Python), so the API runs
-`extract_text` with `asyncio.to_thread`. Only the extracted text is kept: there
-is no object storage yet, so the original file is discarded after this step.
-
-Business rules:
+Purpose: Keep only the text of an upload (there is no object storage), following these rules:
 - the kind comes from the file extension, falling back to the MIME type;
-- files may be up to 100 MB; they are read from the request's spooled temp
-  file (a stream), never copied into one big bytes object, and only the first
-  `TEXT_READ_LIMIT_BYTES` of a text file are read;
+- files may be up to 100 MB, read as a stream (never one big bytes object), and only the
+  first `TEXT_READ_LIMIT_BYTES` of a text file are read;
 - video is rejected (415): people should upload the meeting's transcript;
 - audio is accepted but not transcribed yet (stored as a failed extraction);
 - WebVTT / SRT captions keep only the spoken words (`app.ai.transcripts`);
-- at most `MAX_CHARS` characters of text are kept per document, and a document with
-  more says so (`truncated`): only its first part was read, never silently;
-- failures are recorded with a fixed, user-facing message. Exception text never
-  reaches the user or the server log: a parser error can quote the file. Only the
-  exception's class is kept, for the API to log with the document's id, size and kind.
+- at most `MAX_CHARS` characters are kept and a longer document says so (`truncated`);
+- failures get a fixed, user-facing message; exception text never reaches the user or the log
+  (a parser error can quote the file), only the exception's class.
+How it fits: Pure and blocking (pypdf / python-docx), so app/api/v1/documents.py runs
+`extract_text` with `asyncio.to_thread`; layer: ai.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -172,6 +168,7 @@ def _pdf_text(stream: BinaryIO) -> tuple[str, bool]:
 
 
 def _docx_text(stream: BinaryIO) -> str:
+    """Return a Word document's paragraphs and table cells as text."""
     import docx  # noqa: PLC0415 - heavy import, only needed for Word files
 
     document = docx.Document(stream)

@@ -1,8 +1,10 @@
 """AI intake with Claude: the prompt, the structured output and its grounding.
 
-The model returns scope items with the evidence it claims for each one;
-`suggestions_from_model` keeps only what can be verified against the notes
-(see `app.ai.evidence`).
+Purpose: Let Claude propose scope items with the evidence it claims, and keep only what can be
+verified against the notes (`app.ai.evidence`).
+How it fits: Called by the intake job (app/jobs/intake.py) when a key is configured; the rules in
+intake_rules.py are the fallback; layer: ai.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations

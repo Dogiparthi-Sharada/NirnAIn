@@ -34,15 +34,14 @@ from app.ai.wbs_generate import (
     suggest_owners,
     template_plan,
 )
-from app.ai.wbs_validate import (
+from app.ai.wbs_review import (
     REVIEW_UNAVAILABLE,
     VALIDATE_SYSTEM,
-    Issue,
     WbsReview,
     build_validation_prompt,
     review_issues,
-    validation_result,
 )
+from app.ai.wbs_validate import Issue, validation_result
 from app.core.config import Settings
 from app.domain.common import AiJobKind
 from app.repositories.ai_jobs import AiJobStore, ClaimedJob

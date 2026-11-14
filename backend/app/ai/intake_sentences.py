@@ -1,11 +1,10 @@
 """Sentence-level reading for the rule-based intake extractor (no Claude key, or Claude failed).
 
-The heading/bullet path in `app.ai.intake_rules` only understands structured
-notes; real meetings are prose. This module cuts a stretch of text into
-sentences, keeps each sentence's exact position in the source text, and turns
-the ones that match a keyword rule (`app.ai.intake_keywords`) into 'stated'
-scope items whose quote is the sentence exactly as written, so quote grounding
-(`app.ai.evidence`) finds it. Pure functions, no I/O.
+Purpose: Real meetings are prose: cut text into sentences, keep each one's exact position, and turn
+those matching a keyword rule into 'stated' items whose quote is the sentence as written, so quote
+grounding finds it.
+How it fits: Used by intake_rules.py with the rules in intake_keywords.py; pure; layer: ai.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations

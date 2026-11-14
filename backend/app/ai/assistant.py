@@ -1,6 +1,10 @@
 """Planning assistant: the system prompt and the project context it answers from.
 
-Pure functions; the endpoint reads the context under the caller's RLS session.
+Purpose: Let the assistant answer from the project's own facts only (never inventing numbers, names
+or dates), with every piece of project text fenced as data against prompt injection.
+How it fits: The endpoint (app/api/v1/assistant.py) reads the context under the caller's RLS session
+(app/repositories/assistant.py) and calls these pure functions; layer: ai.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -23,6 +27,8 @@ UNAVAILABLE = "The AI assistant is unavailable right now. Please try again."
 
 @dataclass(frozen=True, slots=True)
 class WbsLine:
+    """One WBS node as the assistant sees it."""
+
     code: str
     name: str
     level: int
@@ -32,6 +38,8 @@ class WbsLine:
 
 @dataclass(frozen=True, slots=True)
 class ProjectContext:
+    """The facts of the open project the assistant may talk about."""
+
     name: str
     description: str | None = None
     status: str | None = None
@@ -48,49 +56,55 @@ class ProjectContext:
 
 
 def money(cents: int) -> str:
+    """Return cents as whole dollars ("$375,000")."""
     return f"${cents / 100:,.0f}"
 
 
-def context_text(ctx: ProjectContext) -> str:  # noqa: PLR0912
-    lines = [f"Project: {as_data(one_line(ctx.name, 200))}"]
-    if ctx.description:
-        lines.append(f"Description: {as_data(one_line(ctx.description, 1000))}")
-    if ctx.status or ctx.current_step:
-        lines.append(f"Status: {ctx.status or 'unknown'}; workflow step: {ctx.current_step or '-'}")
-    if ctx.start_date or ctx.target_end_date:
-        start, end = ctx.start_date or "not set", ctx.target_end_date or "not set"
+def context_text(context: ProjectContext) -> str:  # noqa: PLR0912
+    """Render the project context as the plain-text lines inside the prompt's data block."""
+    lines = [f"Project: {as_data(one_line(context.name, 200))}"]
+    if context.description:
+        lines.append(f"Description: {as_data(one_line(context.description, 1000))}")
+    if context.status or context.current_step:
+        lines.append(
+            f"Status: {context.status or 'unknown'}; workflow step: {context.current_step or '-'}"
+        )
+    if context.start_date or context.target_end_date:
+        start, end = context.start_date or "not set", context.target_end_date or "not set"
         lines.append(f"Dates: start {start}, target end {end}")
-    if ctx.budget_cents is not None:
-        lines.append(f"Budget: {money(ctx.budget_cents)}")
-    if ctx.scope:
+    if context.budget_cents is not None:
+        lines.append(f"Budget: {money(context.budget_cents)}")
+    if context.scope:
         lines.append("Accepted scope:")
-        for category, texts in ctx.scope.items():
+        for category, texts in context.scope.items():
             for text in texts[:MAX_SCOPE_PER_CATEGORY]:
                 lines.append(f"- [{category}] {as_data(one_line(text, 300))}")
-    if ctx.wbs:
+    if context.wbs:
         lines.append("WBS:")
-        for node in ctx.wbs[:MAX_NODES]:
+        for node in context.wbs[:MAX_NODES]:
             parts = [f"{node.code} {as_data(one_line(node.name, 150))}"]
             if node.duration_days is not None:
                 parts.append(f"{node.duration_days} working days")
             if node.owner:
                 parts.append(f"owner {as_data(one_line(node.owner, 100))}")
             lines.append("  " * (node.level - 1) + "; ".join(parts))
-    if ctx.constraints:
+    if context.constraints:
         lines.append("Constraints:")
-        lines.extend(f"- {c}" for c in ctx.constraints)
-    if ctx.run_status:
-        lines.append(f"Latest optimization run: {ctx.run_status}")
-        lines.extend(f"- {as_data(k)}" for k in ctx.run_kpis)
-        if ctx.recommendations:
+        lines.extend(f"- {constraint}" for constraint in context.constraints)
+    if context.run_status:
+        lines.append(f"Latest optimization run: {context.run_status}")
+        lines.extend(f"- {as_data(kpi)}" for kpi in context.run_kpis)
+        if context.recommendations:
             lines.append("Top recommendations:")
             lines.extend(
-                f"- {as_data(one_line(r, 300))}" for r in ctx.recommendations[:MAX_RECOMMENDATIONS]
+                f"- {as_data(one_line(reason, 300))}"
+                for reason in context.recommendations[:MAX_RECOMMENDATIONS]
             )
     return "\n".join(lines)
 
 
-def system_prompt(page: str, ctx: ProjectContext | None) -> str:
+def system_prompt(page: str, context: ProjectContext | None) -> str:
+    """Build the assistant's system prompt for the user's screen, with the project's data."""
     parts = [
         "You are NirnAIn's planning assistant, helping a project manager use an AI-assisted "
         "project-planning tool (meeting notes -> scope -> WBS -> constraints -> optimal plan "
@@ -100,10 +114,10 @@ def system_prompt(page: str, ctx: ProjectContext | None) -> str:
         "names or dates. " + DATA_RULE,
         f"The user is on the '{as_data(one_line(page, 40))}' screen.",
     ]
-    if ctx is None:
+    if context is None:
         parts.append("No project is open.")
     else:
-        parts.append(data_block(context_text(ctx)))
+        parts.append(data_block(context_text(context)))
     return "\n\n".join(parts)
 
 

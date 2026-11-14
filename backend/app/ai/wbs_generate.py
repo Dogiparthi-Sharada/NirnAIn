@@ -1,5 +1,12 @@
-"""WBS generation: Claude prompt + output schema, a deterministic template
-fallback, and owner suggestions. Pure functions; the worker does the I/O."""
+"""WBS generation: the Claude prompt and output schema, a template fallback and owner suggestions.
+
+Purpose: Turn accepted scope into a three-level WBS the PM then edits: Claude's answer is clamped to
+what the schema accepts and dangling references are dropped; without Claude, one deliverable per
+accepted deliverable item with generic work packages; owners are suggested by skill match.
+How it fits: Pure functions; the AI job (app/jobs/ai_jobs.py) reads the input through
+app/repositories/ai_jobs.py and writes the plan with app/repositories/ai_wbs_writer.py; layer: ai.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -44,6 +51,8 @@ class NothingToPlanError(ValueError):
 # --------------------------------------------------------------------------- inputs
 @dataclass(frozen=True, slots=True)
 class ScopeEntry:
+    """A scope item as generation reads it."""
+
     id: uuid.UUID
     category: ScopeCategory
     text: str
@@ -52,6 +61,8 @@ class ScopeEntry:
 
 @dataclass(frozen=True, slots=True)
 class TeamMember:
+    """A person who may own work packages, with skill name -> proficiency."""
+
     id: uuid.UUID
     full_name: str
     role_title: str | None
@@ -60,6 +71,8 @@ class TeamMember:
 
 @dataclass(frozen=True, slots=True)
 class GenerationInput:
+    """Everything WBS generation reads about a project."""
+
     project_name: str
     description: str | None
     project_type: str
@@ -74,6 +87,8 @@ class GenerationInput:
 # --------------------------------------------------------------------------- plan
 @dataclass(frozen=True, slots=True)
 class PlannedPackage:
+    """A work package of a generated plan, keyed so links can refer to it."""
+
     key: str
     name: str
     description: str | None
@@ -84,6 +99,8 @@ class PlannedPackage:
 
 @dataclass(frozen=True, slots=True)
 class PlannedDeliverable:
+    """A deliverable of a generated plan and its work packages."""
+
     name: str
     description: str | None
     scope_item_id: uuid.UUID | None
@@ -92,6 +109,8 @@ class PlannedDeliverable:
 
 @dataclass(frozen=True, slots=True)
 class PlannedDependency:
+    """A link between two planned work packages, by key."""
+
     predecessor: str
     successor: str
     type: DependencyType = DependencyType.FS
@@ -100,15 +119,19 @@ class PlannedDependency:
 
 @dataclass(frozen=True, slots=True)
 class WbsPlan:
+    """A generated WBS: deliverables with work packages, and the links between packages."""
+
     deliverables: tuple[PlannedDeliverable, ...]
     dependencies: tuple[PlannedDependency, ...]
 
     @property
     def packages(self) -> list[PlannedPackage]:
-        return [p for d in self.deliverables for p in d.packages]
+        """Return every work package of the plan, in order."""
+        return [package for deliverable in self.deliverables for package in deliverable.packages]
 
     @property
     def empty(self) -> bool:
+        """Tell whether the plan has no work packages."""
         return not self.packages
 
 
@@ -116,37 +139,44 @@ def select_scope(
     items: Iterable[ScopeEntry], categories: set[ScopeCategory] | None = None
 ) -> list[ScopeEntry]:
     """Accepted items; when none are accepted yet, every item not removed."""
-    pool = [i for i in items if categories is None or i.category in categories]
-    accepted = [i for i in pool if i.status == ScopeStatus.ACCEPTED]
-    return accepted or [i for i in pool if i.status != ScopeStatus.REMOVED]
+    pool = [item for item in items if categories is None or item.category in categories]
+    accepted = [item for item in pool if item.status == ScopeStatus.ACCEPTED]
+    return accepted or [item for item in pool if item.status != ScopeStatus.REMOVED]
 
 
-def template_plan(inp: GenerationInput) -> WbsPlan:
+def template_plan(generation_input: GenerationInput) -> WbsPlan:
     """One deliverable per deliverable scope item, each with generic work packages."""
-    items = select_scope(inp.scope, {ScopeCategory.DELIVERABLE})
+    items = select_scope(generation_input.scope, {ScopeCategory.DELIVERABLE})
     if not items:
         raise NothingToPlanError(NO_DELIVERABLES)
     deliverables: list[PlannedDeliverable] = []
     dependencies: list[PlannedDependency] = []
-    for di, item in enumerate(items[:MAX_DELIVERABLES], start=1):
-        name = one_line(item.text, TEMPLATE_NAME_LIMIT).rstrip(".") or f"Deliverable {di}"
+    for deliverable_index, item in enumerate(items[:MAX_DELIVERABLES], start=1):
+        name = (
+            one_line(item.text, TEMPLATE_NAME_LIMIT).rstrip(".")
+            or f"Deliverable {deliverable_index}"
+        )
         packages = tuple(
             PlannedPackage(
-                key=f"D{di}.{pi}",
-                name=pkg_name,
+                key=f"D{deliverable_index}.{package_index}",
+                name=package_name,
                 description=None,
                 duration_days=weeks * DAYS_PER_WEEK,
                 skills=(),
                 scope_item_id=item.id,
             )
-            for pi, (pkg_name, weeks) in enumerate(TEMPLATE_PACKAGES, start=1)
+            for package_index, (package_name, weeks) in enumerate(TEMPLATE_PACKAGES, start=1)
         )
-        dependencies.extend(PlannedDependency(a.key, b.key) for a, b in pairwise(packages))
+        dependencies.extend(
+            PlannedDependency(first.key, second.key) for first, second in pairwise(packages)
+        )
         deliverables.append(PlannedDeliverable(name, None, item.id, packages))
     return WbsPlan(tuple(deliverables), tuple(dependencies))
 
 
 # --------------------------------------------------------------------------- Claude
+# Claude's structured-output schema. The classes deliberately have no docstrings:
+# Pydantic would send them to the model as schema descriptions and change its answers.
 class GeneratedPackage(BaseModel):
     key: str = Field(description="Unique short id for this work package, e.g. WP1")
     name: str = Field(description="Work package name, at most 80 characters")
@@ -192,37 +222,44 @@ GENERATE_SYSTEM = (
 )
 
 
-def build_generation_prompt(inp: GenerationInput) -> tuple[str, dict[str, uuid.UUID]]:
+def build_generation_prompt(generation_input: GenerationInput) -> tuple[str, dict[str, uuid.UUID]]:
     """Return the user prompt and the scope reference ids (S1, S2, ...) it uses."""
-    items = select_scope(inp.scope)
-    refs = {f"S{i}": item.id for i, item in enumerate(items, start=1)}
+    items = select_scope(generation_input.scope)
+    refs = {f"S{index}": item.id for index, item in enumerate(items, start=1)}
     lines = [
-        f"Project: {as_data(one_line(inp.project_name, 200))}",
-        f"Type: {inp.project_type}; methodology: {inp.methodology}",
+        f"Project: {as_data(one_line(generation_input.project_name, 200))}",
+        f"Type: {generation_input.project_type}; methodology: {generation_input.methodology}",
     ]
-    if inp.start_date or inp.target_end_date:
-        start, end = inp.start_date or "unknown", inp.target_end_date or "unknown"
+    if generation_input.start_date or generation_input.target_end_date:
+        start, end = (
+            generation_input.start_date or "unknown",
+            generation_input.target_end_date or "unknown",
+        )
         lines.append(f"Dates: start {start}, target end {end}")
-    if inp.description:
-        lines.append(f"Description: {as_data(one_line(inp.description, 2000))}")
+    if generation_input.description:
+        lines.append(f"Description: {as_data(one_line(generation_input.description, 2000))}")
     lines.append("Scope items:")
     lines.extend(
         f"{ref} [{item.category}] {as_data(one_line(item.text, 500))}"
         for ref, item in zip(refs, items, strict=True)
     )
-    if inp.org_skills:
-        skills = ", ".join(as_data(one_line(s, SKILL_LIMIT)) for s in inp.org_skills[:80])
+    if generation_input.org_skills:
+        skills = ", ".join(
+            as_data(one_line(skill, SKILL_LIMIT)) for skill in generation_input.org_skills[:80]
+        )
         lines.append(f"Existing organization skills: {skills}")
     return data_block("\n".join(lines)) + "\n\nCreate the WBS.", refs
 
 
 def _weeks_to_days(weeks: float) -> int:
+    """Return weeks as working days, clamped to 1..3650 (a week when the value isn't finite)."""
     if not math.isfinite(weeks):
         return DAYS_PER_WEEK
     return max(1, min(3650, round(weeks * DAYS_PER_WEEK)))
 
 
 def _skills(names: Sequence[str]) -> tuple[str, ...]:
+    """Return up to `MAX_SKILLS` cleaned skill names without case-insensitive duplicates."""
     seen: dict[str, str] = {}
     for raw in names:
         name = one_line(raw, SKILL_LIMIT)
@@ -232,53 +269,64 @@ def _skills(names: Sequence[str]) -> tuple[str, ...]:
 
 
 def _text(value: str, limit: int) -> str | None:
+    """Return the text on one line within `limit`, or None when it is empty."""
     cleaned = one_line(value, limit)
     return cleaned or None
 
 
-def plan_from_model(gen: GeneratedWbs, refs: Mapping[str, uuid.UUID]) -> WbsPlan:
+def plan_from_model(generated: GeneratedWbs, refs: Mapping[str, uuid.UUID]) -> WbsPlan:
     """Clamp Claude's output to what the schema accepts and drop dangling references."""
     keys: dict[str, str] = {}
     deliverables: list[PlannedDeliverable] = []
-    for d in gen.deliverables[:MAX_DELIVERABLES]:
-        name = _text(d.name, NAME_LIMIT)
+    for deliverable in generated.deliverables[:MAX_DELIVERABLES]:
+        name = _text(deliverable.name, NAME_LIMIT)
         if name is None:
             continue
         packages: list[PlannedPackage] = []
-        for p in d.work_packages[:MAX_PACKAGES]:
-            pname = _text(p.name, NAME_LIMIT)
-            if pname is None:
+        for package in deliverable.work_packages[:MAX_PACKAGES]:
+            package_name = _text(package.name, NAME_LIMIT)
+            if package_name is None:
                 continue
             key = f"WP{len(keys) + 1}"
-            keys.setdefault(p.key.strip(), key)
+            keys.setdefault(package.key.strip(), key)
             packages.append(
                 PlannedPackage(
                     key=key,
-                    name=pname,
-                    description=_text(p.description, DESCRIPTION_LIMIT),
-                    duration_days=_weeks_to_days(p.duration_weeks),
-                    skills=_skills(p.skills),
-                    scope_item_id=refs.get((p.scope_ref or "").strip()),
+                    name=package_name,
+                    description=_text(package.description, DESCRIPTION_LIMIT),
+                    duration_days=_weeks_to_days(package.duration_weeks),
+                    skills=_skills(package.skills),
+                    scope_item_id=refs.get((package.scope_ref or "").strip()),
                 )
             )
         deliverables.append(
             PlannedDeliverable(
                 name=name,
-                description=_text(d.description, DESCRIPTION_LIMIT),
-                scope_item_id=refs.get((d.scope_ref or "").strip()),
+                description=_text(deliverable.description, DESCRIPTION_LIMIT),
+                scope_item_id=refs.get((deliverable.scope_ref or "").strip()),
                 packages=tuple(packages),
             )
         )
 
     dependencies: list[PlannedDependency] = []
     pairs: set[frozenset[str]] = set()
-    for dep in gen.dependencies:
-        pred, succ = keys.get(dep.predecessor.strip()), keys.get(dep.successor.strip())
-        if pred is None or succ is None or pred == succ or frozenset((pred, succ)) in pairs:
+    for link in generated.dependencies:
+        predecessor, successor = (
+            keys.get(link.predecessor.strip()),
+            keys.get(link.successor.strip()),
+        )
+        if (
+            predecessor is None
+            or successor is None
+            or predecessor == successor
+            or frozenset((predecessor, successor)) in pairs
+        ):
             continue
-        pairs.add(frozenset((pred, succ)))
-        lag = max(-365, min(365, dep.lag_days))
-        dependencies.append(PlannedDependency(pred, succ, DependencyType(dep.type), lag))
+        pairs.add(frozenset((predecessor, successor)))
+        lag = max(-365, min(365, link.lag_days))
+        dependencies.append(
+            PlannedDependency(predecessor, successor, DependencyType(link.type), lag)
+        )
     return WbsPlan(tuple(deliverables), tuple(dependencies))
 
 
@@ -296,13 +344,15 @@ def suggest_owners(
     without skills) get no suggestion.
     """
     held = {
-        m.id: {name.casefold() for name, level in m.skills.items() if level >= min_proficiency}
-        for m in team
+        teammate.id: {
+            name.casefold() for name, level in teammate.skills.items() if level >= min_proficiency
+        }
+        for teammate in team
     }
     load = dict.fromkeys(held, 0)
     owners: dict[str, uuid.UUID] = {}
     for package in packages:
-        required = {s.casefold() for s in package.skills}
+        required = {skill.casefold() for skill in package.skills}
         if not required:
             continue
         best: tuple[tuple[int, int, str, str], uuid.UUID] | None = None

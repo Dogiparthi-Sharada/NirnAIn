@@ -1,8 +1,10 @@
 """Thin wrapper around the Anthropic SDK.
 
-The SDK's sync client blocks, so callers run these methods with
-`asyncio.to_thread`. Tests monkeypatch `LLM.parse` / `LLM.text` (or pass a
-fake client); nothing here is ever called without an API key.
+Purpose: Give every AI feature one way to call Claude (structured or plain chat) with token usage,
+and a clear "not configured" state so features fall back instead of failing.
+How it fits: The SDK's sync client blocks, so callers run these methods with `asyncio.to_thread`;
+tests monkeypatch `LLM.parse` / `LLM.text`; nothing is called without an API key; layer: ai.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -23,45 +25,55 @@ class LLMNotConfiguredError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class Usage:
+    """Tokens a call used, as Anthropic reports them."""
+
     input_tokens: int
     output_tokens: int
 
 
 @dataclass(frozen=True, slots=True)
 class ChatMessage:
+    """One turn of a chat conversation."""
+
     role: Literal["user", "assistant"]
     content: str
 
 
 def make_client(settings: Settings) -> anthropic.Anthropic | None:
+    """Return an Anthropic client for the configured key, or None without one."""
     if settings.anthropic_api_key is None:
         return None
     return anthropic.Anthropic(api_key=settings.anthropic_api_key.get_secret_value())
 
 
 class LLM:
+    """A Claude model behind an optional client."""
+
     def __init__(self, client: anthropic.Anthropic | None, model: str) -> None:
+        """Keep the client (None: not configured) and the model id to call."""
         self._client = client
         self.model = model
 
     @property
     def configured(self) -> bool:
+        """Tell whether an API key is configured."""
         return self._client is not None
 
     def _require(self) -> anthropic.Anthropic:
+        """Return the client; raises `LLMNotConfiguredError` without one."""
         if self._client is None:
             raise LLMNotConfiguredError
         return self._client
 
-    def parse[T: BaseModel](
+    def parse[ModelT: BaseModel](
         self,
         *,
         system: str,
         prompt: str,
-        output: type[T],
+        output: type[ModelT],
         max_tokens: int = 16000,
         timeout_s: float | None = None,
-    ) -> tuple[T, Usage]:
+    ) -> tuple[ModelT, Usage]:
         """One structured call: returns the validated `output` model and token usage."""
         response = self._require().messages.parse(
             model=self.model,
@@ -86,10 +98,10 @@ class LLM:
     ) -> tuple[str, Usage]:
         """A plain chat completion: returns the concatenated text blocks and token usage."""
         params: list[MessageParam] = [
-            {"role": "user", "content": m.content}
-            if m.role == "user"
-            else {"role": "assistant", "content": m.content}
-            for m in messages
+            {"role": "user", "content": message.content}
+            if message.role == "user"
+            else {"role": "assistant", "content": message.content}
+            for message in messages
         ]
         response = self._require().messages.create(
             model=self.model,

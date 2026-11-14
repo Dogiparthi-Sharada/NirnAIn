@@ -1,18 +1,11 @@
 """Meeting transcripts: caption cleanup and speaker labels.
 
-WebVTT / SRT captions (Zoom, Teams, Meet exports) are cleaned when a file is
-uploaded: the header, NOTE/STYLE/REGION blocks, cue numbers and timing lines
-go, `<v Speaker>` voice tags become "Speaker: ", and consecutive cues of the
-same speaker are merged into one line. Captions split a sentence across cues,
-so merging keeps every spoken sentence on one line and quotes stay verbatim.
-
-`split_speaker` recognises the labels in front of spoken lines ("Jane Doe:",
-"[00:01:02] Jane:", "Speaker 1:", "<v Jane>") for the rule-based extractor.
-`spoken_text` brings any notes source to the same shape when an intake run
-starts: raw captions pasted as notes, and transcripts stored one caption per
-line before uploads were merged, become one line per speaker turn, so
-sentences (and the quotes taken from them) are no longer cut at cue
-boundaries. Pure functions, no I/O.
+Purpose: Keep quotes verbatim across caption cues: WebVTT / SRT exports lose their headers, cue
+numbers and timings, voice tags become "Speaker: " and consecutive cues of one speaker merge into
+one line, so sentences are never cut at cue boundaries.
+How it fits: `clean_transcript` runs on upload (documents.py), `spoken_text` when an intake run
+starts and `split_speaker` in the rule-based extractor; pure; layer: ai.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations

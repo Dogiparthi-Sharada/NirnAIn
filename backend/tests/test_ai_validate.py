@@ -5,16 +5,13 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
+from app.ai.wbs_review import ReviewIssue, WbsReview, build_validation_prompt, review_issues
 from app.ai.wbs_validate import (
     EMPTY_WBS,
     DependencyInfo,
     NodeInfo,
-    ReviewIssue,
     ValidationInput,
-    WbsReview,
-    build_validation_prompt,
     critical_path_days,
-    review_issues,
     validation_result,
     working_days,
 )
