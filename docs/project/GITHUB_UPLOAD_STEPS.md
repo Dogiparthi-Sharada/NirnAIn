@@ -1,0 +1,351 @@
+# Put the NirnAIn work on GitHub yourself
+
+Exact, copy-paste steps for the product owner (GitHub user **Dogiparthi-Sharada**) to upload the demo from the
+build machine to GitHub. Every step has a **✅ Check it worked** line. Stop at the first check that fails.
+
+| | |
+|---|---|
+| Local repository | `/home/dog107433/AI-Assisted-Project-Planning-Platform` |
+| Branch with all the work | `demo/mockup` |
+| Remote `origin` | `https://github.com/SRILEKHA-BUDITHI/AI-Assisted-Project-Planning-Platform` (the team's repository; `main` is protected) |
+| Remote `sharada` | `https://github.com/Dogiparthi-Sharada/AI-Assisted-Project-Planning-Platform` (your fork) |
+
+Two ways to do it:
+
+- **(A) Recommended:** push `demo/mockup` to your fork, then open a pull request into SRILEKHA-BUDITHI's `main`.
+  AGENTS.md: never push to `main` directly; CI must pass, and the code owner must approve.
+- **(B)** A brand-new repository of your own.
+
+Do steps 1 and 2 first in both cases.
+
+> [!NOTE]
+> This documentation package is on the branch `nirnain/project-documentation` until the lead merges it into
+> `demo/mockup`. Step 2.4 checks that.
+
+---
+
+## 1. Sign in to GitHub from the terminal (once)
+
+GitHub doesn't accept your account password for `git push`. Use **either** a personal access token over HTTPS
+(1A, simplest) **or** an SSH key (1B).
+
+### 1A. HTTPS with a personal access token (recommended)
+
+1. On GitHub, click your picture → **Settings** → **Developer settings** → **Personal access tokens** →
+   **Fine-grained tokens** → **Generate new token**.
+2. Fill in:
+   - **Token name:** `nirnain-upload`
+   - **Expiration:** 30 days
+   - **Resource owner:** `Dogiparthi-Sharada`
+   - **Repository access:** **Only select repositories** → `AI-Assisted-Project-Planning-Platform` (for option B,
+     create the new repository first (step B1) and select it too)
+   - **Permissions** → **Repository permissions:**
+     - **Contents:** Read and write (needed to push branches)
+     - **Workflows:** Read and write (needed when a push creates or changes `.github/workflows/ci.yml`: always for
+       option B, and for the CI fix in step A7)
+     - **Metadata:** Read-only (added automatically)
+3. Click **Generate token** and copy it right away. GitHub shows it only once. Keep it in your password manager, never
+   in a file in the repository.
+
+   *Classic token instead?* **Tokens (classic)** → **Generate new token (classic)** with the scopes **`repo`** (or
+   `public_repo` if the repositories are public) and **`workflow`**.
+
+4. Make git remember the token for one hour, in memory only (not on disk; the build machine is shared):
+
+   ```bash
+   git config --global credential.helper 'cache --timeout=3600'
+   ```
+
+5. Test it. When git asks, enter your GitHub user name, and **paste the token as the password**:
+
+   ```bash
+   cd /home/dog107433/AI-Assisted-Project-Planning-Platform
+   git ls-remote sharada HEAD
+   ```
+
+✅ **Check it worked:** one line with a 40-character commit hash followed by `HEAD`. "Authentication failed" means
+the user name or token is wrong, or the token doesn't include this repository.
+
+### 1B. SSH key (alternative)
+
+```bash
+ssh-keygen -t ed25519 -C "<your-email>"        # press Enter to accept the file name; choose a passphrase
+cat ~/.ssh/id_ed25519.pub                      # copy the whole line
+```
+
+On GitHub: **Settings** → **SSH and GPG keys** → **New SSH key**, paste the line, then **Add SSH key**. Then:
+
+```bash
+ssh -T git@github.com
+cd /home/dog107433/AI-Assisted-Project-Planning-Platform
+git remote set-url sharada git@github.com:Dogiparthi-Sharada/AI-Assisted-Project-Planning-Platform.git
+git ls-remote sharada HEAD
+```
+
+✅ **Check it worked:** `ssh -T` answers `Hi Dogiparthi-Sharada! You've successfully authenticated…`, and
+`git ls-remote` prints a commit hash and `HEAD`.
+
+---
+
+## 2. Safety checks before any push
+
+### What must NOT be uploaded
+
+| Item | Why | How it stays out |
+|---|---|---|
+| `.vscode/` | Your editor's local settings | Untracked: never `git add` it |
+| The `.code-workspace` file | Local VS Code workspace with paths on this machine | Untracked: never `git add` it |
+| The mockup zip (for example `NirnAIn_demo_handoff_2026-11-13.zip`) and any other `.zip`, such as the QA pack | Large hand-off files, not source code | Untracked: never `git add` them; share them separately if needed |
+| Any `.env` file (`.env.local`, `backend/.env`, `supabase/.env`, …) | Real keys and passwords | `.gitignore` ignores `.env*`; only the `.env.example` templates are tracked |
+| The lead's session folder (`~/.copilot/session-state/…`) | It holds secrets (`localstack/secrets.env`, `localstack/env/*.env`, the Claude key) and the local database files | It is outside the repository: never copy anything from it into the repository |
+| The helper branches (`nirnain/*`, `preview/live`, `demo/backend-*`, `demo/working-demo`) | Work-in-progress copies, already merged | Push **only** `demo/mockup`; never `git push --all` |
+
+Untracked files are never uploaded by `git push`; only commits are. The risk is adding them by accident with
+`git add .`, `git add -A` or `git commit -a`, so don't use those commands in this repository.
+
+### 2.1 Look at the working folder
+
+```bash
+cd /home/dog107433/AI-Assisted-Project-Planning-Platform
+git status --short
+```
+
+✅ **Check it worked:** the items above appear only on lines that start with `??` (untracked). No line starts with
+`A`, `M` or `D` in the first column (nothing staged). If something is staged by mistake, unstage it with
+`git restore --staged <path>`.
+
+### 2.2 Optional: hide those items from `git status` (local only, never uploaded)
+
+```bash
+printf '%s\n' '.vscode/' '*.code-workspace' '*.zip' >> .git/info/exclude
+git status --short
+```
+
+✅ **Check it worked:** `.vscode/`, the `.code-workspace` file and the zip no longer appear.
+
+### 2.3 Check that no secret file is in the commits
+
+```bash
+git fetch origin
+git diff --name-only origin/main...demo/mockup | grep -E -i '(^|/)\.env|\.zip$|code-workspace|\.vscode/|secrets|localstack|session-state'
+```
+
+✅ **Check it worked:** the only line printed is `backend/.env.example` (a template without real values).
+
+```bash
+git grep -n -I -E 'sk-ant-[A-Za-z0-9_-]{20,}|sb_secret_[A-Za-z0-9_-]{16,}|eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}' demo/mockup
+```
+
+✅ **Check it worked:** nothing is printed (no Claude key, Supabase secret key or signed token in the code).
+
+### 2.4 Check that the branch has the documentation
+
+```bash
+git log --oneline -3 demo/mockup -- docs/project
+```
+
+✅ **Check it worked:** you see `docs:` commits such as "docs: add the final project report". If nothing is printed,
+ask the lead to merge `nirnain/project-documentation` into `demo/mockup` first.
+
+---
+
+## (A) Recommended: your fork, then a pull request into `main`
+
+### A1. Make sure the branch is up to date with `main`
+
+```bash
+git fetch origin
+git fetch sharada
+git merge-base --is-ancestor origin/main demo/mockup && echo "demo/mockup contains the latest main"
+```
+
+✅ **Check it worked:** it prints `demo/mockup contains the latest main`. If it prints nothing, someone changed `main`
+since; ask the lead to merge `main` into `demo/mockup` before you continue.
+
+### A2. Push the branch to your fork
+
+```bash
+git push sharada demo/mockup
+```
+
+✅ **Check it worked:** the output ends with `* [new branch]      demo/mockup -> demo/mockup` (or
+`demo/mockup -> demo/mockup` on a later push). Then compare the two hashes:
+
+```bash
+git ls-remote sharada demo/mockup
+git rev-parse demo/mockup
+```
+
+Both print the same 40-character hash.
+
+### A3. Open the pull request
+
+1. Open this address. It compares your fork's branch with the team's `main`:
+
+   <https://github.com/SRILEKHA-BUDITHI/AI-Assisted-Project-Planning-Platform/compare/main...Dogiparthi-Sharada:AI-Assisted-Project-Planning-Platform:demo/mockup>
+
+   Check the four boxes at the top: **base repository** `SRILEKHA-BUDITHI/AI-Assisted-Project-Planning-Platform`,
+   **base** `main`, **head repository** `Dogiparthi-Sharada/AI-Assisted-Project-Planning-Platform`,
+   **compare** `demo/mockup`.
+2. Click **Create pull request**.
+3. **Title:** `feat: NirnAIn demo: mockup UI, optimizer, plan versions and QA fixes`
+4. **Description:** the repository's template appears automatically. Keep its headings and checkboxes and fill
+   them in, for example:
+
+   ```markdown
+   ## What & why
+
+   The NirnAIn demo: the approved mockup ported to the live app (7 steps + dashboard), an OR-Tools CP-SAT optimizer
+   with priced ways to keep the date, plan versions and step-7 change handling, and four rounds of QA fixes.
+   Includes PR #18 (AI intake with Claude). Documentation: docs/project/ (start with FINAL_PROJECT_REPORT.md).
+   Hosting: docs/DEPLOY_DEMO.md (Render + a new Supabase project).
+
+   ## Area
+   - [x] Frontend (`src/`)
+   - [x] Backend (`backend/`)
+   - [x] Database (`supabase/`)
+   - [ ] CI / infra
+
+   ## Checklist
+   - [x] Tested locally
+   - [x] Tests added or updated
+   - [x] **DB change:** new migration file (never edit a merged migration), RLS enabled + policies on any new table, pgTAP test updated
+   - [x] **API change:** frontend types in `src/lib/types.ts` updated to match
+   - [x] No secrets, keys, or `.env` files committed
+
+   ## Screenshots (UI changes)
+   (drag in a few screenshots of the final walkthrough)
+   ```
+
+   Tick only what is true. The local test results are in `docs/project/FINAL_PROJECT_REPORT.md`, section 5.
+5. Click **Create pull request**.
+
+✅ **Check it worked:** the pull request page says **"Dogiparthi-Sharada wants to merge … commits into
+`SRILEKHA-BUDITHI:main` from `Dogiparthi-Sharada:demo/mockup`"**, and its **Files changed** tab doesn't list any
+`.env` file, zip or `.vscode/` file.
+
+> PR #18 (`feat/ai-intake-extraction`) is fully contained in `demo/mockup`. Once this pull request is merged, GitHub may
+> mark PR #18 as merged by itself; otherwise close it as included.
+
+### A4. Check CI on the pull request
+
+Open the pull request's **Checks** tab (or scroll to the checks box at the bottom of **Conversation**).
+
+| Job | What it runs |
+|---|---|
+| Detect changes | Decides which jobs are needed |
+| Frontend · typecheck + build | `pnpm install --frozen-lockfile`, `tsc --noEmit`, `pnpm build` |
+| Backend · lint + types + tests | `ruff check`, `ruff format --check`, `mypy app`, `pytest -q` |
+| Database · migrations + RLS tests | `supabase start` (all migrations from scratch), `supabase db lint`, `supabase test db` (pgTAP) |
+| Deploy · push migrations to production | Runs **only on `main`** after a merge; skipped on pull requests |
+
+✅ **Check it worked:** every job except "Deploy" shows a green ✓.
+
+- **The checks wait for approval** ("workflows awaiting approval"): GitHub may hold workflows from a fork until a
+  maintainer approves them. Ask SRILEKHA-BUDITHI to click **Approve and run workflows**.
+- **A red ✗**: click **Details**, copy the first error lines and send them to the developer or lead. Don't merge.
+
+### A5. Review
+
+GitHub automatically asks the code owner (**@SRILEKHA-BUDITHI**, from `.github/CODEOWNERS`) to review. `main`'s branch
+protection needs her approval **and** green CI before **Merge** is enabled.
+
+✅ **Check it worked:** the pull request shows "Review requested" from SRILEKHA-BUDITHI, then "Approved".
+
+### A6. Before merging: fix CI's database deploy (`--remote`)
+
+Merging into `main` starts CI on `main`. Because this pull request changes `supabase/`, the **Deploy** job then runs
+`supabase db push` against production. Two things must be ready first:
+
+1. **The command needs `--remote` with the newer Supabase CLI.** The job installs the CLI version `latest`. In the
+   current CLI, `supabase db push` and `supabase migration list` target the **local** database unless you pass
+   `--remote`. Before changing a hosted database, `db push` also asks for confirmation; `--yes` confirms without a
+   prompt. The hosting guide already uses `db push --remote` for the same reason
+   ([DEPLOY_DEMO.md, step 1.5](../DEPLOY_DEMO.md#15-create-the-database-tables-17-migrations)). The repository owner (or
+   you, with the **Workflows** token permission) changes the last steps of `.github/workflows/ci.yml` to:
+
+   ```yaml
+         - name: Show pending migrations
+           run: supabase migration list --remote --password "$SUPABASE_DB_PASSWORD"
+         - name: Apply migrations
+           run: supabase db push --remote --yes --password "$SUPABASE_DB_PASSWORD" --include-all
+   ```
+
+   Do this as a commit on `demo/mockup` (it then appears in this pull request) or as a separate small pull request
+   first. Changes under `/.github/` also need the code owner's approval.
+2. **The production secrets must point at the new Supabase project.** On the team repository: **Settings** →
+   **Environments** → **production**: the secrets `SUPABASE_ACCESS_TOKEN` and `SUPABASE_DB_PASSWORD` and the
+   variable `SUPABASE_PROJECT_REF`. The old Supabase project no longer exists. Only repository admins can change these.
+
+If the new project's tables were created with the SQL Editor instead of the CLI, don't let CI push migrations to it.
+The hosting guide explains why (step 1.5, Option B).
+
+✅ **Check it worked:** after the merge, the **Actions** tab on the team repository shows the run on `main` with
+"Deploy · push migrations to production" green, and its "Apply migrations" log ends without errors.
+
+---
+
+## (B) A brand-new repository of your own
+
+### B1. Create an empty repository
+
+On GitHub: **+** → **New repository** (<https://github.com/new>):
+
+- **Owner:** `Dogiparthi-Sharada`
+- **Repository name:** for example `nirnain-demo`
+- **Private** or **Public**: your choice
+- **Do not** add a README, a `.gitignore` or a license. The repository must be empty.
+
+Click **Create repository**. If you use a fine-grained token, add this repository to it now (step 1A.2).
+
+✅ **Check it worked:** the new page shows "Quick setup — if you've done this kind of thing before".
+
+### B2. Add it as a remote
+
+```bash
+cd /home/dog107433/AI-Assisted-Project-Planning-Platform
+git remote add mine https://github.com/Dogiparthi-Sharada/nirnain-demo.git
+git remote -v
+```
+
+✅ **Check it worked:** `git remote -v` lists `mine` twice (fetch and push), next to `origin` and `sharada`.
+(With SSH, use `git@github.com:Dogiparthi-Sharada/nirnain-demo.git` instead.)
+
+### B3. Push the branch
+
+Do the safety checks of step 2 first, then:
+
+```bash
+git push mine demo/mockup
+git ls-remote mine demo/mockup
+git rev-parse demo/mockup
+```
+
+✅ **Check it worked:** the push ends with `* [new branch]      demo/mockup -> demo/mockup`, and the last two
+commands print the same hash. "refusing to allow a Personal Access Token to create or update workflow" means the
+token lacks the **Workflows** permission (or the classic `workflow` scope).
+
+### B4. Make it the default branch
+
+On the new repository: **Settings** → **General** → **Default branch** → the ⇄ (switch) button → choose `demo/mockup`
+→ **Update** → confirm.
+
+✅ **Check it worked:** the repository's home page opens on `demo/mockup` and shows the README with its "Project
+documentation" section.
+
+### B5. Good to know for your own repository
+
+- **CI** runs on pull requests and on pushes to `main`. To run the checks once on `demo/mockup`: **Actions** →
+  **CI / CD** → **Run workflow** → branch `demo/mockup`. The Deploy job runs only on `main` and needs the
+  `production` secrets described in step A6, so it is skipped.
+- **`.github/CODEOWNERS`** names @SRILEKHA-BUDITHI. Change it to your own user name if the new repository is yours alone.
+- **Render** must be connected to this new repository instead of the fork
+  ([DEPLOY_DEMO.md, step 2.1](../DEPLOY_DEMO.md#21-connect-render-to-github)).
+
+---
+
+## Afterwards
+
+- Clear the cached token: `git credential-cache exit`. Delete the token on GitHub (**Settings** → **Developer
+  settings** → **Personal access tokens** → **Delete**) once you no longer need it, or let it expire.
+- Send the team the pull request link (option A) or the new repository's address (option B).
