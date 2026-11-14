@@ -3,7 +3,7 @@
 `ModelBuilder(problem, explain=False)` builds the main model (objective,
 hard constraints). `explain=True` builds the explanation model: no
 objective, and every hard constraint group behind an assumption literal
-(`groups`) so `solver.explain_infeasibility` can find the groups that
+(`groups`) so `blockers.explain_infeasibility` can find the groups that
 conflict. Both read the same `Problem` (`problem.py`); each person's work
 modes and capacity are in `workload.py`; the conflict texts come from
 `conflicts.py`.
@@ -11,14 +11,15 @@ modes and capacity are in `workload.py`; the conflict texts come from
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
 
 from ortools.sat.python import cp_model
 
 from app.optimization import conflicts
-from app.optimization.model import Conflict, Task
+from app.optimization.costing import spend_limit_cents
+from app.optimization.model import Conflict, Plan, ScheduledTask, Task
 from app.optimization.problem import Problem
 from app.optimization.workload import Workload
 
@@ -37,6 +38,20 @@ class Variables:
     start: dict[str, cp_model.IntVar]  # task id -> first working day
     end: dict[str, cp_model.LinearExprT]  # task id -> exclusive end, set by the chosen candidate
     assign: dict[str, dict[str, cp_model.IntVar]]  # task id -> resource id -> chosen?
+
+    def read(self, solver: cp_model.CpSolver, done: Mapping[str, ScheduledTask]) -> Plan:
+        """The solution as a plan: finished work where it happened, the rest as solved."""
+        plan = dict(done)
+        for task_id, choices in self.assign.items():
+            chosen = next(
+                resource_id
+                for resource_id, assigned in choices.items()
+                if solver.boolean_value(assigned)
+            )
+            plan[task_id] = ScheduledTask(
+                task_id, solver.value(self.start[task_id]), solver.value(self.end[task_id]), chosen
+            )
+        return Plan(plan)
 
 
 class ModelBuilder:
@@ -237,17 +252,20 @@ class ModelBuilder:
             max((problem.cost[task_id, resource.id] for resource in candidates), default=0)
             for task_id, candidates in problem.candidates.items()
         )
-        for key, label, cap in (
-            ("budget", "Budget cap", self.constraints.budget_total_cents),
-            ("labor", "Labor cap", self.constraints.labor_cap_cents),
+        limit, labor_cap = spend_limit_cents(self.constraints), self.constraints.labor_cap_cents
+        # The reserve is held back (R5): the hard cap, and the soft penalty's start, is
+        # the budget less the reserve. The labor cap has no reserve.
+        for key, label, amount, cap in (
+            ("budget", "Budget cap", self.constraints.budget_total_cents, limit),
+            ("labor", "Labor cap", labor_cap, labor_cap),
         ):
-            if cap is None:
+            if amount is None or cap is None:
                 continue
             if self.constraints.budget_mode == "hard":
                 self.guard(
                     model.add(cost <= cap),
                     (key,),
-                    partial(conflicts.budget, problem, label, cap),
+                    partial(conflicts.budget, problem, label, amount, amount - cap),
                 )
             elif not self.explain:
                 over = model.new_int_var(0, worst // BUDGET_UNIT_CENTS + 1, f"over[{key}]")

@@ -8,7 +8,9 @@ nothing for a contractor, who bills every hour at their rate.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
+from typing import Any
 
 import pytest
 
@@ -17,6 +19,7 @@ from app.optimization.model import (
     DEFAULT_HOURLY_RATE_CENTS,
     Constraints,
     Employee,
+    PlanningInput,
     Task,
 )
 from app.optimization.resources import build_resources
@@ -61,3 +64,46 @@ def test_overtime_costs_half_again_for_employees_only(is_contractor: bool, premi
     assert outcome.plan is not None
     report = build_report(inp, outcome)
     assert report.expected_cost_cents == 50 * 10_000 + premium
+
+
+# --------------------------------------------------------------------------- reserve (R5)
+def _thousand_dollar_package(**constraints: Any) -> PlanningInput:
+    """Pack MICRO-COST-RESERVE: one 8 h package by a $125/h contractor, $1,000 of labor."""
+    return make_input(
+        tasks=(Task("t", "1.1", "Micro task", 1, owner_id="q"),),
+        employees=(Employee("q", "Q", hourly_rate_cents=12_500, is_contractor=True),),
+        dependencies=(),
+        constraints=Constraints(allow_contractors=False, **constraints),
+    )
+
+
+def test_a_hard_budget_holds_back_its_reserve() -> None:
+    # $1,100 with a 10% reserve leaves $990 to spend: $10 short.
+    short = _thousand_dollar_package(budget_total_cents=110_000, contingency_pct=10)
+    outcome = solve(short, FAST)
+    assert outcome.status == "infeasible"
+    (conflict,) = outcome.conflicts
+    assert conflict.name == "Budget cap: $1,100"
+    assert conflict.explanation == (
+        "Even the cheapest qualified staffing costs about $1,000, $10 more than "
+        "the $990 left after holding back the $110 reserve."
+    )
+    # $1,112 holds back $111.20 and leaves $1,000.80: the plan fits.
+    enough = _thousand_dollar_package(budget_total_cents=111_200, contingency_pct=10)
+    assert solve(enough, FAST).status == "optimal"
+    no_reserve = replace(short, constraints=replace(short.constraints, contingency_pct=0))
+    assert solve(no_reserve, FAST).status == "optimal"
+
+
+def test_a_soft_budget_is_penalized_from_the_reserve_on() -> None:
+    inp = _thousand_dollar_package(
+        budget_total_cents=110_000, contingency_pct=10, budget_mode="soft"
+    )
+    outcome = solve(inp, FAST)
+    no_reserve = solve(replace(inp, constraints=replace(inp.constraints, contingency_pct=0)), FAST)
+    assert outcome.objective is not None
+    assert no_reserve.objective is not None
+    # $10 into the reserve costs one $1,000 unit of the budget penalty.
+    assert outcome.objective - no_reserve.objective == 1_000 * 100
+    summary = (build_report(inp, outcome).result or {})["summary"]
+    assert summary["softViolations"] == ["$10 of the $110 reserve used"]

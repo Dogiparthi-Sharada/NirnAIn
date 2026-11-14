@@ -2,9 +2,10 @@
 
 `POST …/optimization/runs` may carry `overrides` (camelCase, exactly as
 stored in `optimization_runs.options`): `budgetTotalCents`, `mustFinishBy`,
-`durationDays` (WBS node id -> working days left; 0 = done, not scheduled
-again), `hoursPerWeek` (employee id
--> hours), `addMembers` (people joining: `employeeId`, `fullName`,
+`deadlineMode` and `budgetMode` ('hard' | 'soft': "must hold" or "can
+flex", e.g. "must hold" next to a date in step-7 notes), `durationDays`
+(WBS node id -> working days left; 0 = done, not scheduled again),
+`hoursPerWeek` (employee id -> hours), `addMembers` (people joining: `employeeId`, `fullName`,
 `hoursPerWeek`, `skills` by name, `hourlyRateCents`, `workerType`; the older
 `isContractor` flag is still read when `workerType` is absent) and
 `removeMembers` (employee ids leaving). The API applies them to the loaded
@@ -20,7 +21,7 @@ from dataclasses import replace
 from datetime import date
 from typing import Any
 
-from app.optimization.model import Employee, PlanningInput, Task
+from app.optimization.model import ConstraintMode, Employee, PlanningInput, Task
 
 # A newcomer's skills count at the level the Team screen gives anyone added there
 # (app.repositories.team.DEFAULT_PROFICIENCY).
@@ -29,6 +30,11 @@ NEW_MEMBER_PROFICIENCY = 3
 
 def _as_date(value: Any) -> date:
     return value if isinstance(value, date) else date.fromisoformat(str(value))
+
+
+def _mode(value: Any) -> ConstraintMode:
+    """'hard' or 'soft' (the API validates it; anything else reads as hard)."""
+    return "soft" if value == "soft" else "hard"
 
 
 def _by_id(values: Mapping[Any, Any] | None) -> dict[str, Any]:
@@ -118,6 +124,10 @@ def apply_overrides(
         constraints = replace(constraints, budget_total_cents=int(overrides["budgetTotalCents"]))
     if overrides.get("mustFinishBy") is not None:
         constraints = replace(constraints, must_finish_by=_as_date(overrides["mustFinishBy"]))
+    if overrides.get("deadlineMode") is not None:
+        constraints = replace(constraints, deadline_mode=_mode(overrides["deadlineMode"]))
+    if overrides.get("budgetMode") is not None:
+        constraints = replace(constraints, budget_mode=_mode(overrides["budgetMode"]))
     durations = _by_id(overrides.get("durationDays"))
     employees, removed = _team(planning_input, overrides)
     # A missing duration keeps the WBS value; 0 days left marks the work done.

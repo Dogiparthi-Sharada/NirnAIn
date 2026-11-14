@@ -8,6 +8,10 @@ rate (`Resource.overtime_rate_cents`). Every hour is already counted once
 at the regular rate, so overtime adds `overtime rate - rate` per hour.
 The report (`report_context.py`) and the remedies (`remedies.py`) price
 plans with these functions, so the numbers on screen agree.
+
+The budget's contingency reserve is held back (round 3, R5): a plan may
+spend the budget less the reserve, `contingency_pct` of it rounded up to
+the cent, so plan cost + reserve never exceeds the budget.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from app.optimization.load import TENTHS, Block, daily_capacity_tenths, daily_tenths
-from app.optimization.model import Plan, PlanningInput, Resource
+from app.optimization.model import Constraints, Plan, PlanningInput, Resource
 from app.optimization.speed import WBS_PACE, pace_percent, work_hours
 
 
@@ -87,3 +91,17 @@ def plan_cost(
         if resource.overtime_rate_cents > resource.rate_cents
     )
     return regular + premium
+
+
+def reserve_cents(budget_cents: int, contingency_pct: float) -> int:
+    """The reserve held back from a budget: its percent, rounded up to the cent."""
+    hundredths = round(min(max(contingency_pct, 0.0), 100.0) * 100)
+    return -(-budget_cents * hundredths // 10_000)
+
+
+def spend_limit_cents(constraints: Constraints) -> int | None:
+    """What a plan may cost: the budget less its reserve (None without a budget)."""
+    budget = constraints.budget_total_cents
+    if budget is None:
+        return None
+    return budget - reserve_cents(budget, constraints.contingency_pct)

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from app.optimization import formatting as fmt
+from app.optimization.costing import reserve_cents
 from app.optimization.inputs import InputFacts
 from app.optimization.model import DEFAULT_HOURLY_RATE_CENTS
 from app.optimization.remedies import DEFAULT_SPECIALIST_RATE_CENTS
@@ -219,10 +220,14 @@ def _unlinked_skills(facts: InputFacts) -> list[Row]:
 
 
 def _contingency(facts: InputFacts) -> Line:
-    if facts.contingency_pct > 0:
-        value = f"{facts.contingency_pct:g}%"
-        return Row("contingency", "Contingency reserve", value, "yours", "Step 5"), None
-    return Row("contingency", "Contingency reserve", "0%", "default", NOT_IN_NOTES), None
+    """'Reserve · 10% = $110,000 held back': the plan may spend the budget less it."""
+    if facts.contingency_pct <= 0:
+        return Row("contingency", "Reserve", "0%", "default", NOT_IN_NOTES), None
+    value = f"{facts.contingency_pct:g}%"
+    if facts.budget_cents is not None:
+        held = reserve_cents(facts.budget_cents, facts.contingency_pct)
+        value += f" = {fmt.money(held)} held back"
+    return Row("contingency", "Reserve", value, "yours", "Step 5"), None
 
 
 def _working_days(facts: InputFacts) -> Line:

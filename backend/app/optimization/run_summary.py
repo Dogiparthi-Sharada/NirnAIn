@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.optimization import formatting as fmt
 from app.optimization.calendar import workdays_late, workdays_through
+from app.optimization.costing import spend_limit_cents
 from app.optimization.model import Task, qualified, target_of
 
 if TYPE_CHECKING:
@@ -81,6 +82,12 @@ def soft_violations(ctx: ReportContext, cost: int, finish: date) -> list[str]:
     ):
         if cap is not None and cost > cap:
             violations.append(f"{fmt.money(cost - cap)} over the {label}")
+    # A soft budget may also eat into the reserve held back from it (R5).
+    budget, limit = constraints.budget_total_cents, spend_limit_cents(constraints)
+    if budget is not None and limit is not None and limit < cost <= budget:
+        violations.append(
+            f"{fmt.money(cost - limit)} of the {fmt.money(budget - limit)} reserve used"
+        )
     overbooked = [
         resource.name
         for resource in ctx.resources.values()

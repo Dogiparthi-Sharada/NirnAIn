@@ -19,7 +19,8 @@ from pydantic import Field
 from app.domain.changes import MAX_NEW_MEMBERS, AddedMember
 from app.domain.common import CamelModel, InputModel, SolverStatus
 
-RemedyId = Literal["specialist", "overtime", "move_deadline"]
+RemedyId = Literal["specialist", "overtime", "move_deadline", "combined"]
+RemedyChangeKind = Literal["deadline", "budget", "specialist", "capacity"]
 InputSource = Literal["stated", "confirmed", "needs_you", "default", "assumed", "yours"]
 
 
@@ -104,12 +105,21 @@ class RunSummary(CamelModel):
     soft_violations: list[str]
 
 
+class RemedyChange(CamelModel):
+    """One thing the combined option changes, e.g. a later go-live or a contractor."""
+
+    kind: RemedyChangeKind
+    label: str
+
+
 class Remedy(CamelModel):
     """A priced way to keep the target date, or out of an infeasible run.
 
     `costCents` is the extra cost against this run's plan (0 for move_deadline
     when the plan slips); for an infeasible run, with no plan to compare with,
-    it is the whole relaxed plan's cost.
+    it is the whole relaxed plan's cost. `combined` ("Change these together",
+    offered when no single option gets an infeasible run a plan) lists its
+    `changes`; the other options have none.
     """
 
     id: RemedyId
@@ -117,6 +127,7 @@ class Remedy(CamelModel):
     detail: str
     cost_cents: int | None
     completion_date: date | None
+    changes: list[RemedyChange] = Field(default_factory=list)
 
 
 class RunResult(CamelModel):
@@ -146,7 +157,9 @@ class OptimizationRun(CamelModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
-    # Plan vN once the run is applied; options = how the run was set up.
+    # Plan vN once the run is applied; options = how the run was set up: the body as
+    # sent, `inputsHash` and `solverSettings` ({solver, version, timeLimitS, workers,
+    # seed, weights}).
     version: int | None = None
     applied_at: datetime | None = None
     options: dict[str, Any] = Field(default_factory=dict)
@@ -163,6 +176,9 @@ class RunOverrides(InputModel):
 
     budget_total_cents: int | None = Field(default=None, ge=0, le=10**13)
     must_finish_by: date | None = None
+    # "Must hold" (hard) or "Can flex" (soft) for this run, e.g. stated in step-7 notes.
+    deadline_mode: Literal["hard", "soft"] | None = None
+    budget_mode: Literal["hard", "soft"] | None = None
     duration_days: dict[uuid.UUID, Days] | None = Field(default=None, max_length=2000)
     hours_per_week: dict[uuid.UUID, Hours] | None = Field(default=None, max_length=500)
     # People joining (with the employee record step 7 reserved for them) or leaving.

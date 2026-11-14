@@ -216,3 +216,39 @@ def test_hard_capacity_names_the_part_timer_who_cannot_fit() -> None:
         "Capacity: Sam Okafor (20h/week)",
     ]
     assert "takes 10 working days instead of 5" in out.conflicts[1].explanation
+
+
+def _control(must_finish_by: date | None) -> PlanningInput:
+    """Pack CONTROL: one 8 h package by Q, a $100/h contractor at 32 h/week, "Can flex"."""
+    return make_input(
+        start_date=date(2027, 1, 4),
+        tasks=(Task("t", "1.1.1", "Micro task T", 1, owner_id="q"),),
+        employees=(Employee("q", "Q", 32, 10_000, is_contractor=True),),
+        dependencies=(),
+        constraints=Constraints(
+            must_finish_by=must_finish_by, capacity_mode="soft", allow_contractors=False
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("must_finish_by", "finish", "violations"),
+    [
+        # Due Jan 5: within Q's hours it takes Jan 4-5, so overtime buys nothing.
+        (date(2027, 1, 5), date(2027, 1, 5), []),
+        (None, date(2027, 1, 5), []),
+        # Due Jan 4: only 25% over Q's hours keeps the date.
+        (date(2027, 1, 4), date(2027, 1, 4), ["Q scheduled above their hours"]),
+    ],
+)
+def test_flexible_capacity_books_overtime_only_to_keep_a_date(
+    must_finish_by: date | None, finish: date, violations: list[str]
+) -> None:
+    inp = _control(must_finish_by)
+    outcome = solve(inp, FAST)
+    assert outcome.status == "optimal"
+    report = build_report(inp, outcome)
+    assert report.result is not None
+    assert report.completion_date == finish
+    assert report.result["summary"]["softViolations"] == violations
+    assert report.expected_cost_cents == 8 * 10_000  # a contractor's overtime costs no extra

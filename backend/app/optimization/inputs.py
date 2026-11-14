@@ -117,6 +117,7 @@ def facts_from_input(inp: PlanningInput, **database_facts: Any) -> InputFacts:
         dependency_types=dict(Counter(dependency.type for dependency in inp.dependencies)),
         budget_cents=constraints.budget_total_cents,
         budget_mode=constraints.budget_mode,
+        contingency_pct=constraints.contingency_pct,
         must_finish_by=constraints.must_finish_by,
         contractor_rate_cents=constraints.contractor_rate_cents,
         team=[employee.name for employee in inp.employees],
@@ -161,5 +162,9 @@ def inputs_hash(inp: PlanningInput) -> str:
     snapshot.pop("allocations", None)
     # The day it is computed isn't an input: the hash must not change overnight.
     snapshot.pop("today", None)
+    # No reserve changes nothing the solver does: such inputs keep the hash they had
+    # before the reserve reached the solver.
+    if not inp.constraints.contingency_pct:
+        snapshot["constraints"].pop("contingency_pct", None)
     canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode()).hexdigest()

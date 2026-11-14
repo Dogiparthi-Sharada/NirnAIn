@@ -78,6 +78,7 @@ async def test_qa_case_okta_required_and_a_specialist_at_185_reach_the_plan() ->
         "labor_cap_cents": None,
         "budget_mode": "soft",
         "budget_penalty": 1000.0,
+        "contingency_pct": 0,
         "must_finish_by": date(2027, 3, 31),
         "deadline_answer": "hard",
         "deadline_penalty_per_day": 500.0,
