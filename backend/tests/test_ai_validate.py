@@ -213,6 +213,29 @@ def test_skill_gaps_are_checked_against_the_project_team() -> None:
     ]
 
 
+def test_skill_gaps_are_info_when_step_5_allows_specialists() -> None:
+    nodes = tree(("Build", 5, True))
+    gaps: dict[str, object] = {
+        "required_skills": ("SAP Integration", "Python"),
+        "held_skills": frozenset({"python"}),
+        "team_ids": frozenset({OWNER}),
+    }
+    allowed = run(nodes, specialists_allowed=True, **gaps)
+    assert allowed["issues"] == [
+        {
+            "type": "info",
+            "text": "SAP Integration: no one on the team has it; a specialist will be brought "
+            "in (allowed on step 5).",
+        }
+    ]
+    priced = run(nodes, specialists_allowed=True, specialist_rate_cents=15_000, **gaps)
+    assert "a specialist will be brought in at $150/h (allowed on step 5)." in str(priced)
+    # Not allowed, or not answered yet: still a warning, whatever rate is on file.
+    refused = run(nodes, specialist_rate_cents=15_000, **gaps)
+    assert "Nobody on the project team has SAP Integration" in str(refused["issues"])
+    assert "'type': 'warning'" in str(refused["issues"])
+
+
 def test_review_issues_are_clamped_and_deduplicated() -> None:
     review = WbsReview(
         issues=[ReviewIssue(type="missing", text=f"  Add UAT {i}\n") for i in range(8)]

@@ -166,6 +166,9 @@ def _project_row() -> dict[str, Any]:
         "start_date": date(2026, 11, 2),
         "deadline": date(2026, 11, 30),
         "per_week": 5,
+        "specialist_answer": None,
+        "specialist_rate_confirmed": None,
+        "contractor_rate_cents": None,
     }
 
 
@@ -209,6 +212,27 @@ async def test_input_without_a_team_reads_no_people() -> None:
     assert (inp.has_team, inp.held_skills, inp.required_skills) == (False, frozenset(), ("RBAC",))
     # Step 4 never checks skills against the whole organization: no one's skills are read.
     assert not any("employee_skills" in sql for sql in conn.sql)
+
+
+async def test_input_reads_the_specialist_answer_and_the_confirmed_rate() -> None:
+    cases = [
+        (("yes", True, 15_000), (True, 15_000)),
+        (("yes", True, None), (True, 17_500)),  # the $175/h estimate, confirmed
+        (("yes", False, 15_000), (True, None)),  # a rate nobody confirmed isn't named
+        (("no", True, 15_000), (False, 15_000)),
+        (("unknown", False, None), (False, None)),
+        ((None, None, None), (False, None)),  # no constraint set yet
+    ]
+    for (answer, confirmed, rate), expected in cases:
+        row = {
+            **_project_row(),
+            "specialist_answer": answer,
+            "specialist_rate_confirmed": confirmed,
+            "contractor_rate_cents": rate,
+        }
+        inp = await read_validation_input(Scripted({PROJECT: [row]}), uuid.uuid4(), None)  # type: ignore[arg-type]
+        assert inp is not None
+        assert (inp.specialists_allowed, inp.specialist_rate_cents) == expected, row
 
 
 async def test_input_of_a_missing_project_and_the_change_time() -> None:

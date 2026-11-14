@@ -13,7 +13,10 @@ WBS change; only the Claude review costs tokens. Rules they apply:
   isn't on it is an info line.
 * Skills: without a project team, one info line names the skills the WBS
   needs (they are matched to people on step 5). With a team, each skill
-  nobody on it has is a warning. Info lines are never counted as issues.
+  nobody on it has is a warning, unless step 5 allows outside specialists
+  (answer 'yes', as the optimizer reads it): then the optimizer brings one
+  in, so it is an info line naming the confirmed rate when there is one.
+  Info lines are never counted as issues.
 """
 
 from __future__ import annotations
@@ -78,6 +81,8 @@ class ValidationInput:
     required_skills: tuple[str, ...] = ()
     held_skills: frozenset[str] = frozenset()  # casefolded skill names the project team has
     team_ids: frozenset[uuid.UUID] = frozenset()  # the project team (step 5); empty until set
+    specialists_allowed: bool = False  # step 5 answered 'yes' to outside specialists
+    specialist_rate_cents: int | None = None  # their hourly rate, once the PM confirmed it
     scope: tuple[ScopeEntry, ...] = ()
     today: date | None = None
 
@@ -198,7 +203,8 @@ def _deadline_issue(inp: ValidationInput, packages: Sequence[NodeInfo]) -> Issue
 
 def _skill_issues(inp: ValidationInput) -> list[Issue]:
     """Without a team, one info line naming the skills the WBS needs (matched on step 5);
-    with one, a warning per skill nobody on the project team has."""
+    with one, a line per skill nobody on the project team has: a warning, or an info line
+    when step 5 allows the specialist who will cover it."""
     needed: dict[str, str] = {}
     for skill in inp.required_skills:
         needed.setdefault(_norm(skill), skill)
@@ -214,13 +220,24 @@ def _skill_issues(inp: ValidationInput) -> list[Issue]:
                 f"Skills this WBS needs: {listed}. You'll match them to people on step 5.",
             )
         ]
+    gaps = [skill for key, skill in needed.items() if key not in inp.held_skills]
+    if inp.specialists_allowed:
+        rate = inp.specialist_rate_cents
+        priced = f" at ${rate / 100:,.0f}/h" if rate is not None else ""
+        return [
+            Issue(
+                "info",
+                f"{skill}: no one on the team has it; a specialist will be brought in{priced} "
+                "(allowed on step 5).",
+            )
+            for skill in gaps
+        ]
     return [
         Issue(
             "warning",
             f"Nobody on the project team has {skill}: add someone on step 5 or allow a specialist.",
         )
-        for key, skill in needed.items()
-        if key not in inp.held_skills
+        for skill in gaps
     ]
 
 

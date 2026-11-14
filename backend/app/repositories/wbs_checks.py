@@ -9,6 +9,9 @@ Every query names the project explicitly. Rules applied while reading:
   optimizer); the caller's `today` moves a past start forward (D4).
 * People: only the project team (step 5). Until it is set, step 4 names the skills the
   WBS needs instead of checking them against the whole organization.
+* Specialists: allowed when step 5 answered 'yes' (as `planning_input.build_constraints`
+  reads it). Their rate counts only once the PM confirmed it; a confirmed rate without a
+  stored amount is the $175/h estimate, as the step 6 inputs sheet shows it.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.ai.wbs_validate import DependencyInfo, NodeInfo, ValidationInput
+from app.optimization.remedy_options import DEFAULT_SPECIALIST_RATE_CENTS
 from app.repositories.tables import (
     constraint_sets,
     dependencies,
@@ -140,6 +144,9 @@ async def read_validation_input(
                     "deadline"
                 ),
                 sa.func.coalesce(limits.c.working_days_per_week, 5).label("per_week"),
+                limits.c.specialist_answer,
+                limits.c.specialist_rate_confirmed,
+                limits.c.contractor_rate_cents,
             )
             .select_from(project.outerjoin(limits, limits.c.project_id == project.c.id))
             .where(project.c.id == project_id)
@@ -155,6 +162,12 @@ async def read_validation_input(
         start_date=row.start_date,
         deadline=row.deadline,
         working_days_per_week=int(row.per_week),
+        specialists_allowed=row.specialist_answer == "yes",
+        specialist_rate_cents=(
+            row.contractor_rate_cents or DEFAULT_SPECIALIST_RATE_CENTS
+            if row.specialist_rate_confirmed
+            else None
+        ),
         required_skills=await _required_skills(conn, project_id),
         held_skills=held,
         team_ids=team_ids,
