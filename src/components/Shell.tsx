@@ -1,56 +1,26 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { Link, NavLink, useLocation, useMatch, useNavigate } from 'react-router'
+/**
+ * The signed-in app frame (mockup index.html `#app`, scripts/core/router.js, styles/shell.css):
+ * `aside#sidebar` with the brand, the workflow steps, the current project and the account menu;
+ * `main#main` for the screen; the docked NirnAIn AI panel `aside#chat` (or the floating
+ * `#chat-open` button when it is closed).
+ *
+ * Step locks follow the design: steps 2–6 need an open project (the project in the URL, or on the
+ * dashboard the one picked there), step 7 needs an applied plan (`GET …/plan-versions` non-empty;
+ * errors count as locked). Rendered by `App.tsx` around every signed-in route, inside
+ * `OrgProvider`; sign-out goes through `useAuth().signOut`.
+ */
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router'
 import { useAuth } from '@/auth/useAuth'
 import { useOrg } from '@/org/useOrg'
 import { useProject } from '@/lib/queries'
-import { FLOW_STEPS, stepPath } from '@/lib/steps'
+import { FLOW_STEPS, stepPath, type FlowStepKey } from '@/lib/steps'
 import { initials } from '@/lib/format'
+import { useCurrentProjectId, useLastProjectId, usePlanVersions, useScreenContext } from '@/lib/frame'
+import { toast } from '@/lib/toast'
 import AIChat from './AIChat'
-import { BrandMark, BrandName } from './Brand'
-import { Alert, Spinner } from './ui'
 
-function cx(...classes: (string | false | null | undefined)[]): string {
-  return classes.filter(Boolean).join(' ')
-}
-
-const navItemBase =
-  'mb-0.5 flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary'
-
-function navItemClass(active: boolean): string {
-  return cx(navItemBase, active ? 'bg-white font-semibold text-primary shadow-sm' : 'text-secondary-foreground hover:bg-white/60')
-}
-
-function StepBadge({ number, active, disabled }: { number?: number; active: boolean; disabled?: boolean }) {
-  if (number === undefined) return <span aria-hidden="true" className="inline-block h-[18px] w-[18px] shrink-0" />
-  return (
-    <span
-      aria-hidden="true"
-      className={cx(
-        'mono flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full text-[10px]',
-        active ? 'bg-secondary text-primary' : 'bg-[#DCCFB8] text-primary',
-        disabled && 'opacity-60',
-      )}
-    >
-      {number}
-    </span>
-  )
-}
-
-/** `/projects/:projectId/...` — but not the static `/projects/new` route. */
-function useCurrentProjectId(): string | undefined {
-  const match = useMatch('/projects/:projectId/*')
-  const id = match?.params.projectId
-  return id && id !== 'new' ? id : undefined
-}
-
-/** Name of the screen in the current URL, used as the assistant's context. */
-function useScreenLabel(): string {
-  const { pathname } = useLocation()
-  if (pathname === '/dashboard') return 'Dashboard'
-  if (pathname === '/projects/new') return 'Create Project'
-  const segment = /^\/projects\/[^/]+\/([^/]+)/.exec(pathname)?.[1]
-  return FLOW_STEPS.find((s) => s.segment === segment)?.label ?? 'Dashboard'
-}
+const ROLE_LABELS: Record<string, string> = { owner: 'Owner', admin: 'Admin', pm: 'PM', member: 'Member', viewer: 'Viewer' }
 
 /* ─────────────────────────── Assistant panel state ─────────────────────────── */
 
@@ -77,12 +47,14 @@ function persistChatOpen(open: boolean) {
 
 /* ─────────────────────────── Shell ─────────────────────────── */
 
+/** Sidebar + screen + assistant; scrolls the screen to the top on every navigation. */
 export default function Shell({ children }: { children: ReactNode }) {
-  const projectId = useCurrentProjectId()
-  const project = useProject(projectId)
-  const hintId = useId()
   const { pathname } = useLocation()
-  const screenLabel = useScreenLabel()
+  const routeProjectId = useCurrentProjectId()
+  const lastProjectId = useLastProjectId()
+  // On the dashboard the picked project is the open one; elsewhere only the project in the URL.
+  const projectId = routeProjectId ?? (pathname === '/dashboard' ? (lastProjectId ?? undefined) : undefined)
+  const contextLabel = useScreenContext()
   const identity = useAccountIdentity()
   const mainRef = useRef<HTMLElement>(null)
   const openChatRef = useRef<HTMLButtonElement>(null)
@@ -108,111 +80,117 @@ export default function Shell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
-      <aside className="flex w-[232px] shrink-0 flex-col border-r border-border bg-[#E8DCC6] text-secondary-foreground">
-        {/* Logo */}
-        <div className="border-b border-border px-5 py-5">
-          <Link to="/dashboard" className="flex items-center gap-2.5 rounded-md focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">
-            <BrandMark />
-            <div>
-              <BrandName className="block text-[15px] leading-[1.2] text-foreground" />
-              <div className="text-[10px] leading-[1.2] text-muted-foreground">Planning Platform</div>
-            </div>
-          </Link>
-        </div>
-
-        {/* Nav */}
-        <nav aria-label="Main" className="flex-1 overflow-y-auto px-3 py-4">
-          <div className="mb-1.5 pl-2 text-[10px] uppercase tracking-[0.08em] text-muted-foreground">Workflow</div>
-          <NavLink to="/dashboard" end className={({ isActive }) => navItemClass(isActive)}>
-            {({ isActive }) => (
-              <>
-                <StepBadge active={isActive} />
-                Dashboard
-              </>
-            )}
-          </NavLink>
-
-          {projectId && (
-            <div className="mx-0.5 mb-1.5 mt-3 rounded-md border border-border bg-white/70 px-2.5 py-2">
-              <div className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground">Current project</div>
-              {project.data ? (
-                <div className="mt-0.5 truncate text-xs font-medium text-foreground" title={project.data.name}>
-                  <span className="mono mr-1.5 text-muted-foreground">{project.data.code}</span>
-                  {project.data.name}
-                </div>
-              ) : project.isError ? (
-                <div className="mt-0.5 text-xs text-[#A83A4A]">Project unavailable</div>
-              ) : (
-                <div className="mt-1.5 h-3 w-28 animate-pulse rounded bg-[#DCCFB8]" />
-              )}
-            </div>
-          )}
-
-          <div className={projectId ? 'mt-1' : 'mt-0'}>
-            {FLOW_STEPS.map((step, index) => {
-              const enabled = step.segment === null || Boolean(projectId)
-              if (!enabled) {
-                return (
-                  <span
-                    key={step.key}
-                    role="link"
-                    aria-disabled="true"
-                    aria-describedby={hintId}
-                    tabIndex={0}
-                    title="Open or create a project first"
-                    className={cx(navItemBase, 'cursor-not-allowed text-[#94807A]')}
-                  >
-                    <StepBadge number={index + 1} active={false} disabled />
-                    {step.label}
-                  </span>
-                )
-              }
-              return (
-                <NavLink key={step.key} to={stepPath(step.key, projectId)} className={({ isActive }) => navItemClass(isActive)}>
-                  {({ isActive }) => (
-                    <>
-                      <StepBadge number={index + 1} active={isActive} />
-                      {step.label}
-                    </>
-                  )}
-                </NavLink>
-              )
-            })}
-            {!projectId && (
-              <p id={hintId} className="mx-2.5 mt-2 text-[11px] leading-4 text-muted-foreground">
-                Open or create a project first to unlock the planning steps.
-              </p>
-            )}
-          </div>
-        </nav>
-
-        <UserMenu identity={identity} />
-      </aside>
-
-      <main ref={mainRef} className="min-w-0 flex-1 overflow-y-auto">
-        <NoticeBanner />
-        {children}
-      </main>
-
-      {chatOpen ? (
+    <>
+      <div id="app">
+        <Sidebar projectId={projectId} identity={identity} />
+        <main id="main" ref={mainRef}>
+          {children}
+        </main>
         <AIChat
-          contextLabel={screenLabel}
+          open={chatOpen}
+          contextLabel={contextLabel}
           firstName={identity.firstName}
+          projectId={routeProjectId}
           onClose={() => toggleChat(false)}
           inputRef={chatInputRef}
         />
-      ) : (
-        <button
-          ref={openChatRef}
-          type="button"
-          onClick={() => toggleChat(true)}
-          className="fixed bottom-6 right-6 z-20 flex items-center gap-2 rounded-full bg-primary px-[18px] py-3 text-[13px] font-semibold text-primary-foreground shadow-lg transition hover:bg-[#5E262D] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary cursor-pointer"
-        >
-          <span aria-hidden="true">✦</span> Ask NirnAIn AI
+      </div>
+      {!chatOpen && (
+        <button ref={openChatRef} className="btn" id="chat-open" type="button" onClick={() => toggleChat(true)}>
+          &#10022; Ask NirnAIn AI
         </button>
       )}
-    </div>
+    </>
+  )
+}
+
+/* ─────────────────────────── Sidebar ─────────────────────────── */
+
+/** Brand, workflow steps with their locks, the current project and the account menu. */
+function Sidebar({ projectId, identity }: { projectId: string | undefined; identity: AccountIdentity }) {
+  const navigate = useNavigate()
+  const { pathname } = useLocation()
+  const project = useProject(projectId)
+  const planVersions = usePlanVersions(projectId)
+  const hasProject = Boolean(projectId && project.data)
+  const hasPlan = (planVersions.data?.length ?? 0) > 0
+
+  function activeStep(): FlowStepKey | 'dashboard' | null {
+    if (pathname === '/dashboard') return 'dashboard'
+    if (pathname.startsWith('/projects/new')) return 'create'
+    const segment = /^\/projects\/[^/]+\/([^/]+)/.exec(pathname)?.[1]
+    return FLOW_STEPS.find((step) => step.segment === segment)?.key ?? null
+  }
+  const active = activeStep()
+
+  function lockReason(step: FlowStepKey): string | null {
+    if (step === 'create') return null
+    if (!hasProject) return 'Open or create a project first'
+    if (step === 'changes' && !hasPlan) return 'Apply a plan on step 6 first'
+    return null
+  }
+
+  return (
+    <aside id="sidebar">
+      <Link className="sb-brand" to="/dashboard" style={{ color: 'inherit', textDecoration: 'none' }}>
+        <span className="bmark sm" aria-hidden="true">
+          N
+        </span>
+        <span>
+          <span className="bname" style={{ fontWeight: 700 }}>
+            Nirn<em>AI</em>n
+          </span>
+          <small>Planning Platform</small>
+        </span>
+      </Link>
+      <nav className="sb-nav" aria-label="Workflow">
+        <div className="sb-label">Workflow</div>
+        <button
+          className={active === 'dashboard' ? 'nav on' : 'nav'}
+          type="button"
+          aria-current={active === 'dashboard' ? 'page' : undefined}
+          onClick={() => navigate('/dashboard')}
+        >
+          <span className="nb dot" aria-hidden="true" />
+          Dashboard
+        </button>
+        {hasProject && project.data && (
+          <div className="sb-proj" id="sb-proj">
+            <div className="sb-label" style={{ padding: 0, margin: 0 }}>
+              Current project
+            </div>
+            <div className="mono small muted">{project.data.code}</div>
+            <div className="pname">{project.data.name}</div>
+          </div>
+        )}
+        {FLOW_STEPS.map((step, index) => {
+          const reason = lockReason(step.key)
+          return (
+            <button
+              key={step.key}
+              className={active === step.key ? 'nav on' : 'nav'}
+              type="button"
+              disabled={reason !== null}
+              title={reason ?? undefined}
+              aria-current={active === step.key ? 'page' : undefined}
+              onClick={() => navigate(stepPath(step.key, projectId))}
+            >
+              <span className="nb" aria-hidden="true">
+                {index + 1}
+              </span>
+              {step.label}
+              {reason && <span className="sr-only"> ({reason})</span>}
+            </button>
+          )
+        })}
+        {!hasProject && (
+          <p className="sb-hint" id="sb-hint">
+            Open or create a project first to unlock the planning steps.
+          </p>
+        )}
+      </nav>
+      <UserMenu identity={identity} />
+    </aside>
   )
 }
 
@@ -226,16 +204,14 @@ function metadataString(metadata: Record<string, unknown> | undefined, ...keys: 
   return null
 }
 
-const ROLE_LABELS: Record<string, string> = { owner: 'Owner', admin: 'Admin', member: 'Member', viewer: 'Viewer' }
-
 interface AccountIdentity {
   name: string
   firstName: string | null
   email: string
-  avatarUrl: string | null
-  subtitle: string
+  roleLabel: string
 }
 
+/** Who is signed in: the profile first, then the Supabase user metadata, then the email. */
 function useAccountIdentity(): AccountIdentity {
   const { user } = useAuth()
   const { me, org } = useOrg()
@@ -246,40 +222,13 @@ function useAccountIdentity(): AccountIdentity {
     name: fullName || email.split('@')[0] || 'Account',
     firstName: fullName?.split(/\s+/)[0] ?? null,
     email,
-    avatarUrl: me.avatarUrl || metadataString(metadata, 'avatar_url', 'picture'),
-    subtitle: me.jobTitle?.trim() || ROLE_LABELS[org.role] || org.role,
+    roleLabel: ROLE_LABELS[org.role] ?? org.role,
   }
 }
 
 /* ─────────────────────────── User menu ─────────────────────────── */
 
-function Avatar({ name, url, size = 28 }: { name: string; url: string | null; size?: number }) {
-  const [failed, setFailed] = useState(false)
-  if (url && !failed) {
-    return (
-      <img
-        src={url}
-        alt=""
-        width={size}
-        height={size}
-        referrerPolicy="no-referrer"
-        onError={() => setFailed(true)}
-        className="shrink-0 rounded-full object-cover"
-        style={{ width: size, height: size }}
-      />
-    )
-  }
-  return (
-    <div
-      aria-hidden="true"
-      className="flex shrink-0 items-center justify-center rounded-full bg-[#C9D6B8] font-semibold text-foreground"
-      style={{ width: size, height: size, fontSize: size * 0.4 }}
-    >
-      {initials(name)}
-    </div>
-  )
-}
-
+/** The account button and its menu (name, email, workspace + role, Sign out); Escape or a click outside closes it. */
 function UserMenu({ identity }: { identity: AccountIdentity }) {
   const { signOut } = useAuth()
   const { org } = useOrg()
@@ -287,13 +236,11 @@ function UserMenu({ identity }: { identity: AccountIdentity }) {
   const [signingOut, setSigningOut] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
-  const firstItemRef = useRef<HTMLButtonElement>(null)
-  const menuId = useId()
-  const { name, email, avatarUrl, subtitle } = identity
+  const signOutRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (!open) return
-    firstItemRef.current?.focus()
+    signOutRef.current?.focus()
     function onPointerDown(event: PointerEvent) {
       if (!containerRef.current?.contains(event.target as Node)) setOpen(false)
     }
@@ -315,6 +262,7 @@ function UserMenu({ identity }: { identity: AccountIdentity }) {
     setSigningOut(true)
     try {
       await signOut()
+      toast('Signed out.')
     } finally {
       setSigningOut(false)
     }
@@ -322,114 +270,45 @@ function UserMenu({ identity }: { identity: AccountIdentity }) {
 
   return (
     <div
+      className="sb-user"
       ref={containerRef}
-      className="relative border-t border-border px-3 py-3"
       onBlur={(event) => {
         if (open && !containerRef.current?.contains(event.relatedTarget as Node | null)) setOpen(false)
       }}
     >
       {open && (
-        <div
-          id={menuId}
-          role="menu"
-          aria-label="Account"
-          className="absolute bottom-full left-3 right-3 mb-2 overflow-hidden rounded-md border border-border bg-white text-foreground shadow-[0_12px_32px_-8px_rgba(35,34,58,0.35)]"
-        >
-          <div className="border-b border-muted px-3.5 py-3">
-            <div className="truncate text-[13px] font-semibold">{name}</div>
-            <div className="truncate text-xs text-muted-foreground">{email}</div>
+        <div className="user-menu" id="user-menu" role="menu" aria-label="Account">
+          <div>
+            <b>{identity.name}</b>
+            <small>{identity.email}</small>
           </div>
-          <div className="border-b border-muted px-3.5 py-2.5">
-            <div className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground">Organization</div>
-            <div className="mt-0.5 flex items-center justify-between gap-2 text-xs">
-              <span className="truncate font-medium">{org.name}</span>
-              <span className="shrink-0 rounded-full bg-muted px-2 py-px text-[10px] text-secondary-foreground">
-                {ROLE_LABELS[org.role] ?? org.role}
-              </span>
-            </div>
+          <div>
+            {org.name} <span className="chip st-default">{identity.roleLabel}</span>
           </div>
-          <button
-            ref={firstItemRef}
-            type="button"
-            role="menuitem"
-            onClick={handleSignOut}
-            disabled={signingOut}
-            className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-[13px] text-foreground hover:bg-background focus-visible:bg-muted focus-visible:outline-none disabled:text-[#A99A8E] cursor-pointer"
-          >
-            {signingOut ? (
-              <Spinner size={14} />
-            ) : (
-              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H3" />
-              </svg>
-            )}
-            {signingOut ? 'Signing out…' : 'Sign out'}
+          <button ref={signOutRef} id="btn-signout" type="button" role="menuitem" onClick={() => void handleSignOut()} disabled={signingOut}>
+            &#x21AA; {signingOut ? 'Signing out…' : 'Sign out'}
           </button>
         </div>
       )}
-
       <button
         ref={buttonRef}
+        id="user-btn"
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-controls={open ? menuId : undefined}
-        onClick={() => setOpen((v) => !v)}
-        className={cx(
-          'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-white/60 focus-visible:outline-2 focus-visible:outline-primary cursor-pointer',
-          open && 'bg-white/60',
-        )}
+        aria-controls={open ? 'user-menu' : undefined}
+        onClick={() => setOpen((previous) => !previous)}
       >
-        <Avatar name={name} url={avatarUrl} size={30} />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-xs font-medium text-foreground">{name}</div>
-          <div className="truncate text-[10px] text-muted-foreground">{subtitle}</div>
-        </div>
-        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7A6063" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M7 15l5-5 5 5" />
-        </svg>
-        <span className="sr-only">Open account menu</span>
+        <span className="avatar" aria-hidden="true">
+          {initials(identity.name)}
+        </span>
+        <span>
+          <b style={{ fontSize: 13 }}>{identity.name}</b>
+          <small>
+            {identity.roleLabel} &middot; {org.name}
+          </small>
+        </span>
       </button>
-    </div>
-  )
-}
-
-/* ─────────────────────────── Flash notice ─────────────────────────── */
-
-function noticeFromState(state: unknown): string | null {
-  if (typeof state === 'object' && state !== null && 'notice' in state) {
-    const notice = (state as { notice: unknown }).notice
-    return typeof notice === 'string' ? notice : null
-  }
-  return null
-}
-
-/** Shows a one-off success message passed via `navigate(path, { state: { notice } })`. */
-function NoticeBanner() {
-  const location = useLocation()
-  const navigate = useNavigate()
-  const notice = noticeFromState(location.state)
-
-  useEffect(() => {
-    if (!notice) return
-    const timer = window.setTimeout(() => {
-      navigate(`${location.pathname}${location.search}`, { replace: true, state: null })
-    }, 6000)
-    return () => window.clearTimeout(timer)
-  }, [notice, location.pathname, location.search, navigate])
-
-  return (
-    <div aria-live="polite" aria-atomic="true">
-      {notice && (
-        <div className="px-9 pt-6">
-          <Alert
-            tone="success"
-            onDismiss={() => navigate(`${location.pathname}${location.search}`, { replace: true, state: null })}
-          >
-            {notice}
-          </Alert>
-        </div>
-      )}
     </div>
   )
 }

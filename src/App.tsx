@@ -6,6 +6,7 @@ import { PublicOnly, RequireAuth } from './auth/guards'
 import OrgProvider from './org/OrgProvider'
 import Shell from './components/Shell'
 import { AppErrorBoundary, NotFound, RouteError } from './components/ErrorPages'
+import ToastHost from './components/Toast'
 import Login from './screens/Login'
 import Signup from './screens/Signup'
 import CheckEmail from './screens/CheckEmail'
@@ -29,6 +30,7 @@ function RootLayout() {
   return (
     <AuthProvider>
       <Outlet />
+      <ToastHost />
     </AuthProvider>
   )
 }

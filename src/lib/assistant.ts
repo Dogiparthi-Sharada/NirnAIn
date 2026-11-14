@@ -1,3 +1,14 @@
+/**
+ * NirnAIn AI assistant: starter prompts and the general-guidance fallback (mockup
+ * scripts/views/chat.js), used by `components/AIChat.tsx`.
+ *
+ * Replies normally come from `POST /api/v1/assistant/messages` (Claude, contract [BE2]). When the
+ * assistant is not configured (503), not deployed (404) or unreachable, the panel answers with
+ * general guidance about where things live in NirnAIn instead — it never invents project facts,
+ * and the panel labels such replies.
+ */
+import { isApiError } from './api'
+
 /** Starter prompts shown before the first question. */
 export const ASSISTANT_SUGGESTIONS = [
   'Summarize project risks',
@@ -6,27 +17,33 @@ export const ASSISTANT_SUGGESTIONS = [
   'Explain the optimization result',
 ] as const
 
-/**
- * Placeholder replies for the NirnAIn AI panel. There is no AI endpoint in the
- * backend yet; replace this with a call through `src/lib/api.ts` once it exists.
- * Replies describe what the assistant will do and never invent project data.
- */
-export function getAssistantReply(question: string, context: string): string {
-  const q = question.toLowerCase()
-  if (q.includes('risk')) {
-    return 'Once AI analysis is connected, I will rank the open risks on this project by impact and suggest mitigations tied to the affected work packages. Until then, risks extracted during AI Project Intake appear in Scope Review.'
+/** The server accepts at most 20 messages of up to 4,000 characters. */
+export const MAX_HISTORY = 20
+export const MAX_MESSAGE_CHARS = 4000
+
+/** True when the assistant itself is unavailable, so a general-guidance reply is better than an error. */
+export function assistantUnavailable(error: unknown): boolean {
+  if (!isApiError(error)) return true
+  return error.status === 0 || error.status === 404 || error.status === 502 || error.status === 503
+}
+
+/** General guidance for `question` on the screen named `context`; no project data involved. */
+export function guidanceReply(question: string, context: string): string {
+  const text = question.toLowerCase()
+  if (text.includes('risk')) {
+    return 'Risks AI extracts from your notes are listed in Scope Review, and the risks of an applied plan appear on the Dashboard. Rank them by impact and tie each mitigation to the work packages it affects.'
   }
-  if (q.includes('budget') || q.includes('cost')) {
-    return 'I will compare planned and committed spend and point out which constraints drive the gap. For now, the planned budget is on the Dashboard and budget limits are set in Constraints.'
+  if (text.includes('budget') || text.includes('cost')) {
+    return 'The planned budget is on the Dashboard and the budget limit is set in Constraints. Once a plan is optimized, compare its total cost with the budget to see the headroom and which constraints drive the cost.'
   }
-  if (q.includes('deliverable') || q.includes('wbs')) {
-    return 'I will check the work breakdown for missing deliverables, such as testing, rollout or disaster recovery, and propose work packages for you to approve. Use AI Validate in the WBS Builder to review structure issues.'
+  if (text.includes('deliverable') || text.includes('wbs')) {
+    return 'Check the work breakdown for missing deliverables such as testing, rollout or disaster recovery. AI Validate in the WBS Builder points out structure issues and gaps for you to review.'
   }
-  if (q.includes('optim') || q.includes('scenario')) {
-    return 'I will explain how each optimization scenario trades cost, schedule and utilization, and which constraints make a scenario infeasible. Run the optimizer from Constraints to compare scenarios.'
+  if (text.includes('optim') || text.includes('scenario')) {
+    return 'Optimization Results shows how the plan trades cost, schedule and utilization, and which constraints make a plan infeasible. Run the optimizer once the constraints are set to see it.'
   }
-  if (q.includes('constraint')) {
-    return 'I will explain which hard constraints (budget ceiling, deadline) and soft constraints (skill match, capacity) limit the plan, and which ones to relax first.'
+  if (text.includes('constraint')) {
+    return 'Hard constraints (Must hold, such as a budget ceiling or deadline) can never be broken; soft ones (Can flex, such as skills or capacity) can bend at a cost. Relax the soft ones first when a plan is infeasible.'
   }
   return `I can help with the ${context} step. Try asking about risks, budget, missing deliverables or constraints.`
 }

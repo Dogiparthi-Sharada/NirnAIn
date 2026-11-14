@@ -1,52 +1,90 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type Ref } from 'react'
-import { ASSISTANT_SUGGESTIONS, getAssistantReply } from '@/lib/assistant'
+/**
+ * The docked NirnAIn AI panel (mockup scripts/views/chat.js, `aside#chat`): a greeting that names
+ * the current screen, starter prompts, the conversation log and the question form.
+ *
+ * Questions go to `POST /api/v1/assistant/messages {projectId?, page, messages}` (via `useAssistant`)
+ * with the conversation so far. When the assistant is unavailable the panel answers with general
+ * guidance from `lib/assistant.ts`, labelled as such. The panel stays mounted while closed (hidden)
+ * so the conversation survives closing and reopening; Escape inside it closes it.
+ */
+import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent, type Ref } from 'react'
+import { errorMessage } from '@/lib/api'
+import { ASSISTANT_SUGGESTIONS, assistantUnavailable, guidanceReply, MAX_HISTORY, MAX_MESSAGE_CHARS } from '@/lib/assistant'
+import { useAssistant } from '@/lib/queries'
 
-interface Message {
+interface ChatMessage {
   id: number
-  role: 'user' | 'ai'
+  who: 'me' | 'ai'
   text: string
+  /** Shown under a reply: general guidance or an error, not an AI answer. */
+  note?: string
 }
 
-const REPLY_DELAY_MS = 700
+const QUESTION_MAX_CHARS = 500
 
+/** The assistant panel; hidden (not unmounted) when `open` is false. */
 export default function AIChat({
+  open,
   contextLabel,
   firstName,
+  projectId,
   onClose,
   inputRef,
 }: {
+  open: boolean
+  /** Screen name for the greeting and the request's `page`. */
   contextLabel: string
   firstName: string | null
+  /** The project in the URL, so answers can use its data (under the caller's access rights). */
+  projectId: string | undefined
   onClose: () => void
   inputRef?: Ref<HTMLInputElement>
 }) {
-  // The greeting is derived on every render so it always names the current page.
-  const greeting = `Hi${firstName ? ` ${firstName}` : ''}, I'm NirnAIn AI. You're on ${contextLabel}. Ask me anything about your project plan.`
-  const [messages, setMessages] = useState<Message[]>([])
-  const [input, setInput] = useState('')
-  const [typing, setTyping] = useState(false)
+  const assistant = useAssistant()
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [question, setQuestion] = useState('')
   const nextId = useRef(1)
-  const endRef = useRef<HTMLDivElement>(null)
-  const timerRef = useRef<number | undefined>(undefined)
+  const logRef = useRef<HTMLDivElement>(null)
   const headingId = useId()
-  const inputId = useId()
+  const typing = assistant.isPending
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    logRef.current?.scrollTo({ top: logRef.current.scrollHeight })
   }, [messages, typing])
 
-  useEffect(() => () => window.clearTimeout(timerRef.current), [])
+  function append(message: Omit<ChatMessage, 'id'>) {
+    setMessages((previous) => [...previous, { ...message, id: nextId.current++ }])
+  }
 
-  function send(text: string) {
-    const question = text.trim()
-    if (!question || typing) return
-    setMessages((m) => [...m, { id: nextId.current++, role: 'user', text: question }])
-    setInput('')
-    setTyping(true)
-    timerRef.current = window.setTimeout(() => {
-      setMessages((m) => [...m, { id: nextId.current++, role: 'ai', text: getAssistantReply(question, contextLabel) }])
-      setTyping(false)
-    }, REPLY_DELAY_MS)
+  function ask(text: string) {
+    const trimmed = text.trim()
+    if (!trimmed || typing) return
+    // Guidance and error replies are not the assistant's words; leave them out of the conversation.
+    const history = [...messages.filter((message) => !message.note), { id: 0, who: 'me' as const, text: trimmed }]
+    append({ who: 'me', text: trimmed })
+    setQuestion('')
+    assistant.mutate(
+      {
+        projectId,
+        page: contextLabel,
+        messages: history.slice(-MAX_HISTORY).map((message) => ({
+          role: message.who === 'me' ? ('user' as const) : ('assistant' as const),
+          content: message.text.slice(0, MAX_MESSAGE_CHARS),
+        })),
+      },
+      {
+        onSuccess: ({ reply }) => append({ who: 'ai', text: reply }),
+        onError: (error) =>
+          assistantUnavailable(error)
+            ? append({ who: 'ai', text: guidanceReply(trimmed, contextLabel), note: 'General guidance: the AI assistant isn’t available right now.' })
+            : append({ who: 'ai', text: 'Sorry, I couldn’t answer that.', note: errorMessage(error) }),
+      },
+    )
+  }
+
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    ask(question)
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLElement>) {
@@ -57,111 +95,59 @@ export default function AIChat({
   }
 
   return (
-    <aside
-      aria-labelledby={headingId}
-      onKeyDown={onKeyDown}
-      className="fixed inset-y-0 right-0 z-30 flex w-[320px] max-w-full shrink-0 flex-col border-l border-border bg-white shadow-[-12px_0_32px_-16px_rgba(114,47,55,0.35)] min-[1100px]:static min-[1100px]:z-auto min-[1100px]:shadow-none"
-    >
-      <header className="flex items-center justify-between border-b border-border bg-[#E8DCC6] px-4 py-3">
-        <div className="flex items-center gap-2">
-          <span aria-hidden="true" className="flex h-6 w-6 items-center justify-center rounded-md bg-primary text-xs text-primary-foreground">
-            ✦
-          </span>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <h2 id={headingId} className="m-0 text-[13px] font-semibold">
-                NirnAIn AI
-              </h2>
-              <span
-                className="rounded-full border border-[#e7c9a3] bg-[#F5E3C8] px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.06em] text-[#8a5518]"
-                title="Answers are placeholders until the AI service is connected."
-              >
-                Preview
-              </span>
-            </div>
-            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-              <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[#4F7A4A]" /> Context: {contextLabel}
-            </div>
-          </div>
+    <aside id="chat" hidden={!open} aria-labelledby={headingId} onKeyDown={onKeyDown}>
+      <div className="ch-head">
+        <div className="row">
+          <span className="ch-dot" aria-hidden="true" />
+          <b style={{ fontSize: 13 }} id={headingId}>
+            NirnAIn AI
+          </b>
+          <span className="ch-badge">Preview</span>
+          <button id="chat-close" type="button" aria-label="Close assistant" onClick={onClose}>
+            &times;
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close NirnAIn AI"
-          className="flex h-7 w-7 items-center justify-center rounded text-secondary-foreground transition-colors hover:bg-white/70 cursor-pointer"
-        >
-          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-            <path d="M6 6l12 12M18 6L6 18" />
-          </svg>
-        </button>
-      </header>
-
-      <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
-        <div role="log" aria-live="polite" aria-label="Conversation" className="flex flex-col gap-3">
-          <div className="max-w-[88%] self-start rounded-xl rounded-bl-[3px] bg-muted px-3 py-2 text-[13px] leading-[1.45] text-foreground">
-            <span className="sr-only">NirnAIn AI: </span>
-            {greeting}
-          </div>
-          {messages.map((m) => (
-            <div
-              key={m.id}
-              className={
-                m.role === 'user'
-                  ? 'max-w-[88%] self-end rounded-xl rounded-br-[3px] bg-primary px-3 py-2 text-[13px] leading-[1.45] text-primary-foreground'
-                  : 'max-w-[88%] self-start rounded-xl rounded-bl-[3px] bg-muted px-3 py-2 text-[13px] leading-[1.45] text-foreground'
-              }
-            >
-              <span className="sr-only">{m.role === 'user' ? 'You: ' : 'NirnAIn AI: '}</span>
-              {m.text}
-            </div>
-          ))}
-          {typing && (
-            <div className="self-start rounded-xl bg-muted px-3 py-2 text-[13px] text-muted-foreground">Thinking…</div>
-          )}
+        <div className="ch-ctx">
+          <span className="gdot" aria-hidden="true" />
+          Context: <span id="ch-ctx">{contextLabel}</span>
         </div>
-        {messages.length === 0 && (
-          <ul aria-label="Suggested questions" className="mt-1 flex flex-col gap-2">
-            {ASSISTANT_SUGGESTIONS.map((s) => (
-              <li key={s}>
-                <button
-                  type="button"
-                  onClick={() => send(s)}
-                  className="w-full rounded-lg bg-accent px-3 py-2 text-left text-xs text-accent-foreground transition-colors hover:bg-[#C9D6B8] cursor-pointer"
-                >
-                  {s}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        <div ref={endRef} />
       </div>
-
-      <form
-        onSubmit={(e) => {
-          e.preventDefault()
-          send(input)
-        }}
-        className="flex gap-2 border-t border-border p-3"
-      >
-        <label htmlFor={inputId} className="sr-only">
-          Ask NirnAIn AI about your plan
-        </label>
+      <div className="ch-log" id="ch-log" role="log" aria-live="polite" ref={logRef}>
+        <div className="msg ai">
+          Hi{firstName ? ` ${firstName}` : ''}, I&rsquo;m NirnAIn AI. You&rsquo;re on {contextLabel}. Ask me anything about your project plan.
+        </div>
+        {messages.map((message) => (
+          <div key={message.id} className={`msg ${message.who}`}>
+            {message.text}
+            {message.note && (
+              <small className="muted" style={{ display: 'block', marginTop: 6, fontSize: 11 }}>
+                {message.note}
+              </small>
+            )}
+          </div>
+        ))}
+        {typing && <div className="msg ai">Thinking&hellip;</div>}
+        {messages.length === 0 && (
+          <div className="sugg">
+            {ASSISTANT_SUGGESTIONS.map((suggestion) => (
+              <button key={suggestion} type="button" data-sugg={suggestion} onClick={() => ask(suggestion)}>
+                {suggestion}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <form className="ch-form" id="ch-form" onSubmit={onSubmit}>
         <input
           ref={inputRef}
-          id={inputId}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
+          id="ch-in"
           placeholder="Ask about your plan…"
-          autoComplete="off"
-          maxLength={500}
-          className="min-w-0 flex-1 rounded-lg border border-border bg-[#FAF5EB] px-2.5 py-2 text-[13px] text-foreground outline-none placeholder:text-[#A99A8E] focus:border-primary focus:shadow-[0_0_0_3px_rgba(114,47,55,0.16)]"
+          maxLength={QUESTION_MAX_CHARS}
+          aria-label="Ask NirnAIn AI about your plan"
+          value={question}
+          onChange={(event) => setQuestion(event.target.value)}
         />
-        <button
-          type="submit"
-          disabled={!input.trim() || typing}
-          className="rounded-lg bg-primary px-3.5 text-[13px] font-semibold text-primary-foreground transition hover:bg-[#5E262D] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
-        >
+        <button className="btn sm" id="ch-send" type="submit" disabled={typing}>
           Send
         </button>
       </form>
