@@ -3,11 +3,16 @@ import { useParams } from 'react-router'
 import { Chip, Crumb, GateBanner, useToast } from '@/components/InputsKit'
 import { errorMessage } from '@/lib/api'
 import type { EvidenceScopeItem } from '@/lib/inputs'
-import { useAddScopeItem, useLatestIntakeRun, useScopeItems, useUpdateScopeItem } from '@/lib/queries'
+import { useAddScopeItem, useLatestIntakeRun, useUpdateScopeItem } from '@/lib/queries'
 import { useStepNav } from '@/lib/steps'
 import { SCOPE_CATEGORIES, SCOPE_CATEGORY_LABELS, type ScopeCategory, type ScopeItemPatch } from '@/lib/types'
 import { PlanInForceBanner } from './changes/InForceBanner'
 import { scopeGate } from './scope/gate'
+import { ScopeItemRow } from './scope/ItemRow'
+import { useScopeList, useScopeListSync } from './scope/items'
+
+// Shown when Done is pressed on an empty item: blank items can't be saved (QA S-06).
+const BLANK_EDIT = 'Type the item’s text, or press Esc to keep it as it was. Use Remove if it no longer applies.'
 
 const SECTION_COLOR: Record<ScopeCategory, string> = {
   objective: '#DDE7D0',
@@ -21,44 +26,91 @@ const SECTION_COLOR: Record<ScopeCategory, string> = {
 export default function ScopeReview() {
   const nav = useStepNav()
   const { projectId = '' } = useParams()
-  const itemsQuery = useScopeItems(projectId)
+  // Removed items are listed too, so they keep their Undo after a reload (QA S-15).
+  const itemsQuery = useScopeList(projectId)
+  const syncList = useScopeListSync(projectId)
   const intake = useLatestIntakeRun(projectId)
   const updateItem = useUpdateScopeItem(projectId)
   const addItem = useAddScopeItem(projectId)
   const [toast, showToast] = useToast()
   const [editing, setEditing] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
+  const [editError, setEditError] = useState<string | null>(null)
   const [adding, setAdding] = useState<ScopeCategory | null>(null)
   const [addText, setAddText] = useState('')
   const [tried, setTried] = useState(0)
 
   const items = useMemo(() => (itemsQuery.data ?? []) as EvidenceScopeItem[], [itemsQuery.data])
   const visible = items.filter((i) => i.status !== 'removed')
+  const removed = items.filter((i) => i.status === 'removed')
   const accepted = visible.filter((i) => i.status === 'accepted').length
   // Pending items (and, first, those saying more than the notes) block the WBS step.
   const gate = scopeGate(items, () => void acceptAllQuoted())
   const actionError = updateItem.error ?? addItem.error
 
   function patch(itemId: string, body: ScopeItemPatch) {
-    updateItem.mutate({ itemId, patch: body })
+    updateItem.mutate({ itemId, patch: body }, { onSuccess: syncList })
+  }
+
+  function startEdit(item: EvidenceScopeItem) {
+    setEditing(item.id)
+    setEditText(item.text)
+    setEditError(null)
+  }
+
+  function stopEdit() {
+    setEditing(null)
+    setEditError(null)
   }
 
   function saveEdit(item: EvidenceScopeItem) {
     const text = editText.trim()
-    if (text && text !== item.text) patch(item.id, { text })
-    setEditing(null)
+    if (!text) {
+      setEditError(BLANK_EDIT)
+      return
+    }
+    if (text !== item.text) patch(item.id, { text })
+    stopEdit()
   }
 
   function saveAdd(category: ScopeCategory) {
     const text = addText.trim()
     if (!text) return
-    addItem.mutate({ category, text }, { onSuccess: () => setAdding(null) })
+    addItem.mutate(
+      { category, text },
+      {
+        onSuccess: (item) => {
+          syncList(item)
+          setAdding(null)
+        },
+      },
+    )
+  }
+
+  function rowProps(item: EvidenceScopeItem) {
+    return {
+      item,
+      editing: editing === item.id,
+      editText,
+      editError: editing === item.id ? editError : null,
+      onEditText: (text: string) => {
+        setEditText(text)
+        setEditError(null)
+      },
+      onAccept: () => patch(item.id, { status: item.status === 'accepted' ? 'pending' : 'accepted' }),
+      onRemove: () => patch(item.id, { status: item.status === 'removed' ? 'pending' : 'removed' }),
+      onFix: () => item.suggestedText && patch(item.id, { text: item.suggestedText }),
+      onEdit: () => (editing === item.id ? saveEdit(item) : startEdit(item)),
+      onCancelEdit: stopEdit,
+    }
   }
 
   async function acceptAllQuoted() {
     const quoted = items.filter((i) => i.evidence === 'stated' && i.status === 'pending')
     const results = await Promise.allSettled(
-      quoted.map((i) => updateItem.mutateAsync({ itemId: i.id, patch: { status: 'accepted' } })),
+      quoted.map((i) =>
+        updateItem.mutateAsync({ itemId: i.id, patch: { status: 'accepted' } }).then((saved) => syncList(saved)),
+      ),
     )
     const done = results.filter((r) => r.status === 'fulfilled').length
     const left = items.filter((i) => i.status === 'pending').length - done
@@ -150,8 +202,7 @@ export default function ScopeReview() {
         )}
         <div id="sc-body">
           {SCOPE_CATEGORIES.map((category) => {
-            const all = items.filter((i) => i.category === category)
-            const shown = all.filter((i) => i.status !== 'removed')
+            const shown = visible.filter((i) => i.category === category)
             const acc = shown.filter((i) => i.status === 'accepted').length
             return (
               <div className="card sc-sec" key={category}>
@@ -173,25 +224,8 @@ export default function ScopeReview() {
                     + Add item
                   </button>
                 </div>
-                {all.map((item) => (
-                  <ScopeItemRow
-                    key={item.id}
-                    item={item}
-                    editing={editing === item.id}
-                    editText={editText}
-                    onEditText={setEditText}
-                    onAccept={() => patch(item.id, { status: item.status === 'accepted' ? 'pending' : 'accepted' })}
-                    onRemove={() => patch(item.id, { status: item.status === 'removed' ? 'pending' : 'removed' })}
-                    onFix={() => item.suggestedText && patch(item.id, { text: item.suggestedText })}
-                    onEdit={() => {
-                      if (editing === item.id) saveEdit(item)
-                      else {
-                        setEditing(item.id)
-                        setEditText(item.text)
-                      }
-                    }}
-                    onCancelEdit={() => setEditing(null)}
-                  />
+                {shown.map((item) => (
+                  <ScopeItemRow key={item.id} {...rowProps(item)} />
                 ))}
                 {adding === category && (
                   <div className="item">
@@ -227,6 +261,19 @@ export default function ScopeReview() {
               </div>
             )
           })}
+          {removed.length > 0 && (
+            <div className="card sc-sec" id="sc-removed">
+              <div className="sc-head">
+                <span className="nm">
+                  Removed <span className="sc-badge">{removed.length}</span>
+                </span>
+                <span className="small muted">Undo puts an item back as pending.</span>
+              </div>
+              {removed.map((item) => (
+                <ScopeItemRow key={item.id} {...rowProps(item)} categoryLabel={SCOPE_CATEGORY_LABELS[item.category]} />
+              ))}
+            </div>
+          )}
         </div>
         <GateBanner
           id="sc-banner"
@@ -251,115 +298,5 @@ export default function ScopeReview() {
         {toast}
       </div>
     </section>
-  )
-}
-
-function ScopeItemRow({
-  item,
-  editing,
-  editText,
-  onEditText,
-  onAccept,
-  onRemove,
-  onFix,
-  onEdit,
-  onCancelEdit,
-}: {
-  item: EvidenceScopeItem
-  editing: boolean
-  editText: string
-  onEditText: (text: string) => void
-  onAccept: () => void
-  onRemove: () => void
-  onFix: () => void
-  onEdit: () => void
-  onCancelEdit: () => void
-}) {
-  const acc = item.status === 'accepted'
-  const rem = item.status === 'removed'
-  const quote = item.sourceQuote
-  let body = null
-  if (item.evidence === 'stated' && quote) body = <div className="quote">&ldquo;{quote}&rdquo;</div>
-  if (item.evidence === 'inferred') {
-    body = (
-      <>
-        {quote && <div className="quote inf">Based on: &ldquo;{quote}&rdquo;</div>}
-        {item.evidenceNote && <div className="note">{item.evidenceNote}</div>}
-      </>
-    )
-  }
-  if (item.evidence === 'flagged') {
-    body = (
-      <>
-        {quote && <div className="quote">&ldquo;{quote}&rdquo;</div>}
-        <div className="note bad">
-          {item.evidenceNote ? <>Not in your notes: &ldquo;{item.evidenceNote}&rdquo;</> : 'Says more than your notes.'}
-        </div>
-      </>
-    )
-  }
-
-  let chip = null
-  if (item.origin === 'manual') chip = <Chip kind="yours" />
-  else if (item.evidence === 'flagged') chip = acc ? <Chip kind="confirmed">&#10003; Your statement</Chip> : <Chip kind="flag" />
-  else if (item.evidence === 'stated') chip = <Chip kind="stated" />
-  else if (item.evidence === 'inferred') chip = <Chip kind="inferred" />
-
-  return (
-    <div className={`item${rem ? ' removed' : ''}${acc ? ' accepted' : ''}`} data-id={item.id} tabIndex={-1}>
-      <span className="ic" aria-hidden="true">
-        {acc ? '\u2713' : '\u25CB'}
-      </span>
-      <div className="item-main">
-        {editing ? (
-          <textarea
-            className="in item-text"
-            value={editText}
-            onChange={(e) => onEditText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                onEdit()
-              }
-              if (e.key === 'Escape') onCancelEdit()
-            }}
-            aria-label="Item text"
-            maxLength={2000}
-            rows={2}
-            autoFocus
-          />
-        ) : (
-          <div className="item-text">{item.text}</div>
-        )}
-        {body}
-      </div>
-      <div className="item-side">
-        {chip}
-        <div className="acts">
-          {rem ? (
-            <button className="btn sec sm" type="button" onClick={onRemove}>
-              Undo
-            </button>
-          ) : (
-            <>
-              {item.evidence === 'flagged' && !acc && item.suggestedText && (
-                <button className="btn sm" data-act="fix" type="button" onClick={onFix}>
-                  Use the quoted version
-                </button>
-              )}
-              <button className="btn sec sm" type="button" onClick={onAccept}>
-                {acc ? 'Undo accept' : 'Accept'}
-              </button>
-              <button className="btn sec sm" type="button" onClick={onEdit}>
-                {editing ? 'Done' : 'Edit'}
-              </button>
-              <button className="btn sec sm" type="button" onClick={onRemove}>
-                Remove
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
   )
 }

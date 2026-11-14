@@ -93,6 +93,16 @@ class FakeIntakes:
         visible = run and run.project_id == project_id and self._role(project_id) is not None
         return run if visible else None
 
+    async def list_scope_items(
+        self, project_id: uuid.UUID, *, include_removed: bool = False
+    ) -> list[ScopeItem]:
+        return [
+            item
+            for item in self.d.items.values()
+            if item.project_id == project_id
+            and (include_removed or item.status != ScopeStatus.REMOVED)
+        ]
+
     async def create_item(
         self, project_id: uuid.UUID, category: ScopeCategory, text: str
     ) -> ScopeItem | None:
@@ -264,6 +274,32 @@ class ManyConn(Conn):
 class RaisingConn(Conn):
     async def execute(self, stmt: Any) -> Result:
         raise IntegrityError("INSERT", {}, _UniqueError())
+
+
+def test_removed_scope_items_are_listed_only_when_asked(
+    intake_client: TestClient, intake_data: IntakeStore, store: Store, auth: Auth
+) -> None:
+    user, _, pid = _project(intake_client, store, auth)
+    url = f"/api/v1/projects/{pid}/scope-items"
+    created = intake_client.post(
+        url, json={"category": "risk", "text": "Vendor delay"}, headers=auth(user)
+    ).json()
+    item_id = uuid.UUID(created["id"])
+    intake_data.items[item_id] = intake_data.items[item_id].model_copy(
+        update={"status": ScopeStatus.REMOVED}
+    )
+    assert intake_client.get(url, headers=auth(user)).json() == []
+    listed = intake_client.get(f"{url}?includeRemoved=true", headers=auth(user)).json()
+    assert [(item["id"], item["status"]) for item in listed] == [(str(item_id), "removed")]
+
+
+async def test_list_scope_items_leaves_out_removed_ones_unless_asked() -> None:
+    conn = Conn(Rows([]), Rows([]))
+    repository = IntakeRepository(conn)  # type: ignore[arg-type]
+    await repository.list_scope_items(uuid.uuid4())
+    await repository.list_scope_items(uuid.uuid4(), include_removed=True)
+    assert "public.scope_items.status !=" in conn.sql[0]
+    assert "public.scope_items.status" not in conn.sql[1].split("WHERE", 1)[1]
 
 
 async def test_create_inserts_run_first_and_maps_unique_violation() -> None:

@@ -189,12 +189,18 @@ class IntakeRepository:
         row = (await self._conn.execute(stmt)).first()
         return _to_run(row) if row else None
 
-    async def list_scope_items(self, project_id: uuid.UUID) -> list[ScopeItem]:
+    async def list_scope_items(
+        self, project_id: uuid.UUID, *, include_removed: bool = False
+    ) -> list[ScopeItem]:
+        """The project's scope items by category and order; removed ones only when asked
+        (Scope Review lists them under "Removed" with Undo)."""
         stmt = (
             sa.select(*_ITEM_COLUMNS)
-            .where(item_t.c.project_id == project_id, item_t.c.status != ScopeStatus.REMOVED)
+            .where(item_t.c.project_id == project_id)
             .order_by(item_t.c.category, item_t.c.sort_order)
         )
+        if not include_removed:
+            stmt = stmt.where(item_t.c.status != ScopeStatus.REMOVED)
         return [_to_item(row) for row in (await self._conn.execute(stmt)).all()]
 
     async def create_item(

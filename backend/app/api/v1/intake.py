@@ -6,7 +6,9 @@ All queries run under the caller's RLS session; only the background worker
 
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Request, Response, status
+from typing import Annotated
+
+from fastapi import APIRouter, BackgroundTasks, Query, Request, Response, status
 
 from app.api.deps import Intaker, Intakes, ItemId, ProjectId, RunId
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableError
@@ -115,11 +117,16 @@ async def get_run(project_id: ProjectId, run_id: RunId, runs: Intakes) -> Intake
     response_model=list[ScopeItem],
     summary="Scope items extracted (or added) for a project",
 )
-async def list_scope_items(project_id: ProjectId, runs: Intakes) -> list[ScopeItem]:
-    """Every item except removed ones, by category and order, with its evidence."""
+async def list_scope_items(
+    project_id: ProjectId,
+    runs: Intakes,
+    include_removed: Annotated[bool, Query(alias="includeRemoved")] = False,
+) -> list[ScopeItem]:
+    """Every item by category and order, with its evidence. Removed items are left out
+    unless `includeRemoved=true` (Scope Review keeps them listed with Undo)."""
     if not await runs.project_exists(project_id):
         raise NotFoundError("Project not found")
-    return await runs.list_scope_items(project_id)
+    return await runs.list_scope_items(project_id, include_removed=include_removed)
 
 
 @router.post(
