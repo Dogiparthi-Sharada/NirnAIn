@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react'
 import { useParams } from 'react-router'
-import { isApiError } from '@/lib/api'
-import { useAddScopeItem, useScopeItems, useUpdateScopeItem } from '@/lib/queries'
+import { Chip, Crumb, GateBanner, useToast } from '@/components/InputsKit'
+import { errorMessage } from '@/lib/api'
+import type { EvidenceScopeItem } from '@/lib/inputs'
+import { useAddScopeItem, useLatestIntakeRun, useScopeItems, useUpdateScopeItem } from '@/lib/queries'
 import { useStepNav } from '@/lib/steps'
-import { SCOPE_CATEGORIES, SCOPE_CATEGORY_LABELS, type ScopeCategory, type ScopeItem } from '@/lib/types'
+import { SCOPE_CATEGORIES, SCOPE_CATEGORY_LABELS, type ScopeCategory, type ScopeItemPatch } from '@/lib/types'
 
 const SECTION_COLOR: Record<ScopeCategory, string> = {
   objective: '#DDE7D0',
@@ -14,221 +16,353 @@ const SECTION_COLOR: Record<ScopeCategory, string> = {
   missing_info: '#F3EADB',
 }
 
+const short = (t: string) => (t.length > 70 ? `${t.slice(0, 67)}\u2026` : t)
+
+/** Says more than the notes and still waiting for a decision: blocks the WBS. */
+const isBlocker = (it: EvidenceScopeItem) => it.evidence === 'flagged' && it.status === 'pending'
+
 export default function ScopeReview() {
   const nav = useStepNav()
   const { projectId = '' } = useParams()
   const itemsQuery = useScopeItems(projectId)
+  const intake = useLatestIntakeRun(projectId)
   const updateItem = useUpdateScopeItem(projectId)
   const addItem = useAddScopeItem(projectId)
+  const [toast, showToast] = useToast()
   const [editing, setEditing] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
   const [adding, setAdding] = useState<ScopeCategory | null>(null)
   const [addText, setAddText] = useState('')
+  const [tried, setTried] = useState(0)
 
-  const items = itemsQuery.data ?? []
-  const sections = useMemo(() => {
-    const grouped = Object.fromEntries(SCOPE_CATEGORIES.map((c) => [c, [] as ScopeItem[]])) as Record<ScopeCategory, ScopeItem[]>
-    for (const item of items) grouped[item.category].push(item)
-    return grouped
-  }, [items])
+  const items = useMemo(() => (itemsQuery.data ?? []) as EvidenceScopeItem[], [itemsQuery.data])
+  const visible = items.filter((i) => i.status !== 'removed')
+  const accepted = visible.filter((i) => i.status === 'accepted').length
+  const blockers = items.filter(isBlocker)
+  const actionError = updateItem.error ?? addItem.error
 
-  function accept(id: string) {
-    updateItem.mutate({ itemId: id, patch: { status: 'accepted' } })
+  function patch(itemId: string, body: ScopeItemPatch) {
+    updateItem.mutate({ itemId, patch: body })
   }
-  function remove(id: string) {
-    updateItem.mutate({ itemId: id, patch: { status: 'removed' } })
-  }
-  function startEdit(id: string, text: string) {
-    setEditing(id)
-    setEditText(text)
-  }
-  function saveEdit(id: string) {
-    updateItem.mutate({ itemId: id, patch: { text: editText } })
+
+  function saveEdit(item: EvidenceScopeItem) {
+    const text = editText.trim()
+    if (text && text !== item.text) patch(item.id, { text })
     setEditing(null)
   }
-  function startAdd(category: ScopeCategory) {
-    setAdding(category)
-    setAddText('')
-  }
+
   function saveAdd(category: ScopeCategory) {
     const text = addText.trim()
-    if (text) addItem.mutate({ category, text })
-    setAdding(null)
-  }
-  function acceptAll() {
-    for (const item of items) {
-      if (item.status === 'pending') updateItem.mutate({ itemId: item.id, patch: { status: 'accepted' } })
-    }
+    if (!text) return
+    addItem.mutate({ category, text }, { onSuccess: () => setAdding(null) })
   }
 
-  const visibleItems = items.filter((i) => i.status !== 'removed')
-  const totalAccepted = visibleItems.filter((i) => i.status === 'accepted').length
-  const total = visibleItems.length
-
-  if (itemsQuery.isPending) {
-    return (
-      <div style={{ padding: '32px 36px', maxWidth: 900 }}>
-        <Breadcrumb steps={['Dashboard', 'Create Project', 'AI Intake', 'Scope Review']} />
-        <div style={{ fontSize: 13, color: '#7A6063' }}>Loading scope items…</div>
-      </div>
+  async function acceptAllQuoted() {
+    const quoted = items.filter((i) => i.evidence === 'stated' && i.status === 'pending')
+    const results = await Promise.allSettled(
+      quoted.map((i) => updateItem.mutateAsync({ itemId: i.id, patch: { status: 'accepted' } })),
     )
+    const done = results.filter((r) => r.status === 'fulfilled').length
+    const left = items.filter((i) => i.status === 'pending').length - done
+    showToast(`Accepted ${done} items quoted from your notes. ${left} left for you to check.`)
   }
 
-  if (itemsQuery.isError) {
+  function continueToWbs() {
+    if (blockers.length) setTried((n) => n + 1)
+    else nav('wbs')
+  }
+
+  const crumb = <Crumb trail={['Create Project', 'AI Intake', 'Scope Review']} />
+  const header = (
+    <div className="hdr">
+      <div>
+        <h1>Scope Review</h1>
+        <div className="sub">Review AI-extracted project information. Accept, edit, or remove each item.</div>
+        {intake.data?.model === 'rules' && (
+          <p className="note">
+            AI extraction is not configured, so these items come from the built-in rules extractor. Check each one
+            against your notes.
+          </p>
+        )}
+      </div>
+      <div className="row">
+        {visible.length > 0 && (
+          <span className="small muted" id="sc-count">
+            <b>{accepted}</b> / {visible.length} accepted
+          </span>
+        )}
+        <button className="btn sec" id="accept-all" type="button" onClick={() => void acceptAllQuoted()} disabled={!items.length}>
+          Accept All quoted
+        </button>
+      </div>
+    </div>
+  )
+
+  if (itemsQuery.isPending || itemsQuery.isError) {
     return (
-      <div style={{ padding: '32px 36px', maxWidth: 900 }}>
-        <Breadcrumb steps={['Dashboard', 'Create Project', 'AI Intake', 'Scope Review']} />
-        <div style={{ fontSize: 13, color: '#A83A4A' }}>
-          {isApiError(itemsQuery.error) ? itemsQuery.error.message : 'Something went wrong loading scope items.'}
+      <section className="view on" id="v-scope">
+        <div className="pg">
+          {crumb}
+          {header}
+          {itemsQuery.isPending ? (
+            <div className="card center" aria-busy="true">
+              <p className="muted small">Loading scope items…</p>
+            </div>
+          ) : (
+            <div className="cf-banner bad" role="alert">
+              <b>We couldn't load the scope.</b> {errorMessage(itemsQuery.error)}{' '}
+              <button className="btn sec sm" type="button" onClick={() => void itemsQuery.refetch()}>
+                Try again
+              </button>
+            </div>
+          )}
         </div>
-      </div>
+      </section>
     )
   }
 
-  if (total === 0) {
+  if (items.length === 0) {
     return (
-      <div style={{ padding: '32px 36px', maxWidth: 900 }}>
-        <Breadcrumb steps={['Dashboard', 'Create Project', 'AI Intake', 'Scope Review']} />
-        <div style={cardStyle}>
-          <div style={{ fontSize: 14, marginBottom: 12 }}>No scope items yet.</div>
-          <div style={{ fontSize: 13, color: '#7A6063', marginBottom: 16 }}>
-            Go back to AI Intake and analyze your project notes to extract objectives, requirements, and risks.
+      <section className="view on" id="v-scope">
+        <div className="pg">
+          {crumb}
+          {header}
+          <div id="sc-empty" className="card center">
+            <h3 style={{ justifyContent: 'center' }}>No scope yet</h3>
+            <p className="muted small">Run AI Project Intake first.</p>
+            <button className="btn" type="button" onClick={() => nav('intake')}>
+              Go to AI Intake
+            </button>
           </div>
-          <button onClick={() => nav('intake')} style={secondaryBtn}>← Back to AI Intake</button>
         </div>
-      </div>
+      </section>
     )
   }
 
   return (
-    <div style={{ padding: '32px 36px', maxWidth: 900 }}>
-      <Breadcrumb steps={['Dashboard', 'Create Project', 'AI Intake', 'Scope Review']} />
-
-      <div className="flex items-start justify-between" style={{ marginBottom: 24 }}>
-        <div>
-          <div style={{ fontSize: 22, fontWeight: 700 }}>Scope Review</div>
-          <div style={{ fontSize: 13, color: '#7A6063', marginTop: 2 }}>
-            Review AI-extracted project information. Accept, edit, or remove each item.
+    <section className="view on" id="v-scope">
+      <div className="pg">
+        {crumb}
+        {header}
+        {actionError && (
+          <div className="cf-banner bad" role="alert">
+            {errorMessage(actionError)}
           </div>
-        </div>
-        <div className="flex items-center gap-10">
-          <span style={{ fontSize: 13, color: '#7A6063' }}>
-            <strong style={{ color: '#2E1A1D' }}>{totalAccepted}</strong> / {total} accepted
-          </span>
-          <button onClick={acceptAll} style={secondaryBtn}>Accept All</button>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {SCOPE_CATEGORIES.map((category) => {
-          const visible = sections[category].filter((i) => i.status !== 'removed')
-          const accepted = visible.filter((i) => i.status === 'accepted').length
-          return (
-            <div key={category} style={cardStyle}>
-              <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
-                <div className="flex items-center gap-8">
-                  <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#6B5254' }}>
-                    {SCOPE_CATEGORY_LABELS[category]}
+        )}
+        <div id="sc-body">
+          {SCOPE_CATEGORIES.map((category) => {
+            const all = items.filter((i) => i.category === category)
+            const shown = all.filter((i) => i.status !== 'removed')
+            const acc = shown.filter((i) => i.status === 'accepted').length
+            return (
+              <div className="card sc-sec" key={category}>
+                <div className="sc-head">
+                  <span className="nm">
+                    {SCOPE_CATEGORY_LABELS[category]}{' '}
+                    <span className="sc-badge" style={{ background: SECTION_COLOR[category] }}>
+                      {acc}/{shown.length} accepted
+                    </span>
                   </span>
-                  <span style={{ fontSize: 10, fontFamily: 'DM Mono, monospace', padding: '2px 8px', background: SECTION_COLOR[category], borderRadius: 10, color: '#6B5254' }}>
-                    {accepted}/{visible.length} accepted
-                  </span>
-                </div>
-                <button onClick={() => startAdd(category)} style={{ fontSize: 11, color: '#7A6063', background: 'none', border: 'none', cursor: 'pointer' }}>+ Add item</button>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {visible.map(item => (
-                  <div
-                    key={item.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'flex-start',
-                      gap: 10,
-                      padding: '8px 10px',
-                      background: item.status === 'accepted' ? '#F7F9F2' : '#FAF5EB',
-                      border: `1px solid ${item.status === 'accepted' ? '#BFD1AE' : '#E8DCC6'}`,
-                      borderRadius: 4,
+                  <button
+                    className="btn sec sm"
+                    type="button"
+                    onClick={() => {
+                      setAdding(category)
+                      setAddText('')
                     }}
                   >
-                    <span style={{ fontSize: 14, marginTop: 1, color: item.status === 'accepted' ? '#4F7A4A' : '#ccc', flexShrink: 0 }}>
-                      {item.status === 'accepted' ? '✓' : '○'}
-                    </span>
-                    <div style={{ flex: 1, fontSize: 13, lineHeight: 1.5 }}>
-                      {editing === item.id ? (
-                        <div className="flex gap-6">
-                          <input
-                            value={editText}
-                            onChange={e => setEditText(e.target.value)}
-                            style={{ flex: 1, padding: '4px 8px', border: '1px solid #bbb', borderRadius: 3, fontSize: 13, fontFamily: 'inherit' }}
-                            autoFocus
-                          />
-                          <button onClick={() => saveEdit(item.id)} style={{ fontSize: 12, padding: '4px 10px', background: '#722F37', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}>Save</button>
-                          <button onClick={() => setEditing(null)} style={{ fontSize: 12, padding: '4px 8px', border: '1px solid #CDBFAB', borderRadius: 3, cursor: 'pointer', background: '#fff' }}>Cancel</button>
-                        </div>
-                      ) : (
-                        item.text
-                      )}
-                    </div>
-                    {editing !== item.id && (
-                      <div className="flex gap-4" style={{ flexShrink: 0 }}>
-                        {item.status !== 'accepted' && (
-                          <button onClick={() => accept(item.id)} style={miniBtn('#4F7A4A', '#DDE7D0')}>Accept</button>
-                        )}
-                        <button onClick={() => startEdit(item.id, item.text)} style={miniBtn('#722F37', '#F3EADB')}>Edit</button>
-                        <button onClick={() => remove(item.id)} style={miniBtn('#A83A4A', '#F3D9D5')}>Remove</button>
-                      </div>
-                    )}
-                  </div>
+                    + Add item
+                  </button>
+                </div>
+                {all.map((item) => (
+                  <ScopeItemRow
+                    key={item.id}
+                    item={item}
+                    editing={editing === item.id}
+                    editText={editText}
+                    onEditText={setEditText}
+                    onAccept={() => patch(item.id, { status: item.status === 'accepted' ? 'pending' : 'accepted' })}
+                    onRemove={() => patch(item.id, { status: item.status === 'removed' ? 'pending' : 'removed' })}
+                    onFix={() => item.suggestedText && patch(item.id, { text: item.suggestedText })}
+                    onEdit={() => {
+                      if (editing === item.id) saveEdit(item)
+                      else {
+                        setEditing(item.id)
+                        setEditText(item.text)
+                      }
+                    }}
+                    onCancelEdit={() => setEditing(null)}
+                  />
                 ))}
                 {adding === category && (
-                  <div className="flex gap-6" style={{ padding: '8px 10px', border: '1px solid #E8DCC6', borderRadius: 4, background: '#FAF5EB' }}>
-                    <input
-                      value={addText}
-                      onChange={e => setAddText(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') saveAdd(category)
-                        if (e.key === 'Escape') setAdding(null)
-                      }}
-                      aria-label={`New ${SCOPE_CATEGORY_LABELS[category]} item`}
-                      maxLength={2000}
-                      style={{ flex: 1, padding: '4px 8px', border: '1px solid #bbb', borderRadius: 3, fontSize: 13, fontFamily: 'inherit' }}
-                      autoFocus
-                    />
-                    <button onClick={() => saveAdd(category)} style={{ fontSize: 12, padding: '4px 10px', background: '#722F37', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}>Save</button>
-                    <button onClick={() => setAdding(null)} style={{ fontSize: 12, padding: '4px 8px', border: '1px solid #CDBFAB', borderRadius: 3, cursor: 'pointer', background: '#fff' }}>Cancel</button>
+                  <div className="item">
+                    <span className="ic">+</span>
+                    <div className="item-main">
+                      <input
+                        className="in"
+                        value={addText}
+                        onChange={(e) => setAddText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveAdd(category)
+                          if (e.key === 'Escape') setAdding(null)
+                        }}
+                        aria-label={`New ${SCOPE_CATEGORY_LABELS[category]} item`}
+                        placeholder="Describe the item in your own words"
+                        maxLength={2000}
+                        autoFocus
+                      />
+                    </div>
+                    <div className="item-side">
+                      <Chip kind="yours" />
+                      <div className="acts">
+                        <button className="btn sm" type="button" onClick={() => saveAdd(category)} disabled={addItem.isPending || !addText.trim()}>
+                          {addItem.isPending ? 'Adding…' : 'Add'}
+                        </button>
+                        <button className="btn sec sm" type="button" onClick={() => setAdding(null)}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
-            </div>
-          )
-        })}
+            )
+          })}
+        </div>
+        <GateBanner
+          id="sc-banner"
+          open={tried > 0}
+          focusKey={tried}
+          lead={`${blockers.length === 1 ? '1 item says' : `${blockers.length} items say`} more than your notes. Use the quoted version, remove it, or accept it as your own statement before you continue:`}
+          items={blockers.map((b) => ({ label: `\u201C${short(b.text)}\u201D`, target: `[data-id="${b.id}"]` }))}
+        />
+        <div className="row between mt" id="sc-foot">
+          <button className="btn sec" type="button" onClick={() => nav('intake')}>
+            &larr; Back to AI Intake
+          </button>
+          <div className="row">
+            <span className={`gate${blockers.length ? ' bad' : ''}`} id="sc-gate">
+              {blockers.length
+                ? `${blockers.length} item${blockers.length > 1 ? 's say' : ' says'} more than your notes. Fix, remove or accept ${blockers.length > 1 ? 'them' : 'it'} to continue.`
+                : 'Nothing here says more than your notes.'}
+            </span>
+            <button className="btn" id="btn-to-wbs" type="button" onClick={continueToWbs}>
+              Continue to WBS Builder &rarr;
+            </button>
+          </div>
+        </div>
+        {toast}
       </div>
-
-      <div className="flex items-center justify-between" style={{ marginTop: 24 }}>
-        <button onClick={() => nav('intake')} style={secondaryBtn}>← Back to AI Intake</button>
-        <button onClick={() => nav('wbs')} style={primaryBtn}>Continue to WBS Builder →</button>
-      </div>
-    </div>
+    </section>
   )
 }
 
-function Breadcrumb({ steps }: { steps: string[] }) {
+function ScopeItemRow({
+  item,
+  editing,
+  editText,
+  onEditText,
+  onAccept,
+  onRemove,
+  onFix,
+  onEdit,
+  onCancelEdit,
+}: {
+  item: EvidenceScopeItem
+  editing: boolean
+  editText: string
+  onEditText: (text: string) => void
+  onAccept: () => void
+  onRemove: () => void
+  onFix: () => void
+  onEdit: () => void
+  onCancelEdit: () => void
+}) {
+  const acc = item.status === 'accepted'
+  const rem = item.status === 'removed'
+  const quote = item.sourceQuote
+  let body = null
+  if (item.evidence === 'stated' && quote) body = <div className="quote">&ldquo;{quote}&rdquo;</div>
+  if (item.evidence === 'inferred') {
+    body = (
+      <>
+        {quote && <div className="quote inf">Based on: &ldquo;{quote}&rdquo;</div>}
+        {item.evidenceNote && <div className="note">{item.evidenceNote}</div>}
+      </>
+    )
+  }
+  if (item.evidence === 'flagged') {
+    body = (
+      <>
+        {quote && <div className="quote">&ldquo;{quote}&rdquo;</div>}
+        <div className="note bad">
+          {item.evidenceNote ? <>Not in your notes: &ldquo;{item.evidenceNote}&rdquo;</> : 'Says more than your notes.'}
+        </div>
+      </>
+    )
+  }
+
+  let chip = null
+  if (item.origin === 'manual') chip = <Chip kind="yours" />
+  else if (item.evidence === 'flagged') chip = acc ? <Chip kind="confirmed">&#10003; Your statement</Chip> : <Chip kind="flag" />
+  else if (item.evidence === 'stated') chip = <Chip kind="stated" />
+  else if (item.evidence === 'inferred') chip = <Chip kind="inferred" />
+
   return (
-    <div className="flex items-center gap-2" style={{ fontSize: 12, color: '#7A6063', marginBottom: 20 }}>
-      {steps.map((s, i) => (
-        <span key={s} className="flex items-center gap-2">
-          {i > 0 && <span>›</span>}
-          <span style={{ color: i === steps.length - 1 ? '#2E1A1D' : '#7A6063' }}>{s}</span>
-        </span>
-      ))}
+    <div className={`item${rem ? ' removed' : ''}${acc ? ' accepted' : ''}`} data-id={item.id} tabIndex={-1}>
+      <span className="ic" aria-hidden="true">
+        {acc ? '\u2713' : '\u25CB'}
+      </span>
+      <div className="item-main">
+        {editing ? (
+          <textarea
+            className="in item-text"
+            value={editText}
+            onChange={(e) => onEditText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                onEdit()
+              }
+              if (e.key === 'Escape') onCancelEdit()
+            }}
+            aria-label="Item text"
+            maxLength={2000}
+            rows={2}
+            autoFocus
+          />
+        ) : (
+          <div className="item-text">{item.text}</div>
+        )}
+        {body}
+      </div>
+      <div className="item-side">
+        {chip}
+        <div className="acts">
+          {rem ? (
+            <button className="btn sec sm" type="button" onClick={onRemove}>
+              Undo
+            </button>
+          ) : (
+            <>
+              {item.evidence === 'flagged' && !acc && item.suggestedText && (
+                <button className="btn sm" data-act="fix" type="button" onClick={onFix}>
+                  Use the quoted version
+                </button>
+              )}
+              <button className="btn sec sm" type="button" onClick={onAccept}>
+                {acc ? 'Undo accept' : 'Accept'}
+              </button>
+              <button className="btn sec sm" type="button" onClick={onEdit}>
+                {editing ? 'Done' : 'Edit'}
+              </button>
+              <button className="btn sec sm" type="button" onClick={onRemove}>
+                Remove
+              </button>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
-
-function miniBtn(color: string, bg: string): React.CSSProperties {
-  return { fontSize: 11, padding: '3px 8px', background: bg, color, border: `1px solid ${color}22`, borderRadius: 3, cursor: 'pointer', fontWeight: 500 }
-}
-
-const cardStyle: React.CSSProperties = { background: '#fff', border: '1px solid #E8DCC6', borderRadius: 6, padding: '16px 18px' }
-const primaryBtn: React.CSSProperties = { padding: '9px 20px', background: '#722F37', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' }
-const secondaryBtn: React.CSSProperties = { padding: '9px 16px', background: '#fff', color: '#4A2B2F', border: '1px solid #CDBFAB', borderRadius: 4, fontSize: 13, cursor: 'pointer' }

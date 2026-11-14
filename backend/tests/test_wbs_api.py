@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -14,7 +15,7 @@ from fastapi.testclient import TestClient
 from app.api import deps
 from app.core.security import CurrentPrincipal
 from app.domain.common import OrgRole
-from app.domain.wbs import WbsNode, reorder
+from app.domain.wbs import EstimateSource, WbsNode, estimate_state, reorder
 from app.repositories.access import ProjectRef
 from app.repositories.wbs import NodeRef
 from tests.conftest import Store
@@ -26,6 +27,7 @@ Auth = Callable[[uuid.UUID], dict[str, str]]
 class WbsStore:
     nodes: dict[uuid.UUID, dict[str, Any]] = field(default_factory=dict)
     employees: dict[uuid.UUID, tuple[uuid.UUID, str, bool]] = field(default_factory=dict)
+    applied: dict[uuid.UUID, int] = field(default_factory=dict)
     seq: int = 0
 
 
@@ -50,6 +52,25 @@ class FakeWbs:
         e = self.w.employees.get(employee_id)
         return e is not None and e[0] == org_id and e[2]
 
+    async def applied_version(self, project_id: uuid.UUID) -> int | None:
+        return self.w.applied.get(project_id)
+
+    async def confirm_estimates(
+        self, project_id: uuid.UUID, node_ids: list[uuid.UUID] | None
+    ) -> int:
+        count = 0
+        for n in self.w.nodes.values():
+            if (
+                n["project_id"] == project_id
+                and n["origin"] == "ai"
+                and n.get("duration_days") is not None
+                and n.get("estimate_confirmed_at") is None
+                and (node_ids is None or n["id"] in node_ids)
+            ):
+                n["estimate_confirmed_at"] = datetime.now(UTC)
+                count += 1
+        return count
+
     def _children(self, project_id: uuid.UUID, parent_id: uuid.UUID | None) -> list[uuid.UUID]:
         rows = [
             n
@@ -71,13 +92,19 @@ class FakeWbs:
                 owner = (
                     self.w.employees.get(n["owner_employee_id"]) if n["owner_employee_id"] else None
                 )
+                confirmed, source = estimate_state(
+                    n["origin"], n.get("duration_days"), n.get("estimate_confirmed_at")
+                )
+                hidden = ("project_id", "seq", "estimate_confirmed_at")
                 out.append(
                     WbsNode.model_validate(
                         {
-                            **{k: v for k, v in n.items() if k not in ("project_id", "seq")},
+                            **{k: v for k, v in n.items() if k not in hidden},
                             "code": code,
                             "owner_name": owner[1] if owner else None,
                             "skills": [],
+                            "estimate_confirmed": confirmed,
+                            "estimate_source": source,
                         }
                     )
                 )
@@ -133,6 +160,9 @@ class FakeWbs:
 
     async def update(self, node_id: uuid.UUID, changes: dict[str, Any]) -> bool:
         self.w.nodes[node_id].update(changes)
+        if "duration_days" in changes:
+            entered = changes["duration_days"] is not None
+            self.w.nodes[node_id]["estimate_confirmed_at"] = datetime.now(UTC) if entered else None
         return True
 
     async def set_order(self, ordered_ids: list[uuid.UUID]) -> None:
@@ -192,6 +222,8 @@ NODE_KEYS = {
     "origin",
     "scopeItemId",
     "skills",
+    "estimateConfirmed",
+    "estimateSource",
 }
 
 
@@ -376,3 +408,98 @@ def test_reorder(position: int, expected: str) -> None:
     names = {v: k for k, v in ids.items()}
     siblings = [ids["a"], ids["x"], ids["b"], ids["c"]]
     assert "".join(names[i] for i in reorder(siblings, ids["x"], position)) == expected
+
+
+def _ai_node(w: WbsStore, pid: str, parent: str, name: str, days: int | None) -> uuid.UUID:
+    node_id = uuid.uuid4()
+    w.seq += 1
+    w.nodes[node_id] = {
+        "id": node_id,
+        "project_id": uuid.UUID(pid),
+        "parent_id": uuid.UUID(parent),
+        "level": 3,
+        "sort_order": w.seq,
+        "name": name,
+        "description": None,
+        "duration_days": days,
+        "effort_hours": None,
+        "owner_employee_id": None,
+        "origin": "ai",
+        "scope_item_id": None,
+        "seq": w.seq,
+    }
+    return node_id
+
+
+def test_confirm_estimates(
+    wbs_client: TestClient, store: Store, wbs_store: WbsStore, auth: Auth
+) -> None:
+    user, org, pid = _project(wbs_client, store, auth)
+    h = auth(user)
+    root = _add(wbs_client, pid, h, name="CRM")
+    deliverable = _add(wbs_client, pid, h, parentId=root["id"], name="Build")
+    first = _ai_node(wbs_store, pid, deliverable["id"], "API", 10)
+    second = _ai_node(wbs_store, pid, deliverable["id"], "UI", 15)
+    _ai_node(wbs_store, pid, deliverable["id"], "Docs", None)
+    mine = _add(wbs_client, pid, h, parentId=deliverable["id"], name="QA", durationDays=5)
+    assert (mine["estimateConfirmed"], mine["estimateSource"]) == (True, "yours")
+
+    def states() -> dict[str, tuple[bool, str | None]]:
+        tree = wbs_client.get(f"/api/v1/projects/{pid}/wbs", headers=h).json()
+        return {n["name"]: (n["estimateConfirmed"], n["estimateSource"]) for n in tree}
+
+    assert states()["API"] == (False, "ai")
+    url = f"/api/v1/projects/{pid}/wbs/confirm-estimates"
+    r = wbs_client.post(url, json={"nodeIds": [str(first)]}, headers=h)
+    assert r.status_code == 200, r.text
+    assert (states()["API"], states()["UI"]) == ((True, "ai"), (False, "ai"))
+
+    # Typing a new duration confirms it; clearing it leaves nothing to confirm.
+    wbs_client.patch(f"/api/v1/wbs/nodes/{second}", json={"durationDays": 20}, headers=h)
+    assert states()["UI"] == (True, "ai")
+    assert wbs_client.post(url, headers=h).status_code == 200
+    assert states()["Docs"] == (False, None)
+
+    viewer = store.add_user("Vic")
+    store.members[(org, viewer)] = OrgRole.VIEWER
+    assert wbs_client.post(url, json={}, headers=auth(viewer)).status_code == 403
+    missing = f"/api/v1/projects/{uuid.uuid4()}/wbs/confirm-estimates"
+    assert wbs_client.post(missing, json={}, headers=h).status_code == 404
+
+
+def test_inputs_lock_once_a_plan_is_applied(
+    wbs_client: TestClient, store: Store, wbs_store: WbsStore, auth: Auth
+) -> None:
+    user, _, pid = _project(wbs_client, store, auth)
+    h = auth(user)
+    root = _add(wbs_client, pid, h, name="CRM")
+    wbs_store.applied[uuid.UUID(pid)] = 2
+    r = wbs_client.patch(f"/api/v1/wbs/nodes/{root['id']}", json={"name": "X"}, headers=h)
+    assert r.status_code == 409
+    assert r.json()["detail"] == "Plan v2 is in force; record a change on step 7"
+    assert r.json()["version"] == 2
+    r = wbs_client.post(f"/api/v1/projects/{pid}/wbs/nodes", json={"name": "Y"}, headers=h)
+    assert r.status_code == 409
+    url = f"/api/v1/projects/{pid}/wbs/confirm-estimates"
+    assert wbs_client.post(url, json={}, headers=h).status_code == 409
+    assert wbs_client.delete(f"/api/v1/wbs/nodes/{root['id']}", headers=h).status_code == 409
+    assert wbs_client.get(f"/api/v1/projects/{pid}/wbs", headers=h).status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("origin", "days", "confirmed_at", "expected"),
+    [
+        ("ai", 10, None, (False, EstimateSource.AI)),
+        ("ai", 10, datetime(2026, 11, 13, tzinfo=UTC), (True, EstimateSource.AI)),
+        ("manual", 10, None, (True, EstimateSource.YOURS)),
+        ("manual", None, None, (False, None)),
+        ("ai", None, None, (False, None)),
+    ],
+)
+def test_estimate_state(
+    origin: str,
+    days: int | None,
+    confirmed_at: datetime | None,
+    expected: tuple[bool, EstimateSource | None],
+) -> None:
+    assert estimate_state(origin, days, confirmed_at) == expected

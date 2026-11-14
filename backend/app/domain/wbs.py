@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
+from enum import StrEnum
 from typing import Annotated, Any
 
 from pydantic import Field, StringConstraints, model_validator
@@ -10,6 +12,23 @@ from app.domain.common import CamelModel, InputModel, ItemOrigin
 NodeName = Annotated[str, StringConstraints(min_length=1, max_length=300)]
 NodeDescription = Annotated[str, StringConstraints(max_length=5000)]
 DurationDays = Annotated[int, Field(ge=0, le=3650)]
+
+
+class EstimateSource(StrEnum):
+    AI = "ai"
+    YOURS = "yours"
+
+
+def estimate_state(
+    origin: str, duration_days: int | None, confirmed_at: datetime | None
+) -> tuple[bool, EstimateSource | None]:
+    """(estimateConfirmed, estimateSource). An AI estimate counts only once a person confirms it;
+    a duration typed in by a person is theirs, so it is confirmed by entering it."""
+    if duration_days is None:
+        return confirmed_at is not None, None
+    if origin == ItemOrigin.AI:
+        return confirmed_at is not None, EstimateSource.AI
+    return True, EstimateSource.YOURS
 
 
 class WbsSkill(CamelModel):
@@ -33,6 +52,8 @@ class WbsNode(CamelModel):
     origin: ItemOrigin
     scope_item_id: uuid.UUID | None
     skills: list[WbsSkill]
+    estimate_confirmed: bool = False
+    estimate_source: EstimateSource | None = None
 
 
 class WbsNodeCreate(InputModel):
@@ -72,6 +93,12 @@ class WbsNodeUpdate(InputModel):
         if data.get("description") == "":
             data["description"] = None
         return data
+
+
+class WbsConfirmEstimates(InputModel):
+    """Which AI estimates to confirm; all of the project's when omitted."""
+
+    node_ids: Annotated[list[uuid.UUID], Field(max_length=1000)] | None = None
 
 
 class WbsMove(InputModel):

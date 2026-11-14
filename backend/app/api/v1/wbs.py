@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Body, Response, status
 
 from app.api.deps import NodeId, ProjectId, Wbs
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableError
-from app.domain.wbs import WbsMove, WbsNode, WbsNodeCreate, WbsNodeUpdate, reorder
+from app.domain.team import ensure_unlocked
+from app.domain.wbs import (
+    WbsConfirmEstimates,
+    WbsMove,
+    WbsNode,
+    WbsNodeCreate,
+    WbsNodeUpdate,
+    reorder,
+)
 from app.repositories.wbs import NodeRef
 
 router = APIRouter(tags=["wbs"])
@@ -25,6 +34,7 @@ async def _writable_node(wbs: Wbs, node_id: uuid.UUID) -> NodeRef:
         raise NotFoundError("WBS node not found")
     if not await wbs.can_write(node.project_id):
         raise ForbiddenError("You do not have permission to edit this WBS")
+    ensure_unlocked(await wbs.applied_version(node.project_id))
     return node
 
 
@@ -51,6 +61,7 @@ async def create_node(project_id: ProjectId, body: WbsNodeCreate, wbs: Wbs) -> W
         raise NotFoundError("Project not found")
     if not await wbs.can_write(project_id):
         raise ForbiddenError("You do not have permission to edit this WBS")
+    ensure_unlocked(await wbs.applied_version(project_id))
 
     if body.parent_id is None:
         if await wbs.has_root(project_id):
@@ -70,6 +81,25 @@ async def create_node(project_id: ProjectId, body: WbsNodeCreate, wbs: Wbs) -> W
     if node is None:
         raise ForbiddenError("The WBS node was created but is not visible to you")
     return node
+
+
+@router.post(
+    "/projects/{projectId}/wbs/confirm-estimates",
+    response_model=list[WbsNode],
+    summary="Confirm AI effort estimates (all of them when nodeIds is omitted); returns the tree",
+)
+async def confirm_estimates(
+    project_id: ProjectId,
+    wbs: Wbs,
+    body: Annotated[WbsConfirmEstimates | None, Body()] = None,
+) -> list[WbsNode]:
+    if await wbs.project(project_id) is None:
+        raise NotFoundError("Project not found")
+    if not await wbs.can_write(project_id):
+        raise ForbiddenError("You do not have permission to edit this WBS")
+    ensure_unlocked(await wbs.applied_version(project_id))
+    await wbs.confirm_estimates(project_id, body.node_ids if body else None)
+    return await wbs.tree(project_id)
 
 
 @router.patch("/wbs/nodes/{nodeId}", response_model=WbsNode, summary="Update a WBS node")

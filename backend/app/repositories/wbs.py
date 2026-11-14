@@ -10,8 +10,9 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from app.domain.wbs import WbsNode, WbsSkill
-from app.repositories import access
+from app.domain.common import ItemOrigin
+from app.domain.wbs import WbsNode, WbsSkill, estimate_state
+from app.repositories import access, plan_lock
 from app.repositories.access import ProjectRef
 from app.repositories.tables import (
     employees,
@@ -31,7 +32,7 @@ class NodeRef:
 
 
 def _node_select() -> sa.Select[Any]:
-    w, e = wbs_nodes_with_code, employees
+    w, e, n = wbs_nodes_with_code, employees, wbs_nodes
     return sa.select(
         w.c.id,
         w.c.parent_id,
@@ -46,7 +47,8 @@ def _node_select() -> sa.Select[Any]:
         e.c.full_name.label("owner_name"),
         w.c.origin,
         w.c.scope_item_id,
-    ).select_from(w.outerjoin(e, e.c.id == w.c.owner_employee_id))
+        n.c.estimate_confirmed_at,
+    ).select_from(w.join(n, n.c.id == w.c.id).outerjoin(e, e.c.id == w.c.owner_employee_id))
 
 
 class WbsRepository:
@@ -63,6 +65,9 @@ class WbsRepository:
 
     async def is_active_employee(self, org_id: uuid.UUID, employee_id: uuid.UUID) -> bool:
         return await access.is_active_employee(self._conn, org_id, employee_id)
+
+    async def applied_version(self, project_id: uuid.UUID) -> int | None:
+        return await plan_lock.applied_version(self._conn, project_id)
 
     async def tree(self, project_id: uuid.UUID) -> list[WbsNode]:
         w = wbs_nodes_with_code
@@ -96,10 +101,22 @@ class WbsRepository:
                         skill_id=req.skill_id, name=req.name, min_proficiency=req.min_proficiency
                     )
                 )
-        return [
-            WbsNode.model_validate({**row._mapping, "skills": by_node.get(row.id, [])})
-            for row in rows
-        ]
+        out = []
+        for row in rows:
+            confirmed, source = estimate_state(
+                row.origin, row.duration_days, row.estimate_confirmed_at
+            )
+            out.append(
+                WbsNode.model_validate(
+                    {
+                        **row._mapping,
+                        "skills": by_node.get(row.id, []),
+                        "estimate_confirmed": confirmed,
+                        "estimate_source": source,
+                    }
+                )
+            )
+        return out
 
     async def node(self, node_id: uuid.UUID) -> NodeRef | None:
         n = wbs_nodes
@@ -158,8 +175,34 @@ class WbsRepository:
         return node_id
 
     async def update(self, node_id: uuid.UUID, changes: dict[str, Any]) -> bool:
-        stmt = sa.update(wbs_nodes).where(wbs_nodes.c.id == node_id).values(**changes)
+        values = dict(changes)
+        if "duration_days" in values:
+            # A duration a person types in is their estimate: confirmed by entering it.
+            entered = values["duration_days"] is not None
+            values["estimate_confirmed_at"] = sa.func.now() if entered else None
+            values["estimate_confirmed_by"] = sa.func.auth.uid() if entered else None
+        stmt = sa.update(wbs_nodes).where(wbs_nodes.c.id == node_id).values(**values)
         return (await self._conn.execute(stmt)).rowcount > 0
+
+    async def confirm_estimates(
+        self, project_id: uuid.UUID, node_ids: list[uuid.UUID] | None
+    ) -> int:
+        """Confirm the project's unconfirmed AI estimates (only `node_ids` when given)."""
+        n = wbs_nodes
+        stmt = sa.update(n).where(
+            n.c.project_id == project_id,
+            n.c.origin == ItemOrigin.AI,
+            n.c.duration_days.is_not(None),
+            n.c.estimate_confirmed_at.is_(None),
+        )
+        if node_ids is not None:
+            stmt = stmt.where(n.c.id.in_(node_ids))
+        result = await self._conn.execute(
+            stmt.values(
+                estimate_confirmed_at=sa.func.now(), estimate_confirmed_by=sa.func.auth.uid()
+            )
+        )
+        return result.rowcount
 
     async def set_order(self, ordered_ids: list[uuid.UUID]) -> None:
         n = wbs_nodes

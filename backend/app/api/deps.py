@@ -25,6 +25,7 @@ from app.repositories.overview import OverviewRepository
 from app.repositories.plan import PlanRepository
 from app.repositories.planning import PlanningRepository
 from app.repositories.projects import ProjectRepository
+from app.repositories.team import TeamRepository
 from app.repositories.wbs import WbsRepository
 
 
@@ -73,6 +74,10 @@ def get_plan_repo(db: UserDB) -> PlanRepository:
 
 def get_overview_repo(db: UserDB) -> OverviewRepository:
     return OverviewRepository(db)
+
+
+def get_team_repo(db: UserDB) -> TeamRepository:
+    return TeamRepository(db)
 
 
 def get_intake_runner(request: Request) -> IntakeRunner:
@@ -124,6 +129,7 @@ AiRunner = Annotated[AiJobRunner, Depends(get_ai_runner)]
 AssistantContexts = Annotated[AssistantRepository, Depends(get_assistant_repo)]
 AssistantLLM = Annotated[LLM, Depends(get_assistant_llm)]
 Documents = Annotated[DocumentRepository, Depends(get_document_repo)]
+Team = Annotated[TeamRepository, Depends(get_team_repo)]
 
 # Path parameters are camelCase on the wire, like everything else.
 OrgId = Annotated[uuid.UUID, Path(alias="orgId")]
@@ -134,3 +140,5 @@ ItemId = Annotated[uuid.UUID, Path(alias="itemId")]
 NodeId = Annotated[uuid.UUID, Path(alias="nodeId")]
 DependencyId = Annotated[uuid.UUID, Path(alias="dependencyId")]
 DocumentId = Annotated[uuid.UUID, Path(alias="documentId")]
+EmployeeId = Annotated[uuid.UUID, Path(alias="employeeId")]
+SkillId = Annotated[uuid.UUID, Path(alias="skillId")]

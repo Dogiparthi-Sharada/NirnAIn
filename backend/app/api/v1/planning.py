@@ -19,6 +19,7 @@ from app.domain.planning import (
     planning_weeks,
     skill_coverage,
 )
+from app.domain.team import ensure_unlocked
 from app.repositories.access import ProjectRef
 
 router = APIRouter(tags=["planning"])
@@ -35,6 +36,7 @@ async def _writable_project(planning: Planning, project_id: ProjectId) -> Projec
     project = await _project(planning, project_id)
     if not await planning.can_write(project_id):
         raise ForbiddenError("You do not have permission to edit this project's plan")
+    ensure_unlocked(await planning.applied_version(project_id))
     return project
 
 
@@ -137,6 +139,7 @@ async def _writable_dependency(planning: Planning, dependency_id: DependencyId) 
         raise NotFoundError("Dependency not found")
     if not await planning.can_write(project_id):
         raise ForbiddenError("You do not have permission to edit this project's plan")
+    ensure_unlocked(await planning.applied_version(project_id))
 
 
 @router.patch(

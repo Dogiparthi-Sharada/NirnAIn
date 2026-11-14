@@ -18,6 +18,7 @@ from app.api.v1 import (
     plan,
     planning,
     projects,
+    team,
     wbs,
 )
 
@@ -38,3 +39,4 @@ api_router.include_router(overview.router)
 api_router.include_router(ai.router)
 api_router.include_router(assistant.router)
 api_router.include_router(documents.router)
+api_router.include_router(team.router)
