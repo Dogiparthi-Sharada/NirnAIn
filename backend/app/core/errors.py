@@ -69,6 +69,14 @@ class ConflictError(AppError):
     status, slug, title = 409, "conflict", "Conflict"
 
 
+class ContentTooLargeError(AppError):
+    status, slug, title = 413, "content-too-large", "Content Too Large"
+
+
+class UnsupportedMediaTypeError(AppError):
+    status, slug, title = 415, "unsupported-media-type", "Unsupported Media Type"
+
+
 class UnprocessableError(AppError):
     status, slug, title = 422, "unprocessable", "Unprocessable Content"
 

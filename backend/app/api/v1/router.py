@@ -6,6 +6,7 @@ from app.api.v1 import (
     ai,
     assistant,
     dashboard,
+    documents,
     intake,
     me,
     notifications,
@@ -28,3 +29,4 @@ api_router.include_router(wbs.router)
 api_router.include_router(planning.router)
 api_router.include_router(ai.router)
 api_router.include_router(assistant.router)
+api_router.include_router(documents.router)

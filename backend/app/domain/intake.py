@@ -1,3 +1,5 @@
+"""AI intake schemas: intake runs, scope items and uploaded source documents."""
+
 from __future__ import annotations
 
 import uuid
@@ -7,6 +9,7 @@ from pydantic import Field
 
 from app.domain.common import (
     CamelModel,
+    DocumentKind,
     InputModel,
     ItemOrigin,
     JobStatus,
@@ -52,3 +55,18 @@ class ScopeItemUpdate(InputModel):
 class ScopeItemCreate(InputModel):
     category: ScopeCategory
     text: str = Field(min_length=1, max_length=2000)
+
+
+class SourceDocument(CamelModel):
+    """An uploaded intake document: only its extracted text is stored (`chars` long)."""
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    kind: DocumentKind
+    title: str
+    mime_type: str | None
+    size_bytes: int | None
+    extraction_status: JobStatus
+    extraction_error: str | None
+    chars: int
+    created_at: datetime

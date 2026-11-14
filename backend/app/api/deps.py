@@ -15,6 +15,7 @@ from app.jobs.intake import IntakeRunner
 from app.jobs.optimizer import OptimizationRunner
 from app.repositories.ai_jobs import AiJobRepository
 from app.repositories.assistant import AssistantRepository
+from app.repositories.documents import DocumentRepository
 from app.repositories.intake import IntakeRepository
 from app.repositories.me import ProfileRepository
 from app.repositories.notifications import NotificationRepository
@@ -91,6 +92,11 @@ def get_assistant_llm(request: Request) -> LLM:
     return llm
 
 
+def get_document_repo(db: UserDB) -> DocumentRepository:
+    """Uploaded intake documents, under the caller's RLS session."""
+    return DocumentRepository(db)
+
+
 Profiles = Annotated[ProfileRepository, Depends(get_profile_repo)]
 Orgs = Annotated[OrgRepository, Depends(get_org_repo)]
 Projects = Annotated[ProjectRepository, Depends(get_project_repo)]
@@ -105,6 +111,7 @@ AiJobs = Annotated[AiJobRepository, Depends(get_ai_job_repo)]
 AiRunner = Annotated[AiJobRunner, Depends(get_ai_runner)]
 AssistantContexts = Annotated[AssistantRepository, Depends(get_assistant_repo)]
 AssistantLLM = Annotated[LLM, Depends(get_assistant_llm)]
+Documents = Annotated[DocumentRepository, Depends(get_document_repo)]
 
 # Path parameters are camelCase on the wire, like everything else.
 OrgId = Annotated[uuid.UUID, Path(alias="orgId")]
@@ -114,3 +121,4 @@ RunId = Annotated[uuid.UUID, Path(alias="runId")]
 ItemId = Annotated[uuid.UUID, Path(alias="itemId")]
 NodeId = Annotated[uuid.UUID, Path(alias="nodeId")]
 DependencyId = Annotated[uuid.UUID, Path(alias="dependencyId")]
+DocumentId = Annotated[uuid.UUID, Path(alias="documentId")]
