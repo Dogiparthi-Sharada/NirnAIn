@@ -1,7 +1,10 @@
-"""Shared schema primitives and Postgres enum mirrors.
+"""Shared schema primitives and mirrors of the Postgres enum types.
 
-Enum values must match the `public.*` enum types in `supabase/migrations`
-exactly — the database is the source of truth.
+Purpose: Keep the wire format consistent (camelCase JSON, strict request bodies) and the enum values
+identical to the `public.*` enum types in `supabase/migrations`, the source of truth.
+How it fits: Every other domain module builds on `CamelModel`/`InputModel`; repositories map the
+enums onto table columns; layer: domain.
+Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -30,8 +33,9 @@ class InputModel(CamelModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
-# --- public.org_role
 class OrgRole(StrEnum):
+    """Mirror of `public.org_role`: a member's role in an organization."""
+
     OWNER = "owner"
     ADMIN = "admin"
     PM = "pm"
@@ -39,8 +43,9 @@ class OrgRole(StrEnum):
     VIEWER = "viewer"
 
 
-# --- public.project_type
 class ProjectType(StrEnum):
+    """Mirror of `public.project_type`: the kind of project."""
+
     TECHNOLOGY = "technology"
     CONSTRUCTION = "construction"
     PRODUCT_DEVELOPMENT = "product_development"
@@ -48,30 +53,34 @@ class ProjectType(StrEnum):
     COMPLIANCE = "compliance"
 
 
-# --- public.project_priority
 class ProjectPriority(StrEnum):
+    """Mirror of `public.project_priority`."""
+
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
 
 
-# --- public.project_methodology
 class ProjectMethodology(StrEnum):
+    """Mirror of `public.project_methodology`: how the project is run."""
+
     WATERFALL = "waterfall"
     AGILE = "agile"
     HYBRID = "hybrid"
     KANBAN = "kanban"
 
 
-# --- public.project_visibility
 class ProjectVisibility(StrEnum):
+    """Mirror of `public.project_visibility`: who may see the project."""
+
     INTERNAL = "internal"
     CLIENT_FACING = "client_facing"
     CONFIDENTIAL = "confidential"
 
 
-# --- public.project_status
 class ProjectStatus(StrEnum):
+    """Mirror of `public.project_status`: where the project stands."""
+
     DRAFT = "draft"
     PLANNING = "planning"
     ON_TRACK = "on_track"
@@ -81,8 +90,9 @@ class ProjectStatus(StrEnum):
     ARCHIVED = "archived"
 
 
-# --- public.project_step
 class ProjectStep(StrEnum):
+    """Mirror of `public.project_step`: the workflow step the project has reached."""
+
     CREATE = "create"
     INTAKE = "intake"
     SCOPE = "scope"
@@ -92,15 +102,17 @@ class ProjectStep(StrEnum):
     DONE = "done"
 
 
-# --- public.notification_level
 class NotificationLevel(StrEnum):
+    """Mirror of `public.notification_level`."""
+
     INFO = "info"
     WARN = "warn"
     ALERT = "alert"
 
 
-# --- public.solver_status
 class SolverStatus(StrEnum):
+    """Mirror of `public.solver_status`: the state of an optimization run."""
+
     QUEUED = "queued"
     RUNNING = "running"
     OPTIMAL = "optimal"
@@ -110,30 +122,34 @@ class SolverStatus(StrEnum):
     FAILED = "failed"
 
 
-# --- public.dependency_type
 class DependencyType(StrEnum):
+    """Mirror of `public.dependency_type`: finish-to-start, start-to-start, and so on."""
+
     FS = "FS"
     SS = "SS"
     FF = "FF"
     SF = "SF"
 
 
-# --- public.constraint_mode
 class ConstraintMode(StrEnum):
+    """Mirror of `public.constraint_mode`: hard (must hold) or soft (can flex)."""
+
     HARD = "hard"
     SOFT = "soft"
 
 
-# --- public.recommendation_type
 class RecommendationType(StrEnum):
+    """Mirror of `public.recommendation_type`: kinds of optimizer recommendations."""
+
     REASSIGNMENT = "reassignment"
     SCHEDULE_CHANGE = "schedule_change"
     HIRE = "hire"
     NOTE = "note"
 
 
-# --- public.document_kind
 class DocumentKind(StrEnum):
+    """Mirror of `public.document_kind`: the type of an uploaded source document."""
+
     TEXT = "text"
     PDF = "pdf"
     DOCX = "docx"
@@ -141,8 +157,9 @@ class DocumentKind(StrEnum):
     AUDIO = "audio"
 
 
-# --- public.job_status
 class JobStatus(StrEnum):
+    """Mirror of `public.job_status`: the state of a background job."""
+
     QUEUED = "queued"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -150,8 +167,9 @@ class JobStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
-# --- public.scope_category
 class ScopeCategory(StrEnum):
+    """Mirror of `public.scope_category`: what a scope item is."""
+
     OBJECTIVE = "objective"
     REQUIREMENT = "requirement"
     DELIVERABLE = "deliverable"
@@ -160,32 +178,38 @@ class ScopeCategory(StrEnum):
     MISSING_INFO = "missing_info"
 
 
-# --- public.scope_status
 class ScopeStatus(StrEnum):
+    """Mirror of `public.scope_status`: the PM's review decision on a scope item."""
+
     PENDING = "pending"
     ACCEPTED = "accepted"
     REMOVED = "removed"
 
 
-# --- public.item_origin
 class ItemOrigin(StrEnum):
+    """Mirror of `public.item_origin`: whether AI or a person created the item."""
+
     AI = "ai"
     MANUAL = "manual"
 
 
-# --- check constraint on public.scope_items.evidence ("never invent")
 class Evidence(StrEnum):
+    """Allowed `scope_items.evidence` values ("never invent": how well the quote backs it)."""
+
     STATED = "stated"  # the source quote says it
     INFERRED = "inferred"  # derived from the quote, or no exact quote was found
     FLAGGED = "flagged"  # says more than the quote; suggested_text is what the quote supports
 
 
-# --- public.ai_job_kind
 class AiJobKind(StrEnum):
+    """Mirror of `public.ai_job_kind`: the kinds of background AI jobs."""
+
     WBS_GENERATE = "wbs_generate"
     WBS_VALIDATE = "wbs_validate"
 
 
-class Page[T](CamelModel):
-    items: list[T]
+class Page[ItemT](CamelModel):
+    """One page of a keyset-paginated list and the cursor of the next page."""
+
+    items: list[ItemT]
     next_cursor: str | None = None

@@ -1,4 +1,11 @@
-"""AI intake schemas: intake runs, scope items and uploaded source documents."""
+"""AI intake schemas: intake runs, scope items and uploaded source documents.
+
+Purpose: Describe what AI intake extracted from the PM's notes and documents, so the PM can review
+every scope item against its quoted evidence before planning.
+How it fits: Used by app/api/v1/intake.py and app/api/v1/documents.py, stored by
+app/repositories/intake.py and app/repositories/documents.py; layer: domain.
+Created: 2026-10-21 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -41,6 +48,8 @@ class ScopeItem(CamelModel):
 
 
 class IntakeRun(CamelModel):
+    """One AI intake run over the project's notes and documents."""
+
     id: uuid.UUID
     project_id: uuid.UUID
     status: JobStatus
@@ -59,11 +68,15 @@ class IntakeRunCreate(InputModel):
 
 
 class ScopeItemUpdate(InputModel):
+    """Body of a scope item edit: new text and/or a review decision."""
+
     text: str | None = Field(default=None, min_length=1, max_length=2000)
     status: ScopeStatus | None = None
 
 
 class ScopeItemCreate(InputModel):
+    """Body of a scope item the PM adds by hand."""
+
     category: ScopeCategory
     text: str = Field(min_length=1, max_length=2000)
 

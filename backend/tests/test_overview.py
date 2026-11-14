@@ -15,16 +15,18 @@ from app.core.security import CurrentPrincipal
 from app.domain.common import ConstraintMode, NotificationLevel, ScopeStatus
 from app.domain.notifications import Notification
 from app.domain.overview import (
-    AppliedRunFacts,
-    OverviewFacts,
-    PolicyFacts,
-    ProgressFacts,
-    ScopeRisk,
     build_overview,
     constraint_choices,
     next_step,
     peak_utilization,
     soft_violations,
+)
+from app.domain.overview_facts import (
+    AppliedRunFacts,
+    OverviewFacts,
+    PolicyFacts,
+    ProgressFacts,
+    ScopeRisk,
 )
 from app.domain.overview_milestones import MilestoneFact, milestone_summary, planned_finishes
 from app.domain.projects import Project

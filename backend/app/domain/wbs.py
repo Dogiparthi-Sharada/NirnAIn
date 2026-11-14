@@ -1,3 +1,12 @@
+"""API models of the work breakdown structure (WBS) and its built-in checks.
+
+Purpose: Describe WBS nodes (deliverables and work packages), how they are created, edited, moved
+and confirmed, and whether each duration estimate is AI's or the PM's.
+How it fits: Used by app/api/v1/wbs.py and app/repositories/wbs.py (checks:
+app/repositories/wbs_checks.py); layer: domain.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
+
 from __future__ import annotations
 
 import uuid
@@ -16,6 +25,8 @@ DurationDays = Annotated[int, Field(ge=0, le=3650)]
 
 
 class EstimateSource(StrEnum):
+    """Who gave a duration estimate: AI or the PM."""
+
     AI = "ai"
     YOURS = "yours"
 
@@ -33,12 +44,16 @@ def estimate_state(
 
 
 class WbsSkill(CamelModel):
+    """A skill a work package needs and at which minimum proficiency."""
+
     skill_id: uuid.UUID
     name: str
     min_proficiency: int
 
 
 class WbsNode(CamelModel):
+    """A node of the WBS (deliverable or work package) as the API returns it."""
+
     id: uuid.UUID
     parent_id: uuid.UUID | None
     level: int
@@ -58,6 +73,8 @@ class WbsNode(CamelModel):
 
 
 class WbsNodeCreate(InputModel):
+    """Body to add a WBS node under a parent (or at the top level)."""
+
     parent_id: uuid.UUID | None = None
     name: NodeName
     duration_days: DurationDays | None = None
@@ -65,6 +82,7 @@ class WbsNodeCreate(InputModel):
     description: NodeDescription | None = None
 
     def values(self) -> dict[str, Any]:
+        """Return the columns to insert; an empty description is stored as null."""
         return {
             "name": self.name,
             "duration_days": self.duration_days,
@@ -88,6 +106,7 @@ class WbsNodeUpdate(InputModel):
 
     @model_validator(mode="after")
     def _validate(self) -> WbsNodeUpdate:
+        """Reject an empty body and nulls for the name or skills."""
         if not self.model_fields_set:
             raise ValueError("Provide at least one field to update")
         for field_name in ("name", "skills"):
@@ -110,6 +129,8 @@ class WbsConfirmEstimates(InputModel):
 
 
 class WbsMove(InputModel):
+    """Body to move a node to a new position among its siblings."""
+
     position: Annotated[int, Field(ge=0)]
 
 
@@ -135,6 +156,6 @@ class WbsChecks(CamelModel):
 
 def reorder(sibling_ids: list[uuid.UUID], node_id: uuid.UUID, position: int) -> list[uuid.UUID]:
     """Siblings in their new order, with `node_id` at index `position` (clamped)."""
-    rest = [s for s in sibling_ids if s != node_id]
+    rest = [sibling_id for sibling_id in sibling_ids if sibling_id != node_id]
     index = min(max(position, 0), len(rest))
     return [*rest[:index], node_id, *rest[index:]]

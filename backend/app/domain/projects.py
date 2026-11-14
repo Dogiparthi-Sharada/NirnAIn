@@ -1,3 +1,12 @@
+"""API models of projects: the project record, creating one and editing one.
+
+Purpose: Validate project details at the boundary (lengths, currency code, budget in cents that a
+JavaScript client can hold exactly, end date not before start date).
+How it fits: Used by app/api/v1/projects.py and app/repositories/projects.py; other domain modules
+reuse `BudgetCents`; layer: domain.
+Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+"""
+
 from __future__ import annotations
 
 import uuid
@@ -30,11 +39,14 @@ ProgressPct = Annotated[int, Field(ge=0, le=100)]
 
 
 def _check_dates(start: date | None, end: date | None) -> None:
+    """Raise when the target end date is before the start date."""
     if start is not None and end is not None and end < start:
         raise ValueError("targetEndDate must be on or after startDate")
 
 
 class Project(CamelModel):
+    """A project as the API returns it."""
+
     id: uuid.UUID
     org_id: uuid.UUID
     code: str
@@ -62,6 +74,8 @@ class Project(CamelModel):
 
 
 class ProjectCreate(InputModel):
+    """Body of `POST /orgs/{orgId}/projects`."""
+
     name: Name
     description: Description | None = None
     type: ProjectType = ProjectType.TECHNOLOGY
@@ -82,10 +96,12 @@ class ProjectCreate(InputModel):
 
     @model_validator(mode="after")
     def _validate(self) -> ProjectCreate:
+        """Check the project's date range."""
         _check_dates(self.start_date, self.target_end_date)
         return self
 
     def values(self) -> dict[str, Any]:
+        """Return the columns to insert; empty optional texts are stored as null."""
         data = self.model_dump(by_alias=False)
         for key in ("description", "department", "sponsor"):
             if data[key] == "":
@@ -130,15 +146,21 @@ class ProjectUpdate(InputModel):
 
     @model_validator(mode="after")
     def _validate(self) -> ProjectUpdate:
+        """Reject an empty body, nulls for required columns and an inverted date range."""
         if not self.model_fields_set:
             raise ValueError("Provide at least one field to update")
-        nulls = sorted(f for f in self.model_fields_set & _NON_NULLABLE if getattr(self, f) is None)
+        nulls = sorted(
+            field_name
+            for field_name in self.model_fields_set & _NON_NULLABLE
+            if getattr(self, field_name) is None
+        )
         if nulls:
             raise ValueError(f"Fields cannot be null: {', '.join(nulls)}")
         _check_dates(self.start_date, self.target_end_date)
         return self
 
     def changes(self) -> dict[str, Any]:
+        """Return only the columns the body sets; empty optional texts become null."""
         data = self.model_dump(exclude_unset=True, by_alias=False)
         for key in ("description", "department", "sponsor"):
             if data.get(key) == "":

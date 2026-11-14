@@ -1,10 +1,11 @@
 """API models of Changes & Versions (step 7): something changed after a plan was applied.
 
-A change request records what changed (from meeting notes, direct edits or a progress
-update), the questions it raises, the answers, and the re-plan it led to. Changes can also
-bring people onto the project or take them off it mid-way (kind "team"). JSON is camelCase
-(CamelModel). Used by app/api/v1/changes.py, the pure logic in app/changes/ and the
-repositories; the frontend mirrors these types in src/lib/changes.ts.
+Purpose: A change request records what changed (from meeting notes, direct edits or a progress
+update), the questions it raises, the answers and the re-plan it led to; changes can also bring
+people onto the project or take them off it mid-way (kind "team").
+How it fits: Used by app/api/v1/changes.py, the pure logic in app/changes/ and the change
+repositories; the frontend mirrors these types in src/lib/changes.ts; layer: domain.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ DECIDED = (ChangeStatus.APPROVED, ChangeStatus.REJECTED)
 
 
 def _omit_none(value: object) -> bool:
+    """Tell Pydantic to leave a field out of the JSON when it is None."""
     return value is None
 
 
@@ -83,11 +85,13 @@ class NewMember(InputModel):
     @field_validator("full_name", "role_title")
     @classmethod
     def _squash(cls, value: str) -> str:
+        """Collapse runs of whitespace in the name and role title."""
         return " ".join(value.split())
 
     @field_validator("skills")
     @classmethod
     def _clean(cls, value: list[str]) -> list[str]:
+        """Trim the skill names and drop blanks and duplicates."""
         return clean_skill_names(value)
 
 
@@ -100,6 +104,7 @@ class StoredMember(NewMember):
     @model_validator(mode="before")
     @classmethod
     def _legacy_contractor(cls, data: Any) -> Any:
+        """Read a legacy `isContractor` flag as `workerType: contractor` when no type is stored."""
         if isinstance(data, dict) and "workerType" not in data and data.get("isContractor"):
             return {**data, "workerType": "contractor"}
         return data
@@ -204,6 +209,7 @@ class PlanOverrides(CamelModel):
 
     @property
     def empty(self) -> bool:
+        """Tell whether the overrides change nothing (no value, policy, edit or team change)."""
         return not (
             self.budget_total_cents is not None
             or self.must_finish_by is not None

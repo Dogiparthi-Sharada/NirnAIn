@@ -19,7 +19,7 @@ from app.domain.common import (
     SolverStatus,
 )
 from app.domain.notifications import Notification
-from app.domain.overview import (
+from app.domain.overview_facts import (
     AppliedRunFacts,
     OverviewFacts,
     PolicyFacts,

@@ -1,3 +1,11 @@
+"""API model of the organization dashboard's KPI cards.
+
+Purpose: Summarise the projects the caller can see (counts, budget, at-risk) for the dashboard.
+How it fits: Returned by `GET /orgs/{orgId}/dashboard` (app/api/v1/dashboard.py), filled by
+app/repositories/projects.py under RLS; layer: domain.
+Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+"""
+
 from __future__ import annotations
 
 from app.domain.common import CamelModel
