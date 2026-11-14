@@ -134,7 +134,7 @@ Why the session pooler?
 
 ✅ **Check it worked:** the string contains `postgres.<PROJECT-REF>:`, `pooler.supabase.com:5432` and no `[YOUR-PASSWORD]`.
 
-### 1.5 Create the database tables (15 migrations)
+### 1.5 Create the database tables (17 migrations)
 
 **Option A: Supabase CLI (recommended).** You don't need Docker for this.
 
@@ -147,7 +147,7 @@ npx supabase@latest db push --remote
 
 1. `login` opens your browser. Approve, then return to the terminal. You should see "Finished supabase login".
 2. `link` asks for the database password. Paste `<DB-PASSWORD>`. You should see "Finished supabase link".
-3. `db push --remote --dry-run` lists the 15 files in `supabase/migrations/`, from `20260924000100_foundation.sql` to `20261113000600_apply_allocation_hours.sql`, and changes nothing.
+3. `db push --remote --dry-run` lists the 17 files in `supabase/migrations/`, from `20260924000100_foundation.sql` to `20261114000200_source_documents_truncated.sql`, and changes nothing.
 4. `db push --remote` shows the same list and asks to confirm. Type `y`. Every file prints "Applying migration …".
 
 If the CLI says `unknown flag: --remote`, it's an older version. Use `--linked` instead of `--remote`.
@@ -175,6 +175,8 @@ this order, open the file in `supabase/migrations/`, copy all of it, paste it, a
 20261113000500_source_documents_extracted_text.sql
 20261113000520_documents_100mb.sql
 20261113000600_apply_allocation_hours.sql
+20261114000100_cross_project_links.sql
+20261114000200_source_documents_truncated.sql
 ```
 
 The SQL Editor doesn't record which migrations it ran. If you use Option B, don't run `db push` on this project
