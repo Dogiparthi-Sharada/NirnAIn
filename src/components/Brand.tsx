@@ -1,8 +1,16 @@
-export const APP_NAME = 'NirnAIn'
+/**
+ * The NirnAIn brand: the app name, the "N" logo mark and the wordmark.
+ *
+ * Purpose: The brand appears on the sign-in screens, the workspace loading states and the shell,
+ * and must look the same everywhere.
+ * How it fits: Used by `auth/AuthLayout.tsx`, `org/OrgProvider.tsx`, `components/ErrorPages.tsx`
+ * and page titles across the screens (`APP_NAME`); layer: component.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+ */
 
-function cx(...classes: (string | false | null | undefined)[]): string {
-  return classes.filter(Boolean).join(' ')
-}
+import { cx } from '@/lib/classNames'
+
+export const APP_NAME = 'NirnAIn'
 
 /** Square "N" logo mark. `inverted` is for use on the primary-colored brand panel. */
 export function BrandMark({ size = 32, inverted = false }: { size?: number; inverted?: boolean }) {

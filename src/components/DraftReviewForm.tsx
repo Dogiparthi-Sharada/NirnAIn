@@ -1,11 +1,15 @@
 /**
- * The pre-filled project form of "Create from a transcript or document" (mockup create-upload.js,
- * `#pf-form`): the four numbered sections of the manual form, where every value AI read from the
- * source shows its provenance chip and the sentence it came from.
+ * The pre-filled project form of "Create from a transcript or document", with provenance on every value.
  *
- * Presentational only: `screens/CreateFromUpload.tsx` owns the state and the Create / Save Draft
- * flow; the provenance rules live in `lib/draftReview.ts`.
+ * Purpose: Every value AI read from the source shows where it came from (stated, inferred, not
+ * found, confirmed, edited) and the sentence it came from, so the PM checks each one before
+ * anything is saved.
+ * How it fits: Port of the mockup's create-upload.js (`#pf-form`); presentational only:
+ * `screens/CreateFromUpload.tsx` owns the state and the Create / Save Draft flow, and the rules
+ * live in `lib/draftReview.ts`; layer: component.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import type { ReactNode } from 'react'
 import { Field, OptionsSelect, SectionHead, SectionHeadBody } from '@/components/CreateForm'
 import { DEPARTMENTS } from '@/lib/createForm'
@@ -44,11 +48,13 @@ const CHIPS: Record<Mark, [className: string, label: string]> = {
   edited: ['st-yours', 'Edited by you'],
 }
 
+/** The provenance chip of a review value. */
 function Chip({ mark }: { mark: Mark }) {
   const [className, label] = CHIPS[mark]
   return <span className={`chip ${className}`}>{label}</span>
 }
 
+/** The "Default" chip, for values the source didn't give. */
 const DefaultChip = () => <Chip mark="default" />
 
 /** The pre-filled form; `invalid` lists the fields to outline red after a blocked Create. */
@@ -115,6 +121,7 @@ export default function DraftReviewForm({
     }
   }
 
+  /** The shared props of one review field's control: id, invalid outline, value and change handler. */
   function inputProps(key: ReviewKey) {
     const bad = invalid.has(key)
     return {
@@ -126,6 +133,7 @@ export default function DraftReviewForm({
     }
   }
 
+  /** One labelled review field with its provenance chip and quote around `control`. */
   const field = (key: ReviewKey, control: ReactNode, required = false) => (
     <Field id={REVIEW_IDS[key]} label={REVIEW_LABELS[key]} required={required} className="field pf" {...provenance(key)}>
       {control}

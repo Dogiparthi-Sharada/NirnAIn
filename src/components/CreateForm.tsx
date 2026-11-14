@@ -1,13 +1,15 @@
 /**
- * Building blocks shared by both Create Project paths (`screens/CreateProject.tsx`, the manual form,
- * and `screens/CreateFromUpload.tsx` + `components/DraftReviewForm.tsx`, the upload review), styled by
- * the approved design's `styles/create-form.css`: numbered section heads, labelled fields, the gap
- * banner and the "Required to continue" checklist.
+ * Building blocks shared by both Create Project paths: section heads, labelled fields, the gap banner and the checklist.
  *
- * Design rule they implement: Continue / Create are never greyed out. A blocked click opens the gap
- * banner instead, listing each problem as a link that focuses its field, and moves focus to the
- * banner so screen readers announce it.
+ * Purpose: Continue and Create are never greyed out: a blocked click opens the gap banner listing
+ * each problem as a link that focuses its field, and focus moves to the banner so screen readers
+ * announce it.
+ * How it fits: Used by `screens/CreateProject.tsx` (the manual form) and
+ * `screens/CreateFromUpload.tsx` with `components/DraftReviewForm.tsx` (the upload review); styled
+ * by the design's `styles/create-form.css`; layer: component.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useCallback, useEffect, useRef, useState, type ReactNode, type Ref, type SelectHTMLAttributes } from 'react'
 
 /** Number badge, title, help line and Required/Optional badge (also used inside a `<summary>`). */
@@ -165,6 +167,7 @@ export function useBannerFocus(): { ref: Ref<HTMLDivElement>; request: () => voi
     ref.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
     ref.current?.focus({ preventScroll: true })
   }, [tick])
+  /** Asks for the banner to be scrolled into view and focused after the next render. */
   const request = useCallback(() => setTick((count) => count + 1), [])
   return { ref, request }
 }
@@ -226,20 +229,20 @@ export function StatusChip({ id, todo, ready }: { id: string; todo: string | nul
 }
 
 /** A `<select>` over a fixed list of values (enum options with their display labels). */
-export function OptionsSelect<T extends string>({
+export function OptionsSelect<TOption extends string>({
   options,
   labels,
   value,
   onValue,
   ...rest
 }: {
-  options: readonly T[]
-  labels?: Record<T, string>
-  value: T
-  onValue: (value: T) => void
+  options: readonly TOption[]
+  labels?: Record<TOption, string>
+  value: TOption
+  onValue: (value: TOption) => void
 } & Omit<SelectHTMLAttributes<HTMLSelectElement>, 'value' | 'onChange'>) {
   return (
-    <select {...rest} value={value} onChange={(event) => onValue(event.target.value as T)}>
+    <select {...rest} value={value} onChange={(event) => onValue(event.target.value as TOption)}>
       {options.map((option) => (
         <option key={option} value={option}>
           {labels ? labels[option] : option}

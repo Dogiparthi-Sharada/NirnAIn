@@ -1,16 +1,18 @@
 /**
- * AI validation card of the WBS Builder (mockup views/wbs.js `#wbs-issues`), in two parts:
- * - Built-in checks (`GET …/wbs/checks`): structure, durations, owners, deadline and skill gaps on
- *   the WBS as it is now. They are free, so they re-run after every edit (`lib/wbsChecks.ts`).
- * - AI review (the last `wbs_validate` job): the missing / duplicate work and other items the AI
- *   found, under the time it ran. It costs tokens, so it re-runs only when the PM asks; once the
- *   WBS changed since, a note says so and offers "Re-check (uses AI)".
- * Info lines (e.g. "Skills this WBS needs: …" before the team is set on step 5) use the neutral info
- * style and are not counted in the header. Issues are suggestions only; nothing is added to the WBS
- * until the PM adds it. Hidden while the project has no WBS (the builder's empty state explains that).
+ * The WBS Builder's validation card: free built-in checks and the last AI review.
+ *
+ * Purpose: Built-in checks are free and re-run after every edit; the AI review costs tokens, so it
+ * re-runs only when the PM asks and says when the WBS changed since. Info lines are not counted,
+ * and nothing is added to the WBS until the PM adds it.
+ * How it fits: Port of the mockup's views/wbs.js `#wbs-issues`; rendered by
+ * `screens/WBSBuilder.tsx` while the project has a WBS; data from `lib/wbsChecks.ts`;
+ * layer: component.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import type { ReactNode } from 'react'
 import { errorMessage } from '@/lib/api'
+import { isRunning } from '@/lib/queries'
 import type { AiJob, WbsIssue, WbsIssueType } from '@/lib/types'
 import { isCountedIssue, reviewIsStale, reviewIssues, reviewTime, useWbsChecks } from '@/lib/wbsChecks'
 
@@ -20,8 +22,8 @@ const ISSUE_STYLE: Record<WbsIssueType, { label: string; background: string }> =
   warning: { label: 'Warning', background: '#F3D9D5' },
   info: { label: 'Info', background: '#EAF0E2' },
 }
-const ACTIVE_JOB = new Set(['queued', 'running'])
 
+/** A small heading for one part of the card. */
 function SubHeading({ children }: { children: ReactNode }) {
   return (
     <h4 className="small" style={{ margin: '12px 0 0', fontWeight: 600, color: 'var(--secfg)' }}>
@@ -30,6 +32,7 @@ function SubHeading({ children }: { children: ReactNode }) {
   )
 }
 
+/** One coloured row per issue, labelled with its type. */
 function IssueRows({ issues }: { issues: WbsIssue[] }) {
   return issues.map((issue, index) => (
     <div key={`${issue.type}-${index}-${issue.text}`} className="issue" style={{ background: ISSUE_STYLE[issue.type].background }}>
@@ -39,6 +42,7 @@ function IssueRows({ issues }: { issues: WbsIssue[] }) {
   ))
 }
 
+/** A short note under a part of the card, muted, green or red. */
 function Note({ children, tone = 'muted' }: { children: ReactNode; tone?: 'muted' | 'ok' | 'bad' }) {
   const color = tone === 'ok' ? 'var(--green)' : tone === 'bad' ? 'var(--red)' : 'var(--mfg)'
   return (
@@ -93,7 +97,7 @@ function AiReview({ job, starting, liveAvailable, wbsChangedAt, onRecheck }: {
       Re-check (uses AI)
     </button>
   )
-  if (starting || ACTIVE_JOB.has(job?.status ?? '')) {
+  if (starting || isRunning(job?.status)) {
     return (
       <section aria-label="AI review">
         <SubHeading>AI review</SubHeading>

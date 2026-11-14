@@ -34,10 +34,11 @@ import {
   type RunRequest,
 } from '@/lib/optimize'
 import { useConstraints, useLatestRun } from '@/lib/queries'
+import { useToast } from '@/components/InputsKit'
 import { ConfirmSheet } from './optimization/ConfirmSheet'
 import { PlanView } from './optimization/PlanView'
 import { InfeasibleState, SolvingState } from './optimization/RunStates'
-import { ProblemAlert, QuietNote, useToast } from './optimization/ui'
+import { ProblemAlert, QuietNote } from './optimization/ui'
 
 /** Header chip: "OPTIMAL OR-Tools · 2.4s" (amber for a feasible, not proven optimal, plan). */
 function SolverChip({ run }: { run: PlanRun }) {
@@ -62,7 +63,7 @@ export default function OptimizationResults() {
   // Set in the click itself: `startRun.isPending` (which disables the buttons) only arrives with
   // the next render, after a double-click's second click (NFR-005).
   const startingRef = useRef(false)
-  const [toast, showToast] = useToast()
+  const [toast, showToast] = useToast({ keepMounted: false })
   // "Run again" re-opens the sheet; "View the last plan" dismisses the inputs-changed sheet.
   const [sheetRequested, setSheetRequested] = useState(false)
   const [stalePlanAccepted, setStalePlanAccepted] = useState(false)

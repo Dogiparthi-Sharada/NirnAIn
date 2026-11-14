@@ -1,7 +1,11 @@
 /**
- * What the WBS Builder shows in place of the table while a project has no WBS: loading, a load
- * error, AI drafting the tree from the accepted scope (the `wbs_generate` job), a failed generation
- * with Try again, or the hint to start by hand with + Add Deliverable.
+ * What the WBS Builder shows in place of the table while a project has no WBS.
+ *
+ * Purpose: The PM always sees why the table is empty and what to do: loading, a load error, AI
+ * drafting the tree from the accepted scope, a failed generation with Try again, or the hint to
+ * start by hand.
+ * How it fits: Rendered by `screens/WBSBuilder.tsx`; layer: component.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
 
 /** One status line for the empty table; `onRetry` starts the AI generation again. */

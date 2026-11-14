@@ -1,11 +1,18 @@
-import type { ButtonHTMLAttributes } from 'react'
+/**
+ * Shared UI primitives: spinners, the button and the error state.
+ *
+ * Purpose: Every data view needs the same loading and error states and an accessible button with
+ * visible focus and a busy state that doesn't shift the layout.
+ * How it fits: Used by the auth guards, `org/OrgProvider.tsx` and screens; layer: component.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+ */
 
-function cx(...classes: (string | false | null | undefined)[]): string {
-  return classes.filter(Boolean).join(' ')
-}
+import type { ButtonHTMLAttributes } from 'react'
+import { cx } from '@/lib/classNames'
 
 /* ─────────────────────────── Spinner ─────────────────────────── */
 
+/** A spinning circle; decorative (hidden from screen readers). */
 export function Spinner({ size = 16, className }: { size?: number; className?: string }) {
   return (
     <svg
@@ -22,6 +29,7 @@ export function Spinner({ size = 16, className }: { size?: number; className?: s
   )
 }
 
+/** A centred spinner with a label, announced politely, for whole-page loading. */
 export function FullPageSpinner({ label = 'Loading' }: { label?: string }) {
   return (
     <div role="status" aria-live="polite" className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
@@ -48,6 +56,10 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: 'sm' | 'md' | 'lg'
 }
 
+/**
+ * A button in the primary, secondary or ghost style that shows a spinner while `loading` without changing its
+ * width.
+ */
 export function Button({
   variant = 'primary',
   loading = false,
@@ -89,6 +101,7 @@ export function Button({
 
 /* ─────────────────────────── Data states ─────────────────────────── */
 
+/** A load-failure message with an optional Try again button. */
 export function ErrorState({
   title = "We couldn't load this",
   message,

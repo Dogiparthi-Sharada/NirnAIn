@@ -1,13 +1,15 @@
 /**
- * The WBS table of the WBS Builder (mockup views/wbs.js `#wbs-tbl`): project, deliverables and work
- * packages with code, name, duration and owner, as an indented tree ("Chart") or a flat list.
+ * The WBS table of the WBS Builder: project, deliverables and work packages as a tree or a flat list.
  *
- * Each work package shows its weeks and an estimate chip — "AI estimate" with a Confirm button
- * until the PM confirms it, "✓ Confirmed", or "Yours" for estimates the PM entered (see
- * `lib/wbs.ts`), and the skills it needs as chips under its name (`WbsSkillChips`). Rows can be
- * edited inline (name, weeks, owner, skills; see `WbsEditCells`, which checks the values first) and
- * reordered within their parent by dragging or Alt+↑/↓; the screen performs the API calls.
+ * Purpose: Each work package shows its weeks and an estimate chip ("AI estimate" with Confirm
+ * until the PM confirms it, "✓ Confirmed", or "Yours") and the skills it needs, so nothing AI
+ * guessed reaches the optimizer unconfirmed. Rows are edited inline and reordered within their
+ * parent by dragging or Alt+↑/↓.
+ * How it fits: Port of the mockup's views/wbs.js `#wbs-tbl`; rendered by `screens/WBSBuilder.tsx`,
+ * which performs the API calls; edits through `components/WbsEditCells.tsx`; layer: component.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useState, type DragEvent, type KeyboardEvent } from 'react'
 import { displayCode, estimateState, formatWeeks, type EstimateState, type SkillOptions, type WbsTreeNode } from '@/lib/wbs'
 import type { WbsNodePatch } from '@/lib/types'
@@ -82,6 +84,10 @@ export default function WbsTable({
     if (event.key === 'ArrowDown' && index < siblings.length - 1) onMove(siblings[index + 1], node)
   }
 
+  /**
+   * Drag-and-drop props of a row: deliverables and work packages move among their siblings; the project row
+   * and the row being edited don't drag.
+   */
   function dragProps(node: WbsTreeNode) {
     if (node.level === 1 || editingId === node.id) return {}
     return {
