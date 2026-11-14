@@ -1,11 +1,19 @@
+/**
+ * Reset your password (`/forgot-password`, mockup views/auth.js `#v-forgot`): asks Supabase to email
+ * a reset link that comes back through `/auth/callback` to `/reset-password`.
+ *
+ * Privacy: the same "Reset link requested" confirmation shows whether or not an account exists, so
+ * the form can't be used to discover registered emails; only network and rate-limit failures are
+ * reported as errors.
+ */
 import { useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
 import { supabase } from '@/lib/supabase'
 import { authRedirectUrl } from '@/lib/redirect'
-import AuthLayout, { linkClass } from '@/auth/AuthLayout'
+import AuthLayout, { AuthField } from '@/auth/AuthLayout'
 import { friendlyAuthError } from '@/auth/errors'
-import { Alert, Button, TextField } from '@/components/ui'
 
+/** Email in, reset link out; the confirmation stays above the form so another address can be tried. */
 export default function ForgotPassword() {
   const [email, setEmail] = useState('')
   const [fieldError, setFieldError] = useState<string | null>(null)
@@ -24,6 +32,7 @@ export default function ForgotPassword() {
     }
     setFieldError(null)
     setError(null)
+    setSentTo(null)
     setSubmitting(true)
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(trimmed, {
       redirectTo: authRedirectUrl('/reset-password'),
@@ -41,70 +50,50 @@ export default function ForgotPassword() {
 
   return (
     <AuthLayout
-      title={sentTo ? 'Check your email' : 'Reset your password'}
-      subtitle={
-        sentTo
-          ? undefined
-          : "Enter the email you use for NirnAIn and we'll send you a link to choose a new password."
-      }
-      footer={
-        <Link to="/login" className={linkClass}>
-          Back to sign in
-        </Link>
-      }
+      id="v-forgot"
+      title="Reset your password"
+      features={false}
+      subtitle="Enter the email you use for NirnAIn and we'll send you a link to choose a new password."
+      footer={<Link to="/login">Back to sign in</Link>}
     >
-      {sentTo ? (
-        <div aria-live="polite">
-          <Alert tone="success" title="Reset link requested">
-            If an account exists for <span className="font-semibold">{sentTo}</span>, you&apos;ll receive an email with a
-            link to reset your password within a few minutes.
-          </Alert>
-          <Button
-            variant="secondary"
-            size="lg"
-            block
-            className="mt-6"
-            onClick={() => {
-              setSentTo(null)
-              setEmail('')
-            }}
-          >
-            Use a different email
-          </Button>
-        </div>
-      ) : (
-        <form onSubmit={onSubmit} noValidate>
-          <div aria-live="assertive" aria-atomic="true">
-            {error && (
-              <div className="mb-5">
-                <Alert tone="error" onDismiss={() => setError(null)}>
-                  {error}
-                </Alert>
-              </div>
-            )}
+      <div aria-live="polite" aria-atomic="true">
+        {sentTo && (
+          <div id="fp-done" className="alert ok">
+            <b>Reset link requested</b>
+            <br />
+            If an account exists for {sentTo}, you&apos;ll receive an email with a link to reset your password within a few
+            minutes.
           </div>
-          <TextField
-            ref={emailRef}
-            label="Email address"
-            type="email"
-            name="email"
-            autoComplete="email"
-            inputMode="email"
-            autoCapitalize="off"
-            spellCheck={false}
-            placeholder="you@company.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            error={fieldError}
-            readOnly={submitting}
-            autoFocus
-            required
-          />
-          <Button type="submit" size="lg" block loading={submitting} className="mt-2">
-            Send reset link
-          </Button>
-        </form>
-      )}
+        )}
+        {error && (
+          <div className="alert bad" role="alert">
+            {error}
+          </div>
+        )}
+      </div>
+      <form onSubmit={onSubmit} noValidate>
+        <AuthField
+          ref={emailRef}
+          id="fp-email"
+          label="Email address"
+          type="email"
+          name="email"
+          autoComplete="email"
+          inputMode="email"
+          autoCapitalize="off"
+          spellCheck={false}
+          placeholder="you@company.com"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          error={fieldError}
+          readOnly={submitting}
+          autoFocus
+          required
+        />
+        <button className="btn block" type="submit" disabled={submitting} aria-busy={submitting || undefined}>
+          {submitting ? 'Sending…' : 'Send reset link'}
+        </button>
+      </form>
     </AuthLayout>
   )
 }

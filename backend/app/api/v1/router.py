@@ -5,11 +5,13 @@ from fastapi import APIRouter
 from app.api.v1 import (
     changes,
     dashboard,
+    drafts,
     intake,
     me,
     notifications,
     optimization,
     orgs,
+    overview,
     plan,
     planning,
     projects,
@@ -28,3 +30,5 @@ api_router.include_router(wbs.router)
 api_router.include_router(planning.router)
 api_router.include_router(plan.router)
 api_router.include_router(changes.router)
+api_router.include_router(drafts.router)
+api_router.include_router(overview.router)

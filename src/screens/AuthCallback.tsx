@@ -1,9 +1,19 @@
+/**
+ * `/auth/callback`: where OAuth, email-confirmation, magic-link and password-recovery redirects
+ * land. The Supabase client (`detectSessionInUrl` + PKCE) exchanges the `?code=` on start-up; this
+ * screen waits for that, then sends the user on to `?next=` (or the `next` remembered before an
+ * OAuth round trip), validated by `safeNext`.
+ *
+ * A code that can't be exchanged here was opened in another browser than the one that started the
+ * flow: for sign-up that still means the email is confirmed (the user just signs in); for a
+ * password reset the link must be requested again from this device.
+ */
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { supabase } from '@/lib/supabase'
 import { safeNext, takeRememberedNext } from '@/lib/redirect'
-import AuthLayout, { linkClass } from '@/auth/AuthLayout'
-import { Alert, FullPageSpinner } from '@/components/ui'
+import AuthLayout from '@/auth/AuthLayout'
+import { FullPageSpinner } from '@/components/ui'
 
 /** Reads `error_description` from the query string or hash (Supabase uses both). */
 function readUrlError(): string | null {
@@ -15,11 +25,7 @@ function readUrlError(): string | null {
   return (description ?? code ?? '').replace(/\+/g, ' ')
 }
 
-/**
- * Landing page for OAuth, email-confirmation, magic-link and password-recovery
- * redirects. The Supabase client (`detectSessionInUrl` + PKCE) exchanges the
- * `?code=` automatically on start-up; we wait for that, then route onwards.
- */
+/** A spinner while the session is established, then a redirect or an explanation. */
 export default function AuthCallback() {
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
@@ -43,7 +49,7 @@ export default function AuthCallback() {
     // browser than the one that signed up: the email *is* confirmed.
     const hadCode = new URLSearchParams(window.location.search).has('code')
 
-    supabase.auth.getSession().then(({ data }) => {
+    void supabase.auth.getSession().then(({ data }) => {
       if (data.session) {
         navigate(next, { replace: true })
       } else if (hadCode && next === '/reset-password') {
@@ -62,12 +68,9 @@ export default function AuthCallback() {
 
   if (confirmedElsewhere) {
     return (
-      <AuthLayout title="Your email is confirmed" subtitle="Your NirnAIn account is ready.">
-        <Alert tone="success">Sign in with your email and password to open your workspace on this device.</Alert>
-        <Link
-          to="/login"
-          className="mt-6 flex w-full items-center justify-center rounded-[4px] bg-primary px-4 py-[11px] text-sm font-semibold text-white hover:bg-[#5E262D] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-        >
+      <AuthLayout id="v-callback" title="Your email is confirmed" subtitle="Your NirnAIn account is ready." features={false}>
+        <div className="alert ok">Sign in with your email and password to open your workspace on this device.</div>
+        <Link className="btn block lg" to="/login">
           Sign in
         </Link>
       </AuthLayout>
@@ -78,18 +81,15 @@ export default function AuthCallback() {
 
   return (
     <AuthLayout
+      id="v-callback"
       title="We couldn't sign you in"
-      footer={
-        <Link to="/forgot-password" className={linkClass}>
-          Need a new password reset link?
-        </Link>
-      }
+      features={false}
+      footer={<Link to="/forgot-password">Need a new password reset link?</Link>}
     >
-      <Alert tone="error">{error}</Alert>
-      <Link
-        to="/login"
-        className="mt-6 flex w-full items-center justify-center rounded-[4px] bg-primary px-4 py-[11px] text-sm font-semibold text-white hover:bg-[#5E262D] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-      >
+      <div className="alert bad" role="alert">
+        {error}
+      </div>
+      <Link className="btn block lg" to="/login">
         Back to sign in
       </Link>
     </AuthLayout>

@@ -1,5 +1,22 @@
+/**
+ * Step 4, WBS Builder (mockup views/wbs.js): review the work breakdown AI drafted from the accepted
+ * scope, edit it, and confirm every AI effort estimate before planning.
+ *
+ * Data: `GET …/wbs` (nodes with estimate confirmation, contract [B]), node create / patch / move,
+ * `POST …/wbs/confirm-estimates`, and the `wbs_generate` / `wbs_validate` AI jobs. When the project
+ * has no WBS yet, generation starts once automatically ("AI has pre-populated based on scope"); a
+ * first validation also runs once so the issues card reflects the real tree.
+ *
+ * Gate: Continue to Constraints is never disabled. While a work package's duration is an
+ * unconfirmed AI estimate (or missing), a click opens `#wbs-banner` listing them, each linking to its
+ * Confirm button, plus "Confirm all" — the solver must never plan on numbers nobody checked.
+ */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useParams } from 'react-router'
+import { Link, useParams } from 'react-router'
+import { GapBanner, useBannerFocus, type GapItem } from '@/components/CreateForm'
+import WbsTable, { estimateControlId } from '@/components/WbsTable'
+import WbsEmptyState from '@/components/WbsEmptyState'
+import WbsValidationCard from '@/components/WbsValidationCard'
 import { errorMessage } from '@/lib/api'
 import {
   useCapacity,
@@ -7,53 +24,25 @@ import {
   useLatestAiJob,
   useMoveWbsNode,
   useProject,
+  useScopeItems,
   useStartAiJob,
   useUpdateWbsNode,
   useWbs,
 } from '@/lib/queries'
 import { useStepNav } from '@/lib/steps'
-import type { WbsNode, WbsNodePatch, WbsValidation } from '@/lib/types'
-
-interface WBSItem {
-  id: string
-  code: string
-  level: 1 | 2 | 3
-  name: string
-  duration?: string
-  owner?: string
-  expanded?: boolean
-}
-
-/** Durations are stored in working days; the builder shows weeks. */
-const DAYS_PER_WEEK = 5
-
-function formatWeeks(days: number | null): string | undefined {
-  if (days == null) return undefined
-  const w = days / DAYS_PER_WEEK
-  return `${Number.isInteger(w) ? w : w.toFixed(1)}w`
-}
-
-/** The root shows as "1.0" like the design; children use the server-derived codes. */
-function displayCode(node: WbsNode): string {
-  return node.level === 1 ? '1.0' : node.code
-}
-
-function validatedLabel(finishedAt: string | null): string {
-  if (!finishedAt) return 'Not validated yet'
-  const minutes = Math.round((Date.now() - new Date(finishedAt).getTime()) / 60_000)
-  if (minutes < 1) return 'Validated just now'
-  if (minutes < 60) return `Validated ${minutes} min ago`
-  const hours = Math.round(minutes / 60)
-  return hours < 24 ? `Validated ${hours}h ago` : `Validated ${new Date(finishedAt).toLocaleDateString()}`
-}
+import { displayCode, movePosition, totalWeeks, useConfirmEstimates, wbsBlockers, weeksLabel, type WbsTreeNode } from '@/lib/wbs'
 
 const ACTIVE_JOB = new Set(['queued', 'running'])
+/** How many open estimates the banner names before "and N more". */
+const BANNER_ITEMS = 5
 
+/** The WBS review: tree/list table, estimate confirmation, AI validation and the Constraints gate. */
 export default function WBSBuilder() {
-  const nav = useStepNav()
+  const goToStep = useStepNav()
   const { projectId = '' } = useParams()
   const project = useProject(projectId)
   const wbsQuery = useWbs(projectId)
+  const scope = useScopeItems(projectId)
   const team = useCapacity(projectId)
   const generateJob = useLatestAiJob(projectId, 'wbs_generate')
   const validateJob = useLatestAiJob(projectId, 'wbs_validate')
@@ -62,38 +51,29 @@ export default function WBSBuilder() {
   const createNode = useCreateWbsNode(projectId)
   const updateNode = useUpdateWbsNode(projectId)
   const moveNode = useMoveWbsNode(projectId)
+  const confirmEstimates = useConfirmEstimates(projectId)
 
+  const [flat, setFlat] = useState(false)
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
-  const [selectedCode, setSelectedCode] = useState('1.1')
-  const [draggedCode, setDraggedCode] = useState<string | null>(null)
-  const [dropTarget, setDropTarget] = useState<string | null>(null)
-  const [view, setView] = useState<'chart' | 'list'>('chart')
-  const [editing, setEditing] = useState<string | null>(null)
-  const [draft, setDraft] = useState({ name: '', weeks: '', ownerId: '' })
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState<Set<string>>(() => new Set())
+  const [tried, setTried] = useState(false)
+  const banner = useBannerFocus()
 
-  const nodes = useMemo(() => wbsQuery.data ?? [], [wbsQuery.data])
-  const wbs: WBSItem[] = useMemo(
-    () =>
-      nodes.map((n) => ({
-        id: n.id,
-        code: displayCode(n),
-        level: n.level,
-        name: n.name,
-        duration: n.level === 3 ? formatWeeks(n.durationDays) : undefined,
-        owner: n.level === 3 ? n.ownerName ?? 'Unassigned' : undefined,
-        expanded: !collapsed.has(n.id),
-      })),
-    [nodes, collapsed],
-  )
-  const root = nodes.find((n) => n.level === 1)
+  useEffect(() => {
+    document.title = 'WBS Builder · NirnAIn'
+  }, [])
+
+  const nodes = useMemo(() => (wbsQuery.data ?? []) as WbsTreeNode[], [wbsQuery.data])
+  const root = nodes.find((node) => node.level === 1)
+  const deliverables = nodes.filter((node) => node.level === 2)
+  const packages = nodes.filter((node) => node.level === 3)
+  const blockers = wbsBlockers(nodes)
 
   const generateStatus = generateJob.data?.status
   const generating = startGenerate.isPending || ACTIVE_JOB.has(generateStatus ?? '')
-  const validateStatus = validateJob.data?.status
-  const validating = startValidate.isPending || ACTIVE_JOB.has(validateStatus ?? '')
-  const validation = validateStatus === 'succeeded' ? (validateJob.data?.result as WbsValidation | null) : null
-  const lastValidated = validating ? 'Validating…' : validatedLabel(validateJob.data?.finishedAt ?? null)
-  const actionError = createNode.error ?? updateNode.error ?? moveNode.error ?? startGenerate.error ?? startValidate.error
+  const validating = startValidate.isPending || ACTIVE_JOB.has(validateJob.data?.status ?? '')
+  const actionError = createNode.error ?? updateNode.error ?? moveNode.error ?? confirmEstimates.error ?? startGenerate.error ?? startValidate.error
 
   // "AI has pre-populated based on scope": build the WBS once when the project has none.
   const autoGenerated = useRef(false)
@@ -113,7 +93,7 @@ export default function WBSBuilder() {
     if (previous && ACTIVE_JOB.has(previous) && generateStatus === 'succeeded') void wbsQuery.refetch()
   }, [generateStatus, wbsQuery])
 
-  // Validate once automatically so the panel reflects the real tree.
+  // Validate once automatically so the issues card reflects the real tree.
   const autoValidated = useRef(false)
   useEffect(() => {
     if (autoValidated.current || generating || !validateJob.isSuccess || nodes.length === 0) return
@@ -123,33 +103,7 @@ export default function WBSBuilder() {
     }
   }, [generating, validateJob.isSuccess, validateJob.data, nodes.length, startValidate])
 
-  function nodeByCode(code: string): WbsNode | undefined {
-    return nodes.find((n) => displayCode(n) === code)
-  }
-
-  function toggleExpand(code: string) {
-    const node = nodeByCode(code)
-    if (!node) return
-    setCollapsed(prev => {
-      const next = new Set(prev)
-      if (next.has(node.id)) next.delete(node.id)
-      else next.add(node.id)
-      return next
-    })
-  }
-
-  function isVisible(item: WBSItem): boolean {
-    if (item.level === 1) return true
-    const project = wbs.find(i => i.level === 1)
-    if (item.level === 2) return !!project?.expanded
-    if (item.level === 3) {
-      const parentCode = item.code.split('.').slice(0, 2).join('.')
-      const parent = wbs.find(i => i.code === parentCode)
-      return !!project?.expanded && !!parent?.expanded
-    }
-    return true
-  }
-
+  /** The project row, created on demand when the PM starts a WBS by hand. */
   async function ensureRoot(): Promise<string | null> {
     if (root) return root.id
     try {
@@ -161,481 +115,213 @@ export default function WBSBuilder() {
   }
 
   function addDeliverable() {
-    void (async () => {
-      const rootId = await ensureRoot()
+    void ensureRoot().then((rootId) => {
       if (rootId) createNode.mutate({ parentId: rootId, name: 'New deliverable' })
-    })()
+    })
   }
 
   function addPackageUnder(parentId: string) {
     createNode.mutate({ parentId, name: 'New work package' })
-    setCollapsed(prev => {
-      const next = new Set(prev)
+    setCollapsed((previous) => {
+      const next = new Set(previous)
       next.delete(parentId)
       return next
     })
   }
 
+  /** Adds to the selected deliverable (or the selected package's deliverable), else the last one. */
   function addWorkPackage() {
-    const selected = nodeByCode(selectedCode)
-    const parentId = selected?.level === 2
-      ? selected.id
-      : selected?.level === 3
-        ? selected.parentId
-        : nodes.find(n => n.level === 2)?.id
+    const selected = nodes.find((node) => node.id === selectedId)
+    const parentId = selected?.level === 2 ? selected.id : selected?.level === 3 ? selected.parentId : deliverables.at(-1)?.id
     if (parentId) addPackageUnder(parentId)
   }
 
-  function addSub(item: WBSItem) {
-    if (item.level === 1) addDeliverable()
-    else addPackageUnder(item.id)
+  function moveNodeTo(source: WbsTreeNode, target: WbsTreeNode) {
+    const position = movePosition(nodes, source, target)
+    if (position !== null) moveNode.mutate({ nodeId: source.id, position })
   }
 
-  function startEdit(item: WBSItem) {
-    const node = nodes.find(n => n.id === item.id)
-    if (!node) return
-    setEditing(node.id)
-    setDraft({
-      name: node.name,
-      weeks: node.durationDays == null ? '' : String(node.durationDays / DAYS_PER_WEEK),
-      ownerId: node.ownerEmployeeId ?? '',
+  function toggleDeliverable(deliverableId: string) {
+    setCollapsed((previous) => {
+      const next = new Set(previous)
+      if (next.has(deliverableId)) next.delete(deliverableId)
+      else next.add(deliverableId)
+      return next
     })
   }
 
-  function saveEdit(item: WBSItem) {
-    const name = draft.name.trim()
-    if (!name) return
-    const patch: WbsNodePatch = { name }
-    if (item.level === 3) {
-      const w = Number.parseFloat(draft.weeks)
-      patch.durationDays = Number.isFinite(w) && w >= 0 ? Math.round(w * DAYS_PER_WEEK) : null
-      patch.ownerEmployeeId = draft.ownerId || null
+  function confirmOne(nodeId: string) {
+    setConfirming((previous) => new Set(previous).add(nodeId))
+    confirmEstimates.mutate([nodeId], {
+      onSettled: () =>
+        setConfirming((previous) => {
+          const next = new Set(previous)
+          next.delete(nodeId)
+          return next
+        }),
+    })
+  }
+
+  function continueToConstraints() {
+    setTried(true)
+    if (packages.length > 0 && blockers.length === 0) {
+      goToStep('constraints')
+      return
     }
-    updateNode.mutate({ nodeId: item.id, patch })
-    setEditing(null)
+    setCollapsed(new Set()) // so every linked row is visible
+    banner.request()
   }
 
-  function validateWbs() {
-    if (!validating && nodes.length > 0) startValidate.mutate()
+  function jumpTo(key: string) {
+    const element = document.getElementById(key === 'confirm-all' ? 'confirm-all' : estimateControlId(key))
+    element?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    element?.focus({ preventScroll: true })
   }
 
-  /** Same rules as before: only within the same parent. The server renumbers the codes. */
-  function moveItem(sourceCode: string, targetCode: string) {
-    if (sourceCode === targetCode) return
-    const source = nodeByCode(sourceCode)
-    const target = nodeByCode(targetCode)
-    if (!source || !target || source.level !== target.level || source.level === 1) return
-    if (source.parentId !== target.parentId) return
-    const siblings = nodes.filter(n => n.parentId === source.parentId)
-    const from = siblings.findIndex(n => n.id === source.id)
-    const to = siblings.findIndex(n => n.id === target.id)
-    const position = from < to ? to - 1 : to
-    if (position !== from) moveNode.mutate({ nodeId: source.id, position })
-  }
-
-  /** Keyboard alternative to dragging: Alt+Arrow moves an item within its parent. */
-  function onRowKeyDown(event: React.KeyboardEvent, item: WBSItem) {
-    if (!event.altKey || item.level === 1 || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
-    event.preventDefault()
-    const parent = item.code.split('.').slice(0, -1).join('.')
-    const siblings = wbs.filter(i => i.level === item.level && i.code.split('.').slice(0, -1).join('.') === parent)
-    const index = siblings.findIndex(i => i.code === item.code)
-    if (event.key === 'ArrowUp' && index > 0) moveItem(item.code, siblings[index - 1].code)
-    if (event.key === 'ArrowDown' && index < siblings.length - 1) moveItem(siblings[index + 1].code, item.code)
-  }
-
-  const packages = nodes.filter(n => n.level === 3)
-  const summary: [string, string][] = [
-    ['Level 1 (Project)', String(nodes.filter(n => n.level === 1).length)],
-    ['Level 2 (Deliverables)', String(nodes.filter(n => n.level === 2).length)],
-    ['Level 3 (Work Packages)', String(packages.length)],
-    ['Total Work Packages', String(packages.length)],
-    ['Unassigned Packages', String(packages.filter(n => !n.ownerEmployeeId).length)],
-    ['Estimated Weeks', `${formatWeeks(packages.reduce((sum, n) => sum + (n.durationDays ?? 0), 0)) ?? '0w'} total`],
-  ]
-
-  let emptyState: React.ReactNode = null
-  if (!root) {
-    if (wbsQuery.isPending) emptyState = 'Loading WBS…'
-    else if (wbsQuery.isError) emptyState = <span style={{ color: '#A83A4A' }}>{errorMessage(wbsQuery.error)}</span>
-    else if (generating) emptyState = 'AI is building the WBS from the accepted scope…'
-    else if (generateStatus === 'failed') {
-      emptyState = (
-        <>
-          <span style={{ color: '#A83A4A' }}>{generateJob.data?.error ?? 'AI generation failed.'}</span>{' '}
-          <button onClick={() => startGenerate.mutate()} style={{ ...secondaryBtn, padding: '4px 10px', fontSize: 12, marginLeft: 6 }}>Try again</button>
-          <div style={{ marginTop: 8 }}>Or start manually with + Add Deliverable.</div>
-        </>
-      )
-    } else emptyState = 'No WBS yet. Use + Add Deliverable to start.'
-  }
-
-  const issueColor: Record<string, string> = { missing: '#F5E3C8', duplicate: '#F5E3C8', warning: '#F3D9D5' }
-  const issueTag: Record<string, string> = { missing: '#a8691f', duplicate: '#a8691f', warning: '#A83A4A' }
+  const aiEstimates = blockers.filter((node) => node.durationDays != null)
+  const gateItems: GapItem[] = blockers.slice(0, BANNER_ITEMS).map((node) => ({
+    key: node.id,
+    label: `${displayCode(node)} ${node.name}`,
+    message: node.durationDays == null ? 'no estimate yet, enter the weeks' : `${weeksLabel(node.durationDays)} (AI estimate)`,
+  }))
+  if (blockers.length > BANNER_ITEMS) gateItems.push({ key: 'more', label: `and ${blockers.length - BANNER_ITEMS} more`, link: false })
+  if (aiEstimates.length > 1) gateItems.push({ key: 'confirm-all', label: `Or confirm all ${aiEstimates.length} at once` })
+  const gateLead = `${blockers.length} AI effort estimate${blockers.length > 1 ? 's need' : ' needs'} your confirmation before the solver may use ${blockers.length > 1 ? 'them' : 'it'}:`
+  // After a blocked click the banner stays and shrinks live as estimates are confirmed.
+  const noPackagesError = tried && packages.length === 0 ? { title: 'Nothing to plan yet', detail: 'Add at least one work package first.' } : null
+  const weeks = totalWeeks(nodes)
+  const acceptedCount = (scope.data ?? []).filter((item) => item.status === 'accepted').length
 
   return (
-    <div style={{ padding: '32px 36px' }}>
-      <Breadcrumb steps={['Dashboard', 'Create Project', 'AI Intake', 'Scope Review', 'WBS Builder']} />
-
-      <div className="flex items-center justify-between" style={{ marginBottom: 24 }}>
-        <div>
-          <div style={{ fontSize: 22, fontWeight: 700 }}>WBS Builder</div>
-          <div style={{ fontSize: 13, color: '#7A6063', marginTop: 2 }}>
-            Review and refine the hierarchical Work Breakdown Structure. AI has pre-populated based on scope.
-          </div>
+    <section className="view on" id="v-wbs">
+      <div className="pg">
+        <div className="crumb">
+          <Link to="/dashboard">Dashboard</Link> &rsaquo; Create Project &rsaquo; AI Intake &rsaquo; Scope Review &rsaquo; WBS Builder
         </div>
-        <div className="flex gap-8">
-          <div className="flex" style={{ border: '1px solid #CDBFAB', borderRadius: 4, overflow: 'hidden', marginRight: 8 }}>
-            {(['chart', 'list'] as const).map(v => (
-              <button key={v} onClick={() => setView(v)} style={{ padding: '9px 14px', fontSize: 13, border: 'none', cursor: 'pointer', background: view === v ? '#E8DCC6' : '#fff', color: view === v ? '#722F37' : '#4A2B2F', fontWeight: view === v ? 600 : 400 }}>
-                {v === 'chart' ? 'Org Chart' : 'List'}
+        <div className="hdr">
+          <div>
+            <h1>WBS Builder</h1>
+            <div className="sub">Review and refine the hierarchical Work Breakdown Structure. AI has pre-populated based on scope.</div>
+          </div>
+          <div className="row">
+            <span className="seg" role="group" aria-label="View">
+              <button className={flat ? undefined : 'on'} type="button" aria-pressed={!flat} onClick={() => setFlat(false)}>
+                Chart
               </button>
-            ))}
-          </div>
-          <button onClick={addDeliverable} style={secondaryBtn}>+ Add Deliverable</button>
-          <button onClick={addWorkPackage} style={secondaryBtn}>+ Add Work Package</button>
-          <button onClick={validateWbs} disabled={validating} style={primaryBtn}>
-            {validating ? 'Validating…' : 'AI Validate'}
-          </button>
-        </div>
-      </div>
-
-      {actionError && (
-        <div role="alert" style={{ marginBottom: 12, fontSize: 12, color: '#A83A4A' }}>{errorMessage(actionError)}</div>
-      )}
-
-      <div className="grid" style={{ gridTemplateColumns: '1fr 280px', gap: 20 }}>
-        {emptyState && (
-          <div style={{ ...cardStyle, fontSize: 13, color: '#7A6063' }} aria-busy={generating || wbsQuery.isPending}>
-            {emptyState}
-          </div>
-        )}
-        {!emptyState && view === 'chart' && (
-          <div style={{ ...cardStyle, overflow: 'auto', minWidth: 0 }}>
-            <OrgChart wbs={wbs} selectedCode={selectedCode} onSelect={setSelectedCode} onToggle={toggleExpand} />
-          </div>
-        )}
-        {/* WBS tree */}
-        <div style={{ ...cardStyle, display: !emptyState && view === 'list' ? 'block' : 'none' }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#7A6063', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 14, paddingBottom: 8, borderBottom: '1px solid #EFE5D2', display: 'grid', gridTemplateColumns: '120px 1fr 80px 100px 80px', gap: 10 }}>
-            <span>WBS Code</span>
-            <span>Name</span>
-            <span>Duration</span>
-            <span>Owner</span>
-            <span>Actions</span>
-          </div>
-          {wbs.filter(isVisible).map(item => (
-            <div
-              key={item.id}
-              draggable={item.level > 1 && editing !== item.id}
-              onDragStart={(event) => {
-                setDraggedCode(item.code)
-                event.dataTransfer.effectAllowed = 'move'
-              }}
-              onDragEnd={() => {
-                setDraggedCode(null)
-                setDropTarget(null)
-              }}
-              onDragOver={(event) => {
-                if (!draggedCode || draggedCode === item.code) return
-                event.preventDefault()
-                setDropTarget(item.code)
-              }}
-              onDrop={(event) => {
-                event.preventDefault()
-                if (draggedCode) moveItem(draggedCode, item.code)
-                setDraggedCode(null)
-                setDropTarget(null)
-              }}
-              onClick={() => setSelectedCode(item.code)}
-              onKeyDown={(event) => onRowKeyDown(event, item)}
-              tabIndex={item.level > 1 ? 0 : undefined}
-              aria-keyshortcuts={item.level > 1 ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '120px 1fr 80px 100px 80px',
-                gap: 10,
-                alignItems: 'center',
-                padding: '7px 0',
-                paddingLeft: item.level === 2 ? 16 : item.level === 3 ? 32 : 0,
-                borderBottom: '1px solid #F3EADB',
-                borderLeft: item.level === 2 ? '2px solid #CDBFAB' : item.level === 3 ? '2px solid #E8DCC6' : 'none',
-                marginLeft: item.level === 2 ? 16 : item.level === 3 ? 32 : 0,
-                background: item.level === 1 ? '#FAF5EB' : 'transparent',
-                boxShadow: dropTarget === item.code ? 'inset 0 2px #7A6063' : 'none',
-                opacity: draggedCode === item.code ? 0.45 : 1,
-                cursor: item.level > 1 ? 'grab' : 'default',
-              }}
-            >
-              <span className="flex items-center gap-2" style={{ fontFamily: 'DM Mono, monospace', fontSize: 12, color: '#7A6063' }}>
-                <span
-                  aria-hidden="true"
-                  title={item.level > 1 ? 'Drag (or Alt+↑/↓) to reorder' : undefined}
-                  style={{ color: item.level > 1 ? '#999' : 'transparent', letterSpacing: -2, userSelect: 'none' }}
-                >
-                  ⋮⋮
-                </span>
-                {item.code}
-              </span>
-              <span
-                style={{
-                  fontSize: item.level === 1 ? 14 : item.level === 2 ? 13 : 13,
-                  fontWeight: item.level === 1 ? 700 : item.level === 2 ? 600 : 400,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  cursor: item.level < 3 ? 'pointer' : 'default',
-                }}
-                onClick={() => item.level < 3 && editing !== item.id && toggleExpand(item.code)}
-              >
-                {item.level < 3 && (
-                  <span style={{ fontSize: 10, color: '#999', userSelect: 'none' }}>
-                    {item.expanded ? '▼' : '▶'}
-                  </span>
-                )}
-                {editing === item.id ? (
-                  <input
-                    value={draft.name}
-                    onChange={e => setDraft(d => ({ ...d, name: e.target.value }))}
-                    onClick={e => e.stopPropagation()}
-                    onKeyDown={e => {
-                      e.stopPropagation()
-                      if (e.key === 'Enter') saveEdit(item)
-                      if (e.key === 'Escape') setEditing(null)
-                    }}
-                    aria-label="Name"
-                    maxLength={300}
-                    autoFocus
-                    style={editInput}
-                  />
-                ) : (
-                  item.name
-                )}
-              </span>
-              {editing === item.id && item.level === 3 ? (
-                <input
-                  value={draft.weeks}
-                  onChange={e => setDraft(d => ({ ...d, weeks: e.target.value }))}
-                  onKeyDown={e => {
-                    e.stopPropagation()
-                    if (e.key === 'Enter') saveEdit(item)
-                    if (e.key === 'Escape') setEditing(null)
-                  }}
-                  aria-label="Duration in weeks"
-                  inputMode="decimal"
-                  placeholder="weeks"
-                  style={editInput}
-                />
-              ) : (
-                <span style={{ fontFamily: 'DM Mono, monospace', fontSize: 12, color: '#7A6063' }}>{item.duration || '—'}</span>
-              )}
-              {editing === item.id && item.level === 3 ? (
-                <select
-                  value={draft.ownerId}
-                  onChange={e => setDraft(d => ({ ...d, ownerId: e.target.value }))}
-                  aria-label="Owner"
-                  style={editInput}
-                >
-                  <option value="">Unassigned</option>
-                  {(team.data ?? []).map(m => (
-                    <option key={m.employeeId} value={m.employeeId}>{m.fullName}</option>
-                  ))}
-                </select>
-              ) : (
-                <span style={{ fontSize: 12, color: '#6B5254' }}>{item.owner || '—'}</span>
-              )}
-              <div className="flex gap-4">
-                {editing === item.id ? (
-                  <>
-                    <button onClick={(e) => { e.stopPropagation(); saveEdit(item) }} style={{ ...rowBtn, background: '#722F37', color: '#fff', borderColor: '#722F37' }}>Save</button>
-                    <button onClick={(e) => { e.stopPropagation(); setEditing(null) }} style={rowBtn}>Cancel</button>
-                  </>
-                ) : (
-                  <>
-                    <button onClick={(e) => { e.stopPropagation(); startEdit(item) }} style={rowBtn}>Edit</button>
-                    {item.level < 3 && (
-                      <button onClick={(e) => { e.stopPropagation(); addSub(item) }} style={rowBtn}>+ Sub</button>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* AI Validation panel */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={cardStyle}>
-            <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>AI Validation</div>
-              <span style={{ fontSize: 10, color: '#7A6063' }}>{lastValidated}</span>
-            </div>
-            {validation && (
-              <div style={{ fontSize: 12, color: validation.structureValid ? '#4F7A4A' : '#A83A4A', fontWeight: 500, marginBottom: 10 }}>
-                {validation.structureValid
-                  ? `WBS structure is valid (${validation.levels} levels)`
-                  : `WBS structure needs attention (${validation.levels} levels)`}
-              </div>
-            )}
-            {!validation && validateStatus === 'failed' && (
-              <div style={{ fontSize: 12, color: '#A83A4A', marginBottom: 10 }}>{validateJob.data?.error ?? 'Validation failed.'}</div>
-            )}
-            {!validation && validateStatus !== 'failed' && (
-              <div style={{ fontSize: 12, color: '#7A6063', marginBottom: 10 }}>
-                {validating ? 'Checking structure, coverage and staffing…' : 'Run AI Validate to check the WBS.'}
-              </div>
-            )}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {(validation?.issues ?? []).map((issue, i) => (
-                <div key={i} style={{ padding: '8px 10px', background: issueColor[issue.type] || '#F3EADB', borderRadius: 4, borderLeft: `3px solid ${issueTag[issue.type]}` }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: issueTag[issue.type], textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>
-                    {issue.type}
-                  </div>
-                  <div style={{ fontSize: 12, color: '#4A2B2F', lineHeight: 1.5 }}>{issue.text}</div>
-                </div>
-              ))}
-            </div>
-            <button onClick={validateWbs} disabled={validating || nodes.length === 0} style={{ ...secondaryBtn, width: '100%', marginTop: 12, fontSize: 12 }}>
-              {validating ? 'Validating WBS…' : 'AI Validate'}
+              <button className={flat ? 'on' : undefined} type="button" aria-pressed={flat} onClick={() => setFlat(true)}>
+                List
+              </button>
+            </span>
+            <button className="btn sec" type="button" onClick={addDeliverable}>
+              + Add Deliverable
+            </button>
+            <button className="btn sec" type="button" onClick={addWorkPackage} disabled={deliverables.length === 0}>
+              + Add Work Package
+            </button>
+            <button className="btn" id="btn-validate" type="button" onClick={() => startValidate.mutate()} disabled={validating || nodes.length === 0}>
+              {validating ? 'Validating…' : 'AI Validate'}
             </button>
           </div>
+        </div>
 
-          <div style={cardStyle}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>WBS Summary</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: '#6B5254' }}>
-              {summary.map(([k, v]) => (
-                <div key={k} className="flex justify-between" style={{ paddingBottom: 5, borderBottom: '1px solid #EFE5D2' }}>
-                  <span>{k}</span>
-                  <span style={{ fontFamily: 'DM Mono, monospace', fontWeight: 500, color: '#2E1A1D' }}>{v}</span>
-                </div>
-              ))}
-            </div>
+        {packages.length > 0 && (
+          <div className="banner" id="wbs-src">
+            {nodes.some((node) => node.origin === 'ai') ? (
+              <>
+                AI drafted this WBS from your <b>{acceptedCount || 'accepted'}</b> accepted scope items:{' '}
+              </>
+            ) : (
+              'Your WBS: '
+            )}
+            {deliverables.length} deliverable{deliverables.length === 1 ? '' : 's'}, {packages.length} work package
+            {packages.length === 1 ? '' : 's'}, {weeks} weeks of effort.
+          </div>
+        )}
+        {actionError && (
+          <div className="cf-banner bad" role="alert">
+            <b>&#9888; That didn&rsquo;t work.</b> {errorMessage(actionError)}
+          </div>
+        )}
+
+        <WbsValidationCard job={validateJob.data} starting={startValidate.isPending} />
+
+        <div className="card mt">
+          <div className="row between" style={{ marginBottom: 8 }}>
+            <h3 style={{ margin: 0 }}>
+              Work packages{' '}
+              <span className="small muted" style={{ fontWeight: 400 }}>
+                AI estimates must be confirmed before the solver uses them.
+              </span>
+            </h3>
+            <button
+              className="btn sec sm"
+              id="confirm-all"
+              type="button"
+              onClick={() => confirmEstimates.mutate(undefined)}
+              disabled={confirmEstimates.isPending}
+              aria-busy={confirmEstimates.isPending || undefined}
+            >
+              {confirmEstimates.isPending && confirming.size === 0 ? 'Confirming…' : 'Confirm all estimates'}
+            </button>
+          </div>
+          {root ? (
+            <WbsTable
+              nodes={nodes}
+              flat={flat}
+              collapsed={collapsed}
+              onToggle={toggleDeliverable}
+              owners={(team.data ?? []).map((member) => ({ id: member.employeeId, name: member.fullName }))}
+              confirming={confirming}
+              onConfirm={confirmOne}
+              onSave={(node, patch) => updateNode.mutate({ nodeId: node.id, patch })}
+              onAddChild={(parent) => {
+                if (parent.level === 1) addDeliverable()
+                else addPackageUnder(parent.id)
+              }}
+              onMove={moveNodeTo}
+              onSelect={(node) => setSelectedId(node.id)}
+              selectedId={selectedId}
+            />
+          ) : (
+            <WbsEmptyState
+              loading={wbsQuery.isPending}
+              loadError={wbsQuery.isError ? errorMessage(wbsQuery.error) : null}
+              generating={generating}
+              generateError={generateStatus === 'failed' ? (generateJob.data?.error ?? 'AI generation failed.') : null}
+              onRetry={() => startGenerate.mutate()}
+            />
+          )}
+        </div>
+
+        <GapBanner
+          id="wbs-banner"
+          tone="bad"
+          className="mt"
+          ref={banner.ref}
+          lead={gateLead}
+          items={tried ? gateItems : []}
+          error={noPackagesError}
+          onJump={jumpTo}
+        />
+
+        <div className="row between mt">
+          <button className="btn sec" type="button" onClick={() => goToStep('scope')}>
+            &larr; Back to Scope Review
+          </button>
+          <div className="row">
+            <span className={blockers.length || packages.length === 0 ? 'gate bad' : 'gate'} id="wbs-hint">
+              {packages.length === 0
+                ? 'Add work packages to continue.'
+                : blockers.length
+                  ? `Confirm the ${blockers.length} remaining estimate${blockers.length > 1 ? 's' : ''} to continue.`
+                  : `${weeks} weeks of effort confirmed by you.`}
+            </span>
+            <button className="btn" id="btn-to-constraints" type="button" onClick={continueToConstraints}>
+              Continue to Constraints &rarr;
+            </button>
           </div>
         </div>
       </div>
-
-      <div className="flex justify-between" style={{ marginTop: 24 }}>
-        <button onClick={() => nav('scope')} style={secondaryBtn}>← Back to Scope Review</button>
-        <button onClick={() => nav('constraints')} style={primaryBtn}>Continue to Constraints →</button>
-      </div>
-    </div>
+    </section>
   )
 }
-
-const LINE = '#B9A48C'
-
-function OrgChart({ wbs, selectedCode, onSelect, onToggle }: {
-  wbs: WBSItem[]
-  selectedCode: string
-  onSelect: (c: string) => void
-  onToggle: (c: string) => void
-}) {
-  const root = wbs.find(i => i.level === 1)!
-  const deliverables = wbs.filter(i => i.level === 2)
-  const packages = (code: string) => wbs.filter(i => i.level === 3 && i.code.startsWith(code + '.'))
-  const unassigned = (i: WBSItem) => !i.owner || i.owner === 'Unassigned'
-
-  const selectable = (code: string) => ({
-    role: 'button',
-    tabIndex: 0,
-    'aria-pressed': selectedCode === code,
-    onClick: () => onSelect(code),
-    onKeyDown: (event: React.KeyboardEvent) => {
-      if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
-      event.preventDefault()
-      onSelect(code)
-    },
-  })
-
-  const nodeBase: React.CSSProperties = { borderRadius: 8, padding: '8px 10px', textAlign: 'center', cursor: 'pointer', position: 'relative' }
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 'max-content', padding: '4px 8px 12px' }}>
-      <div
-        {...selectable(root.code)}
-        style={{ ...nodeBase, background: '#722F37', color: '#fff', width: 220, outline: selectedCode === root.code ? '3px solid #E8C9C4' : 'none' }}
-      >
-        <div className="mono" style={{ fontSize: 10, opacity: 0.8 }}>{root.code}</div>
-        <div style={{ fontSize: 13, fontWeight: 700 }}>{root.name}</div>
-      </div>
-
-      {root.expanded && (
-        <>
-          <div style={{ width: 2, height: 22, background: LINE }} />
-          <div style={{ display: 'flex' }}>
-            {deliverables.map((d, idx) => {
-              const kids = packages(d.code)
-              const first = idx === 0
-              const last = idx === deliverables.length - 1
-              return (
-                <div key={d.code} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '0 7px', position: 'relative', width: 178 }}>
-                  <div style={{ position: 'absolute', top: 0, left: first ? '50%' : 0, right: last ? '50%' : 0, height: 2, background: LINE, display: deliverables.length === 1 ? 'none' : 'block' }} />
-                  <div style={{ width: 2, height: 20, background: LINE }} />
-                  <div
-                    {...selectable(d.code)}
-                    style={{ ...nodeBase, background: '#E8DCC6', color: '#2E1A1D', width: '100%', outline: selectedCode === d.code ? '3px solid #722F3755' : 'none', border: '1px solid #D8CAB2' }}
-                  >
-                    <div className="mono" style={{ fontSize: 10, color: '#7A6063' }}>{d.code}</div>
-                    <div style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.3 }}>{d.name}</div>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onToggle(d.code) }}
-                      style={{ marginTop: 4, fontSize: 10, color: '#722F37', background: '#fff', border: '1px solid #D8CAB2', borderRadius: 10, padding: '1px 8px', cursor: 'pointer' }}
-                    >
-                      {d.expanded ? '− ' : '+ '}{kids.length} packages
-                    </button>
-                  </div>
-
-                  {d.expanded && kids.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', paddingLeft: 14, marginTop: 0, position: 'relative' }}>
-                      <div style={{ position: 'absolute', left: 6, top: 0, bottom: 22, width: 2, background: LINE }} />
-                      {kids.map(k => (
-                        <div key={k.code} style={{ display: 'flex', alignItems: 'center', marginTop: 10, position: 'relative' }}>
-                          <div style={{ position: 'absolute', left: -8, width: 10, height: 2, background: LINE }} />
-                          <div
-                            {...selectable(k.code)}
-                            style={{ ...nodeBase, flex: 1, textAlign: 'left', background: unassigned(k) ? '#F5E3C8' : '#DDE7D0', color: '#2E1A1D', fontSize: 11, lineHeight: 1.35, outline: selectedCode === k.code ? '3px solid #722F3755' : 'none', padding: '6px 8px' }}
-                          >
-                            <div className="flex justify-between mono" style={{ fontSize: 10, color: '#7A6063' }}>
-                              <span>{k.code}</span><span>{k.duration}</span>
-                            </div>
-                            <div style={{ fontWeight: 500 }}>{k.name}</div>
-                            <div style={{ fontSize: 10, color: '#6B5254', marginTop: 2 }}>{k.owner}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </>
-      )}
-
-      <div className="flex gap-4" style={{ marginTop: 18, fontSize: 11, color: '#7A6063' }}>
-        {[['#722F37', 'Project'], ['#E8DCC6', 'Deliverable'], ['#DDE7D0', 'Assigned package'], ['#F5E3C8', 'Unassigned package']].map(([c, l]) => (
-          <span key={l} className="flex items-center gap-1"><span style={{ width: 10, height: 10, borderRadius: 3, background: c, display: 'inline-block', border: '1px solid #D8CAB2' }} />{l}</span>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function Breadcrumb({ steps }: { steps: string[] }) {
-  return (
-    <div className="flex items-center gap-2" style={{ fontSize: 12, color: '#7A6063', marginBottom: 20 }}>
-      {steps.map((s, i) => (
-        <span key={s} className="flex items-center gap-2">
-          {i > 0 && <span>›</span>}
-          <span style={{ color: i === steps.length - 1 ? '#2E1A1D' : '#7A6063' }}>{s}</span>
-        </span>
-      ))}
-    </div>
-  )
-}
-
-const cardStyle: React.CSSProperties = { background: '#fff', border: '1px solid #E8DCC6', borderRadius: 6, padding: '18px 20px' }
-const rowBtn: React.CSSProperties = { fontSize: 11, color: '#6B5254', border: '1px solid #e0e0e0', borderRadius: 3, padding: '2px 7px', background: '#FAF5EB', cursor: 'pointer' }
-const editInput: React.CSSProperties = { width: '100%', minWidth: 0, padding: '3px 6px', border: '1px solid #bbb', borderRadius: 3, fontSize: 12, fontFamily: 'inherit' }
-const primaryBtn: React.CSSProperties = { padding: '9px 20px', background: '#722F37', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' }
-const secondaryBtn: React.CSSProperties = { padding: '9px 16px', background: '#fff', color: '#4A2B2F', border: '1px solid #CDBFAB', borderRadius: 4, fontSize: 13, cursor: 'pointer' }

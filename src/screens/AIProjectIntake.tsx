@@ -1,62 +1,67 @@
-import { useState } from 'react'
-import { useLocation, useNavigate, useParams } from 'react-router'
+/**
+ * Step 2, AI Project Intake (mockup intake.js): paste notes and/or attach documents, run the AI
+ * intake, and see what it found before Scope Review.
+ *
+ * Data: the latest run (`useLatestIntakeRun`, polled while queued/running), the project's documents
+ * (`POST/GET/DELETE …/documents`, text extracted server-side), the run history ("Previous Intakes",
+ * `GET …/intake/runs`) and the extracted scope items (counted by evidence). Projects created from an
+ * upload already had their intake run at creation; the `#in-from-upload` note says so.
+ */
+import { useEffect, useState } from 'react'
+import { Link, useLocation, useParams } from 'react-router'
 import DocumentUpload, { checkFile, type UploadEntry } from '@/components/DocumentUpload'
+import PreviousIntakes from '@/components/PreviousIntakes'
 import { errorMessage as describeError, isApiError } from '@/lib/api'
-import { useDeleteDocument, useDocuments, useLatestIntakeRun, useStartIntakeRun, useUploadDocument } from '@/lib/queries'
+import { uploadSource, type ScopeItemWithEvidence } from '@/lib/create'
+import { useDeleteDocument, useDocuments, useLatestIntakeRun, useScopeItems, useStartIntakeRun, useUploadDocument } from '@/lib/queries'
 import { useStepNav } from '@/lib/steps'
 
-const SAMPLE_TEXT = `Meeting Notes — Enterprise Data Platform Kickoff
-Date: January 15, 2025 | Attendees: Robert Walsh (VP Eng), Jane Doe (PM), Sara Kim (Lead Architect), Mark Chen (Data Engineer)
+const EXTRACTS = [
+  { tag: 'OBJ', label: 'Objectives', color: '#DDE7D0' },
+  { tag: 'REQ', label: 'Requirements', color: '#E3DCCB' },
+  { tag: 'DEL', label: 'Deliverables', color: '#F5E3C8' },
+  { tag: 'CON', label: 'Constraints', color: '#F3D9D5' },
+  { tag: 'RSK', label: 'Risks', color: '#F5E3C8' },
+  { tag: 'UNK', label: 'Missing Info', color: '#F3EADB' },
+] as const
 
-OBJECTIVES
-• Consolidate 7 legacy BI systems into a single unified platform
-• Enable real-time dashboards for all business units by Q3 2025
-• Reduce reporting cycle time from 3 days to 4 hours
-• Support 500+ concurrent users at launch
+interface IntakeLocationState {
+  uploadError?: string | null
+  fromUpload?: boolean
+  sourceName?: string
+}
 
-REQUIREMENTS
-• Ingestion layer supporting Salesforce, SAP, and 12 internal databases
-• Sub-5-second query response for standard reports
-• Role-based access control (RBAC) with audit logging
-• GDPR and SOC 2 Type II compliance required
-
-RISKS & CONCERNS
-• Legacy SAP integration timeline is unclear — vendor dependency
-• Only 2 data engineers available; team may be understaffed
-• Budget approved at $375K; scope may exceed budget if infrastructure costs spike
-
-OPEN ITEMS / UNKNOWNS
-• Security review process not yet initiated
-• Disaster recovery SLA not defined
-• Training plan for 300 end-users not scoped`
-
+/** Notes + documents in, scope items out; Continue to Scope Review once a run has succeeded. */
 export default function AIProjectIntake() {
-  const nav = useStepNav()
-  const navigate = useNavigate()
+  const goToStep = useStepNav()
   const { projectId = '' } = useParams()
-  const [text, setText] = useState(SAMPLE_TEXT)
-
   const location = useLocation()
+  const routeState = (location.state as IntakeLocationState | null) ?? {}
+  const [text, setText] = useState('')
+
   const latest = useLatestIntakeRun(projectId)
   const startRun = useStartIntakeRun(projectId)
   const documents = useDocuments(projectId)
-  const uploadDoc = useUploadDocument(projectId)
-  const deleteDoc = useDeleteDocument(projectId)
+  const documentUpload = useUploadDocument(projectId)
+  const documentDelete = useDeleteDocument(projectId)
+  const scope = useScopeItems(projectId)
   const [uploading, setUploading] = useState<UploadEntry[]>([])
-  const [uploadError, setUploadError] = useState<string | null>(
-    (location.state as { uploadError?: string } | null)?.uploadError ?? null,
-  )
+  const [uploadError, setUploadError] = useState<string | null>(routeState.uploadError ?? null)
 
-  const docs = documents.data ?? []
-  const readyDocs = docs.filter((d) => d.extractionStatus === 'succeeded').length
+  useEffect(() => {
+    document.title = 'AI Project Intake · NirnAIn'
+  }, [])
+
+  const sourceDocuments = documents.data ?? []
+  const readyDocuments = sourceDocuments.filter((sourceDocument) => sourceDocument.extractionStatus === 'succeeded').length
   const entries: UploadEntry[] = [
     ...uploading,
-    ...docs.map((d) => ({
-      key: d.id,
-      name: d.title,
-      sizeBytes: d.sizeBytes,
-      status: d.extractionStatus === 'succeeded' ? ('ready' as const) : ('failed' as const),
-      detail: d.extractionError,
+    ...sourceDocuments.map((sourceDocument) => ({
+      key: sourceDocument.id,
+      name: sourceDocument.title,
+      sizeBytes: sourceDocument.sizeBytes,
+      status: sourceDocument.extractionStatus === 'succeeded' ? ('ready' as const) : ('failed' as const),
+      detail: sourceDocument.extractionError,
     })),
   ]
 
@@ -69,184 +74,193 @@ export default function AIProjectIntake() {
         continue
       }
       const key = `upload-${file.name}-${file.size}-${Date.now()}`
-      setUploading((prev) => [...prev, { key, name: file.name, sizeBytes: file.size, status: 'uploading' }])
+      setUploading((previous) => [...previous, { key, name: file.name, sizeBytes: file.size, status: 'uploading' }])
       try {
-        await uploadDoc.mutateAsync(file)
+        await documentUpload.mutateAsync(file)
       } catch (error) {
         setUploadError(`${file.name}: ${describeError(error)}`)
       } finally {
-        setUploading((prev) => prev.filter((u) => u.key !== key))
+        setUploading((previous) => previous.filter((entry) => entry.key !== key))
       }
     }
   }
 
   function removeFile(key: string) {
     setUploadError(null)
-    deleteDoc.mutate(key, { onError: (error) => setUploadError(describeError(error)) })
+    documentDelete.mutate(key, { onError: (error) => setUploadError(describeError(error)) })
   }
 
   const run = latest.data ?? null
   const status = run?.status ?? null
   const analyzing = startRun.isPending || status === 'queued' || status === 'running'
   const analyzed = status === 'succeeded'
-  const failed = status === 'failed'
   const startError = startRun.error && isApiError(startRun.error) ? startRun.error.message : null
-  const errorMessage = startError ?? (failed ? run?.error : null)
-
-  const canAnalyze = Boolean(text.trim()) || readyDocs > 0
+  const errorText = startError ?? (status === 'failed' ? (run?.error ?? 'The analysis failed. Try again.') : null)
+  const canAnalyze = Boolean(text.trim()) || readyDocuments > 0
+  // Created from an upload: the intake ran at creation (this browser remembers the source's name).
+  const sourceName = routeState.sourceName ?? (projectId ? uploadSource(projectId) : null)
+  const fromUpload = Boolean(run && (routeState.fromUpload || sourceName))
 
   function handleAnalyze() {
     if (!analyzing && uploading.length === 0 && canAnalyze) startRun.mutate(text)
   }
 
   return (
-    <div style={{ padding: '32px 36px', maxWidth: 900 }}>
-      <Breadcrumb steps={['Dashboard', 'Create Project', 'AI Project Intake']} />
-
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ fontSize: 22, fontWeight: 700 }}>AI Project Intake</div>
-        <div style={{ fontSize: 13, color: '#7A6063', marginTop: 2 }}>
+    <section className="view on" id="v-intake">
+      <div className="pg">
+        <div className="crumb">
+          <Link to="/dashboard">Dashboard</Link> &rsaquo; Create Project &rsaquo; AI Project Intake
+        </div>
+        <h1>AI Project Intake</h1>
+        <div className="sub" style={{ marginBottom: 24 }}>
           Provide raw project notes, meeting transcripts, or documents. AI will extract structured project information.
         </div>
-      </div>
-
-      <div className="grid" style={{ gridTemplateColumns: '1fr 280px', gap: 20 }}>
-        {/* Main input */}
-        <div>
-          <div style={cardStyle}>
-            <div style={sectionLabel}>Brainstorm / Meeting Notes</div>
-            <textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              style={{
-                width: '100%',
-                minHeight: 320,
-                padding: '12px 14px',
-                border: '1px solid #CDBFAB',
-                borderRadius: 4,
-                fontSize: 13,
-                lineHeight: 1.65,
-                fontFamily: 'inherit',
-                resize: 'vertical',
-                outline: 'none',
-                color: '#2E1A1D',
-              }}
-              placeholder="Paste meeting notes, project description, brainstorming content, or any freeform project context here…"
-            />
-            <div style={{ fontSize: 11, color: '#999', marginTop: 6 }}>
-              AI will identify objectives, requirements, deliverables, constraints, and risks automatically.
-            </div>
-          </div>
-
-          {/* Upload options */}
-          <div style={{ ...cardStyle, marginTop: 16 }}>
-            <div style={sectionLabel}>Upload Documents</div>
-            <DocumentUpload
-              entries={entries}
-              onFiles={(files) => void addFiles(files)}
-              onRemove={removeFile}
-              disabled={analyzing}
-              error={uploadError ?? (documents.isError ? describeError(documents.error) : null)}
-            />
-          </div>
-
-          {/* Analyze button */}
-          <div className="flex items-center justify-between" style={{ marginTop: 20 }}>
-            <button onClick={() => navigate('/dashboard')} style={secondaryBtn}>← Back to Dashboard</button>
-            <div className="flex items-center gap-10">
-              {analyzed && (
-                <span style={{ fontSize: 13, color: '#4F7A4A', fontWeight: 500 }}>
-                  ✓ Analysis complete — {run?.itemsExtracted ?? 0} items extracted
-                </span>
-              )}
-              {errorMessage && (
-                <span style={{ fontSize: 13, color: '#A83A4A', fontWeight: 500, maxWidth: 320 }}>{errorMessage}</span>
-              )}
-              <button
-                onClick={handleAnalyze}
-                disabled={analyzing || uploading.length > 0 || !canAnalyze}
-                style={{
-                  padding: '10px 28px',
-                  background: analyzing ? '#888' : '#722F37',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: 4,
-                  fontSize: 14,
-                  fontWeight: 600,
-                  cursor: analyzing ? 'default' : 'pointer',
-                }}
-              >
-                {analyzing ? 'Analyzing…' : analyzed || failed ? 'Re-Analyze' : 'Analyze Project'}
-              </button>
-              {analyzed && (
-                <button onClick={() => nav('scope')} style={{ ...primaryBtn, background: '#4F7A4A' }}>
-                  Continue to Scope Review →
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Right: tips + history */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={cardStyle}>
-            <div style={sectionLabel}>What AI Extracts</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {[
-                { tag: 'OBJ', label: 'Objectives', color: '#DDE7D0' },
-                { tag: 'REQ', label: 'Requirements', color: '#E3DCCB' },
-                { tag: 'DEL', label: 'Deliverables', color: '#F5E3C8' },
-                { tag: 'CON', label: 'Constraints', color: '#F3D9D5' },
-                { tag: 'RSK', label: 'Risks', color: '#F5E3C8' },
-                { tag: 'UNK', label: 'Missing Info', color: '#F3EADB' },
-              ].map(e => (
-                <div key={e.tag} className="flex items-center gap-8" style={{ fontSize: 12 }}>
-                  <span style={{ fontFamily: 'DM Mono, monospace', fontSize: 10, padding: '2px 6px', background: e.color, borderRadius: 3, color: '#6B5254', width: 36, textAlign: 'center' }}>{e.tag}</span>
-                  <span>{e.label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div style={cardStyle}>
-            <div style={sectionLabel}>Tips for Better Results</div>
-            <ul style={{ fontSize: 12, color: '#6B5254', lineHeight: 1.7, paddingLeft: 16, margin: 0 }}>
-              <li>Include stakeholder names and roles</li>
-              <li>Mention budget figures explicitly</li>
-              <li>Note hard deadlines vs. targets</li>
-              <li>List known dependencies</li>
-              <li>Describe success criteria</li>
-            </ul>
-          </div>
-
-          <div style={cardStyle}>
-            <div style={sectionLabel}>Previous Intakes</div>
-            {['ERP Migration (Jan 8)', 'Portal Redesign (Dec 22)', 'Warehouse Build (Dec 10)'].map(prev => (
-              <div key={prev} style={{ fontSize: 12, color: '#6B5254', padding: '6px 0', borderBottom: '1px solid #EFE5D2' }}>
-                {prev}
+        <div className="in-grid">
+          <div>
+            {fromUpload && (
+              <div className="banner" id="in-from-upload">
+                Intake already ran when you created the project from <b id="in-src">{sourceName ?? 'your upload'}</b>. Re-analyze if you add more
+                notes or files.
               </div>
-            ))}
+            )}
+            <div className="card">
+              <label className="sl" htmlFor="in-text">
+                Brainstorm / Meeting Notes
+              </label>
+              <textarea
+                className="in"
+                id="in-text"
+                rows={15}
+                value={text}
+                maxLength={50_000}
+                onChange={(event) => setText(event.target.value)}
+                placeholder="Paste meeting notes, project description, brainstorming content, or any freeform project context here…"
+              />
+              <div className="hint">AI will identify objectives, requirements, deliverables, constraints, and risks automatically.</div>
+            </div>
+            <div className="card mt" data-files="in">
+              <div className="sl">Upload Documents</div>
+              <DocumentUpload
+                entries={entries}
+                onFiles={(files) => void addFiles(files)}
+                onRemove={removeFile}
+                disabled={analyzing}
+                error={uploadError ?? (documents.isError ? `Couldn't load this project's documents: ${describeError(documents.error)}` : null)}
+                idPrefix="in"
+              />
+            </div>
+            {analyzing && (
+              <div className="runbox" id="in-run" role="status">
+                <div className={status === 'running' ? 'done' : 'cur'}>Queued</div>
+                <div className={status === 'running' ? 'cur' : ''}>
+                  Reading the notes{readyDocuments > 0 ? ` and ${readyDocuments} file${readyDocuments > 1 ? 's' : ''}` : ''}, extracting scope (6 categories)
+                </div>
+                <div>Checking every item against the source</div>
+              </div>
+            )}
+            <div className="row between mt" style={{ marginTop: 20 }}>
+              <Link className="btn sec" to="/dashboard">
+                &larr; Back to Dashboard
+              </Link>
+              <div className="row">
+                <span
+                  id="in-status"
+                  role="status"
+                  style={{ fontSize: 13, fontWeight: 500, color: errorText ? 'var(--red)' : analyzing ? 'var(--mfg)' : 'var(--green)', maxWidth: 360 }}
+                >
+                  {analyzing
+                    ? 'Analyzing… this can take a minute.'
+                    : errorText ?? (analyzed ? `✓ Analysis complete — ${run?.itemsExtracted ?? 0} items extracted` : '')}
+                </span>
+                <button
+                  className="btn lg"
+                  id="btn-analyze"
+                  type="button"
+                  onClick={handleAnalyze}
+                  disabled={analyzing || uploading.length > 0 || !canAnalyze}
+                  aria-busy={analyzing || undefined}
+                >
+                  {analyzing ? 'Analyzing…' : run ? 'Re-Analyze' : 'Analyze Project'}
+                </button>
+                {analyzed && (
+                  <button className="btn green" id="btn-to-scope" type="button" onClick={() => goToStep('scope')}>
+                    Continue to Scope Review &rarr;
+                  </button>
+                )}
+              </div>
+            </div>
+            {analyzed && run && (
+              <FoundSummary items={scope.data as ScopeItemWithEvidence[] | undefined} loading={scope.isPending} failed={scope.isError} byRules={run.model === 'rules'} />
+            )}
+          </div>
+
+          <div className="stack">
+            <div className="card">
+              <div className="sl">What AI Extracts</div>
+              <div className="stack" style={{ gap: 8, fontSize: 12 }}>
+                {EXTRACTS.map((extract) => (
+                  <div key={extract.tag} className="row" style={{ gap: 8 }}>
+                    <span className="sc-badge" style={{ background: extract.color }}>
+                      {extract.tag}
+                    </span>
+                    {extract.label}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="card">
+              <div className="sl">Tips for Better Results</div>
+              <ul style={{ fontSize: 12, color: '#6B5254', lineHeight: 1.7, paddingLeft: 16, margin: 0 }}>
+                <li>Include stakeholder names and roles</li>
+                <li>Mention budget figures explicitly</li>
+                <li>Note hard deadlines vs. targets</li>
+                <li>List known dependencies</li>
+                <li>Describe success criteria</li>
+              </ul>
+            </div>
+            <PreviousIntakes projectId={projectId} latest={run} />
           </div>
         </div>
       </div>
-    </div>
+    </section>
   )
 }
 
-function Breadcrumb({ steps }: { steps: string[] }) {
+/**
+ * "What the AI found": the extracted items by evidence. Counts come from the live scope items;
+ * servers without per-item evidence get the plain total instead of invented splits.
+ */
+function FoundSummary({ items, loading, failed, byRules }: { items: ScopeItemWithEvidence[] | undefined; loading: boolean; failed: boolean; byRules: boolean }) {
+  const found = (items ?? []).filter((item) => item.origin === 'ai' && item.status !== 'removed')
+  const count = (evidence: string) => found.filter((item) => item.evidence === evidence).length
+  const hasEvidence = found.some((item) => item.evidence)
   return (
-    <div className="flex items-center gap-2" style={{ fontSize: 12, color: '#7A6063', marginBottom: 20 }}>
-      {steps.map((s, i) => (
-        <span key={s} className="flex items-center gap-2">
-          {i > 0 && <span>›</span>}
-          <span style={{ color: i === steps.length - 1 ? '#2E1A1D' : '#7A6063' }}>{s}</span>
-        </span>
-      ))}
+    <div className="card mt" id="in-result">
+      <div className="sl">What the AI found</div>
+      {loading ? (
+        <p className="small muted" style={{ margin: 0 }}>
+          Counting the items…
+        </p>
+      ) : failed ? (
+        <p className="small muted" style={{ margin: 0 }}>
+          Couldn&rsquo;t load the items. You&rsquo;ll see them all in Scope Review.
+        </p>
+      ) : hasEvidence ? (
+        <div className="row small">
+          <span className="chip st-stated">{count('stated')} Stated</span> quoted word for word &nbsp;
+          <span className="chip st-inferred">{count('inferred')} Inferred</span> no direct quote, check them &nbsp;
+          <span className="chip st-missing">{count('flagged')} Not in notes</span> say more than your notes do
+        </div>
+      ) : (
+        <p className="small" style={{ margin: 0 }}>
+          <b>{found.length} items</b> to review in Scope Review.
+        </p>
+      )}
+      <p className="small muted" style={{ margin: '8px 0 0' }}>
+        {byRules
+          ? 'Read with simple rules: AI isn’t set up on this server, so check each item closely.'
+          : 'Every item keeps the sentence it came from, so you can see why it’s there.'}
+      </p>
     </div>
   )
 }
-
-const cardStyle: React.CSSProperties = { background: '#fff', border: '1px solid #E8DCC6', borderRadius: 6, padding: '18px 20px' }
-const sectionLabel: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: '#7A6063', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 12, paddingBottom: 8, borderBottom: '1px solid #EFE5D2' }
-const primaryBtn: React.CSSProperties = { padding: '9px 20px', background: '#722F37', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' }
-const secondaryBtn: React.CSSProperties = { padding: '9px 16px', background: '#fff', color: '#4A2B2F', border: '1px solid #CDBFAB', borderRadius: 4, fontSize: 13, cursor: 'pointer' }

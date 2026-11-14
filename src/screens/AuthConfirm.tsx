@@ -1,10 +1,17 @@
+/**
+ * `/auth/confirm`: where links in auth emails land (sign-up confirmation, password reset, email
+ * change, invites). The email carries a one-time `token_hash`, verified with Supabase `verifyOtp`,
+ * so the link works in any browser or device — unlike the PKCE `?code=` flow of `/auth/callback`,
+ * which only works in the browser that started it. Recovery links continue to `/reset-password`;
+ * others to `?next=` (validated by `safeNext`).
+ */
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import type { EmailOtpType } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import { safeNext } from '@/lib/redirect'
-import AuthLayout, { linkClass } from '@/auth/AuthLayout'
-import { Alert, FullPageSpinner } from '@/components/ui'
+import AuthLayout from '@/auth/AuthLayout'
+import { FullPageSpinner } from '@/components/ui'
 
 const EMAIL_OTP_TYPES: readonly EmailOtpType[] = ['signup', 'invite', 'magiclink', 'recovery', 'email_change', 'email']
 
@@ -12,12 +19,7 @@ function isEmailOtpType(value: string | null): value is EmailOtpType {
   return value !== null && (EMAIL_OTP_TYPES as readonly string[]).includes(value)
 }
 
-/**
- * Landing page for links in auth emails (sign-up confirmation, password reset,
- * email change, invites). The email carries a one-time `token_hash`, so the link
- * works in any browser or device — unlike the PKCE `?code=` flow, which only
- * works in the browser that started it.
- */
+/** A spinner while the token is verified, then a redirect or an explanation. */
 export default function AuthConfirm() {
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
@@ -36,7 +38,7 @@ export default function AuthConfirm() {
     }
     const next = type === 'recovery' ? '/reset-password' : safeNext(params.get('next'))
 
-    supabase.auth.verifyOtp({ token_hash: tokenHash, type }).then(({ error: verifyError }) => {
+    void supabase.auth.verifyOtp({ token_hash: tokenHash, type }).then(({ error: verifyError }) => {
       if (verifyError) {
         setError(
           'This link has expired or was already used. If you already confirmed your email, you can sign in now — otherwise request a new link.',
@@ -51,18 +53,15 @@ export default function AuthConfirm() {
 
   return (
     <AuthLayout
+      id="v-confirm"
       title="This link didn't work"
-      footer={
-        <Link to="/forgot-password" className={linkClass}>
-          Need a new password reset link?
-        </Link>
-      }
+      features={false}
+      footer={<Link to="/forgot-password">Need a new password reset link?</Link>}
     >
-      <Alert tone="error">{error}</Alert>
-      <Link
-        to="/login"
-        className="mt-6 flex w-full items-center justify-center rounded-[4px] bg-primary px-4 py-[11px] text-sm font-semibold text-white hover:bg-[#5E262D] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-      >
+      <div className="alert bad" role="alert">
+        {error}
+      </div>
+      <Link className="btn block lg" to="/login">
         Go to sign in
       </Link>
     </AuthLayout>

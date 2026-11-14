@@ -1,19 +1,29 @@
-import { useId, useRef, useState, type CSSProperties, type DragEvent } from 'react'
+/**
+ * Upload tiles, drop zone and attached-file list from the approved design (mockup views/files.js).
+ *
+ * Shared by the manual Create Project form (files upload after the project exists), Create from
+ * upload (one source file to read) and AI Project Intake (uploads straight to the project). It only
+ * picks files and shows their state; callers do the uploading. `checkFile` is the client-side
+ * pre-check (type, 50 MB) — the server checks again.
+ */
+import { useId, useRef, useState, type DragEvent } from 'react'
 
-/** Upload tiles from the AI Project Intake design, shared with Create Project. */
 const TILES = [
-  { icon: '📄', label: 'PDF', sub: 'Reports, specs', accept: '.pdf,application/pdf' },
+  { key: 'pdf', icon: '📄', label: 'PDF', sub: 'Reports, specs', accept: '.pdf,application/pdf' },
   {
+    key: 'docx',
     icon: '📝',
     label: 'Word / DOCX',
     sub: 'Project docs',
     accept: '.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   },
-  { icon: '💬', label: 'Transcript', sub: 'Meeting text', accept: '.txt,.vtt,.srt,.md,text/plain,text/vtt' },
-  { icon: '🎙', label: 'Audio', sub: 'MP3, WAV, M4A', accept: '.mp3,.wav,.m4a,.ogg,.webm,.aac,.flac,audio/*' },
+  { key: 'transcript', icon: '💬', label: 'Transcript', sub: 'Meeting text', accept: '.txt,.vtt,.srt,.md,text/plain,text/vtt' },
+  { key: 'audio', icon: '🎙', label: 'Audio', sub: 'MP3, WAV, M4A', accept: '.mp3,.wav,.m4a,.ogg,.webm,.aac,.flac,audio/*' },
 ] as const
 
-const ALL_ACCEPT = TILES.map((t) => t.accept).join(',')
+export type TileKey = (typeof TILES)[number]['key']
+
+const ALL_ACCEPT = TILES.map((tile) => tile.accept).join(',')
 const SUPPORTED_EXTENSIONS = /\.(pdf|docx|txt|vtt|srt|md|mp3|wav|m4a|ogg|webm|aac|flac)$/i
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
@@ -24,7 +34,7 @@ export interface UploadEntry {
   name: string
   sizeBytes: number | null
   status: UploadEntryStatus
-  /** Shown under the file name: extraction errors, "Uploads after the project is created", … */
+  /** Shown after the size: extraction errors, "uploads when you continue", … */
   detail?: string | null
 }
 
@@ -35,20 +45,25 @@ export function checkFile(file: File): string | null {
   return null
 }
 
-function formatSize(bytes: number | null): string {
+/** "18 KB", "1.2 MB"; empty when unknown. */
+export function formatSize(bytes: number | null): string {
   if (bytes == null) return ''
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-const STATUS_LABEL: Record<UploadEntryStatus, { text: string; color: string }> = {
-  pending: { text: 'Ready to upload', color: '#7A6063' },
-  uploading: { text: 'Uploading…', color: '#7A6063' },
-  ready: { text: '✓ Text extracted', color: '#4F7A4A' },
-  failed: { text: 'Not usable', color: '#A83A4A' },
+const STATUS_TEXT: Record<UploadEntryStatus, string> = {
+  pending: 'attached',
+  uploading: 'uploading…',
+  ready: 'text extracted',
+  failed: 'not usable',
 }
 
+/**
+ * Upload tiles + drop zone + attached files. Render it inside the caller's card (`.card` with an
+ * "Upload Documents" `.sl` heading), like the mockup's `[data-files]` zones.
+ */
 export default function DocumentUpload({
   entries,
   onFiles,
@@ -56,6 +71,7 @@ export default function DocumentUpload({
   disabled = false,
   hint = 'Drag files here or click a tile to browse. Max 50 MB per file.',
   error,
+  idPrefix,
 }: {
   entries: UploadEntry[]
   onFiles: (files: File[]) => void
@@ -63,6 +79,8 @@ export default function DocumentUpload({
   disabled?: boolean
   hint?: string
   error?: string | null
+  /** Gives the tiles and the file list stable ids (`<prefix>-tile-<kind>`, `<prefix>-files`). */
+  idPrefix?: string
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
@@ -92,69 +110,67 @@ export default function DocumentUpload({
       }}
       onDragLeave={() => setDragOver(false)}
       onDrop={onDrop}
-      style={{ borderRadius: 6, outline: dragOver ? '2px dashed #722F37' : 'none', outlineOffset: 4 }}
+      style={dragOver ? { outline: '2px dashed var(--pr)', outlineOffset: 4, borderRadius: 6 } : undefined}
     >
       <input
         ref={inputRef}
         type="file"
         multiple
         accept={ALL_ACCEPT}
-        style={{ display: 'none' }}
+        hidden
         onChange={(event) => {
           const files = Array.from(event.target.files ?? [])
           event.target.value = ''
           if (files.length > 0) onFiles(files)
         }}
       />
-      <div className="grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
-        {TILES.map((u) => (
+      <div className="tiles">
+        {TILES.map((tile) => (
           <button
-            key={u.label}
+            key={tile.key}
+            className="tile"
+            id={idPrefix ? `${idPrefix}-tile-${tile.key}` : undefined}
             type="button"
-            onClick={() => browse(u.accept)}
+            onClick={() => browse(tile.accept)}
             disabled={disabled}
             aria-describedby={hintId}
-            aria-label={`Upload ${u.label} (${u.sub})`}
-            style={{ ...tileStyle, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.6 : 1 }}
+            aria-label={`Upload ${tile.label} (${tile.sub})`}
           >
-            <span style={{ fontSize: 22 }} aria-hidden="true">{u.icon}</span>
-            <span style={{ fontSize: 12, fontWeight: 600 }}>{u.label}</span>
-            <span style={{ fontSize: 11, color: '#999' }}>{u.sub}</span>
+            {/* A bare text node like the design (`.tile` sizes it; `.tile span` would shrink it); the aria-label names the tile. */}
+            {tile.icon}
+            <b>{tile.label}</b>
+            <span>{tile.sub}</span>
           </button>
         ))}
       </div>
-      <div id={hintId} style={{ marginTop: 10, fontSize: 11, color: '#999' }}>
+      <div className="hint" id={hintId}>
         {hint}
       </div>
       {error && (
-        <div role="alert" style={{ marginTop: 8, fontSize: 12, color: '#A83A4A' }}>
+        <p className="err" role="alert">
           {error}
-        </div>
+        </p>
       )}
       {entries.length > 0 && (
-        <ul aria-label="Attached documents" style={{ listStyle: 'none', margin: '12px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <ul className="files" id={idPrefix ? `${idPrefix}-files` : undefined} aria-label="Attached files" style={{ listStyle: 'none', padding: 0, margin: '10px 0 0' }}>
           {entries.map((entry) => {
-            const status = STATUS_LABEL[entry.status]
+            const meta = [formatSize(entry.sizeBytes), STATUS_TEXT[entry.status], entry.detail].filter(Boolean).join(' · ')
             return (
-              <li key={entry.key} className="flex items-center justify-between gap-8" style={fileRowStyle}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={entry.name}>
-                    {entry.name}
-                  </div>
-                  <div style={{ fontSize: 11, color: status.color }}>
-                    {status.text}
-                    {entry.sizeBytes != null && <span style={{ color: '#999' }}> · {formatSize(entry.sizeBytes)}</span>}
-                    {entry.detail && <span> · {entry.detail}</span>}
-                  </div>
-                </div>
+              <li key={entry.key} className="file">
+                <span className="mono" title={entry.name} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                  {entry.name}
+                </span>
+                <span className="muted" style={entry.status === 'failed' ? { color: 'var(--red)' } : undefined}>
+                  {meta}
+                </span>
                 <button
+                  className="x"
                   type="button"
                   onClick={() => onRemove(entry.key)}
                   disabled={entry.status === 'uploading'}
                   aria-label={`Remove ${entry.name}`}
-                  style={removeBtnStyle}
                 >
-                  Remove
+                  ×
                 </button>
               </li>
             )
@@ -163,30 +179,4 @@ export default function DocumentUpload({
       )}
     </div>
   )
-}
-
-const tileStyle: CSSProperties = {
-  padding: '14px 10px',
-  border: '1px dashed #c8c8c8',
-  borderRadius: 6,
-  background: '#FAF5EB',
-  textAlign: 'center',
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  gap: 4,
-}
-
-const fileRowStyle: CSSProperties = { padding: '7px 10px', border: '1px solid #E8DCC6', borderRadius: 4, background: '#FAF5EB' }
-
-const removeBtnStyle: CSSProperties = {
-  flexShrink: 0,
-  fontSize: 11,
-  padding: '3px 8px',
-  background: '#F3D9D5',
-  color: '#A83A4A',
-  border: '1px solid #A83A4A22',
-  borderRadius: 3,
-  cursor: 'pointer',
-  fontWeight: 500,
 }

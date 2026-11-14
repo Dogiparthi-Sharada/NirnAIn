@@ -1,10 +1,18 @@
+/**
+ * Check your email (`/check-email`, mockup views/auth.js `#v-checkemail`): shown after sign-up when
+ * the project requires email confirmation.
+ *
+ * The address arrives in router state from Signup. "Resend confirmation email" calls Supabase
+ * `auth.resend` and is held back for a 60-second cooldown (also right after sign-up) so it can't
+ * hit the provider's rate limit; without an address there is nothing to resend and the button is
+ * hidden.
+ */
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router'
 import { supabase } from '@/lib/supabase'
 import { authRedirectUrl } from '@/lib/redirect'
-import AuthLayout, { linkClass } from '@/auth/AuthLayout'
+import AuthLayout from '@/auth/AuthLayout'
 import { friendlyAuthError } from '@/auth/errors'
-import { Alert, Button } from '@/components/ui'
 
 const RESEND_COOLDOWN_SECONDS = 60
 
@@ -16,16 +24,17 @@ function emailFromState(state: unknown): string | null {
   return null
 }
 
+/** Confirmation instructions with a rate-limited resend. */
 export default function CheckEmail() {
   const location = useLocation()
   const email = emailFromState(location.state)
   const [cooldown, setCooldown] = useState(RESEND_COOLDOWN_SECONDS)
   const [sending, setSending] = useState(false)
-  const [message, setMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null)
+  const [message, setMessage] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
 
   useEffect(() => {
     if (cooldown <= 0) return
-    const timer = window.setTimeout(() => setCooldown((c) => c - 1), 1000)
+    const timer = window.setTimeout(() => setCooldown((seconds) => seconds - 1), 1000)
     return () => window.clearTimeout(timer)
   }, [cooldown])
 
@@ -40,56 +49,42 @@ export default function CheckEmail() {
     })
     setSending(false)
     if (error) {
-      setMessage({ tone: 'error', text: friendlyAuthError(error).message })
+      setMessage({ tone: 'bad', text: friendlyAuthError(error).message })
     } else {
-      setMessage({ tone: 'success', text: 'A new confirmation link is on its way.' })
+      setMessage({ tone: 'ok', text: 'A new confirmation link is on its way.' })
       setCooldown(RESEND_COOLDOWN_SECONDS)
     }
   }
 
   return (
     <AuthLayout
+      id="v-checkemail"
       title="Check your email"
+      features={false}
       subtitle={
         email ? (
           <>
-            We sent a confirmation link to <span className="font-semibold text-foreground">{email}</span>. Open it on
-            this device to activate your account.
+            We sent a confirmation link to <b>{email}</b>. Open it on this device to activate your account.
           </>
         ) : (
           'We sent you a confirmation link. Open it on this device to activate your account.'
         )
       }
-      footer={
-        <Link to="/login" className={linkClass}>
-          Back to sign in
-        </Link>
-      }
+      footer={<Link to="/login">Back to sign in</Link>}
     >
-      <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-full bg-muted text-primary">
-        <svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="3" y="5" width="18" height="14" rx="2" />
-          <path d="M3.5 6.5l8.5 6 8.5-6" />
-        </svg>
-      </div>
-
-      <ul className="mb-6 space-y-2 text-[13px] leading-5 text-[#6B5254]">
-        <li>• The link expires after 24 hours.</li>
-        <li>• Can&apos;t find it? Check your spam or promotions folder.</li>
+      <ul className="small muted" style={{ lineHeight: 1.8, paddingLeft: 18 }}>
+        <li>The link expires after 24 hours.</li>
+        <li>Can&apos;t find it? Check your spam or promotions folder.</li>
       </ul>
 
       <div aria-live="polite" aria-atomic="true">
-        {message && (
-          <div className="mb-4">
-            <Alert tone={message.tone}>{message.text}</Alert>
-          </div>
-        )}
+        {message && <div className={`alert ${message.tone}`}>{message.text}</div>}
       </div>
 
       {email && (
-        <Button variant="secondary" size="lg" block onClick={resend} loading={sending} disabled={cooldown > 0}>
-          {cooldown > 0 ? `Resend email in ${cooldown}s` : 'Resend confirmation email'}
-        </Button>
+        <button className="btn sec block" type="button" onClick={() => void resend()} disabled={sending || cooldown > 0} aria-busy={sending || undefined}>
+          {sending ? 'Sending…' : cooldown > 0 ? `Resend confirmation email in ${cooldown}s` : 'Resend confirmation email'}
+        </button>
       )}
     </AuthLayout>
   )
