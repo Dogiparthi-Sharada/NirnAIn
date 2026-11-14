@@ -16,20 +16,15 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
-from starlette.datastructures import UploadFile
 
 from app.api.deps import OrgId, Orgs
+from app.api.v1.documents import uploaded_file
 from app.api.v1.projects import ensure_org_visible
-from app.core.errors import UnprocessableError
 from app.domain.drafts import MAX_DRAFT_TEXT, ProjectDraft, ProjectDraftTextIn
 from app.drafts.extract_text import (
-    MAX_FILE_BYTES,
-    TOO_LARGE_DETAIL,
-    FileTooLargeError,
     UnsupportedFileError,
     extract_text,
     normalize,
-    supported_suffix,
 )
 from app.drafts.reader import DraftReader, get_draft_reader
 
@@ -38,10 +33,7 @@ router = APIRouter(tags=["projects"])
 DraftReaders = Annotated[DraftReader, Depends(get_draft_reader)]
 
 PASTED_SOURCE = "Pasted notes"
-NO_FILE_DETAIL = "Attach the file in a form field named `file`."
 BODY_DETAIL = "Send a file (multipart/form-data) or JSON {text}."
-# Multipart framing on top of the file itself.
-FORM_OVERHEAD_BYTES = 64 * 1024
 
 _REQUEST_BODY: dict[str, Any] = {
     "required": True,
@@ -59,19 +51,14 @@ _REQUEST_BODY: dict[str, Any] = {
 
 
 async def _file_source(request: Request) -> tuple[str, str]:
-    """(text, file name) of the multipart upload; 413 / 415 / 422 for bad files."""
-    length = request.headers.get("content-length", "")
-    if length.isdigit() and int(length) > MAX_FILE_BYTES + FORM_OVERHEAD_BYTES:
-        raise FileTooLargeError(TOO_LARGE_DETAIL)
-    async with request.form(max_files=1, max_fields=1) as form:
-        upload = form.get("file")
-        if not isinstance(upload, UploadFile):
-            raise UnprocessableError(NO_FILE_DETAIL)
+    """(text, file name) of the multipart upload; 413 / 415 / 422 for bad files.
+
+    The file is read in place from Starlette's spooled upload (at most 100 MB,
+    refused early while streaming), never copied into memory as a whole.
+    """
+    async with uploaded_file(request) as (upload, _):
         name = upload.filename or "Uploaded file"
-        supported_suffix(name, upload.content_type)
-        data = await upload.read(MAX_FILE_BYTES + 1)
-        content_type = upload.content_type
-    text = await asyncio.to_thread(extract_text, name, content_type, data)
+        text = await asyncio.to_thread(extract_text, name, upload.content_type, upload.file)
     return text, name
 
 

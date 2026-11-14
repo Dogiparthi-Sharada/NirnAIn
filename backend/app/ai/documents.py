@@ -6,6 +6,10 @@ is no object storage yet, so the original file is discarded after this step.
 
 Business rules:
 - the kind comes from the file extension, falling back to the MIME type;
+- files may be up to 100 MB; they are read from the request's spooled temp
+  file (a stream), never copied into one big bytes object, and only the first
+  `TEXT_READ_LIMIT_BYTES` of a text file are read;
+- video is rejected (415): people should upload the meeting's transcript;
 - audio is accepted but not transcribed yet (stored as a failed extraction);
 - WebVTT / SRT captions keep only the spoken words (`app.ai.transcripts`);
 - at most `MAX_CHARS` characters of text are kept per document;
@@ -19,28 +23,37 @@ import io
 import logging
 import re
 from dataclasses import dataclass
+from typing import BinaryIO
 
 from app.ai.transcripts import clean_transcript
 from app.domain.common import DocumentKind, JobStatus
 
 logger = logging.getLogger("app.ai.documents")
 
-# Matches the `size_bytes` check on public.source_documents (50 MB).
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+# Matches the `size_bytes` check on public.source_documents (100 MB).
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 MAX_CHARS = 200_000
+# At most MAX_CHARS characters are kept, and caption files are only a few times
+# longer than their words, so the first 8 MB of a text file is always enough.
+TEXT_READ_LIMIT_BYTES = 8 * 1024 * 1024
 TITLE_LIMIT = 300
 MIME_TYPE_LIMIT = 200
 
-TOO_LARGE_DETAIL = "Files can be at most 50 MB."
+TOO_LARGE_DETAIL = "Files can be at most 100 MB."
 UNSUPPORTED_DETAIL = (
     "Unsupported file type. Upload a PDF, Word (.docx), transcript (.txt, .vtt, .srt) "
     "or audio file."
+)
+VIDEO_DETAIL = (
+    "MP4 and other video files are not supported. Upload the meeting's transcript "
+    "(.vtt, .srt or .txt) instead."
 )
 AUDIO_ERROR = "Audio transcription is not available yet."
 NO_TEXT_ERROR = "No text could be read from this file (is it a scanned image?)."
 UNREADABLE_ERROR = "This file could not be read."
 
 AUDIO_EXTENSIONS = (".mp3", ".wav", ".m4a", ".ogg", ".webm", ".aac", ".flac")
+VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".avi", ".mkv", ".wmv")
 KIND_BY_EXTENSION: dict[str, DocumentKind] = {
     ".pdf": DocumentKind.PDF,
     ".docx": DocumentKind.DOCX,
@@ -81,13 +94,36 @@ def file_title(filename: str | None) -> str:
     return base_name[:TITLE_LIMIT] or "Untitled document"
 
 
-def detect_kind(filename: str | None, content_type: str | None) -> DocumentKind | None:
-    """Kind from the file extension, falling back to the MIME type; None when unsupported."""
+def _extension(filename: str | None) -> str:
+    """The lower-case extension with its dot ("" when the name has none)."""
     name = (filename or "").lower()
     dot_position = name.rfind(".")
-    if dot_position >= 0 and name[dot_position:] in KIND_BY_EXTENSION:
-        return KIND_BY_EXTENSION[name[dot_position:]]
-    mime_type = (content_type or "").split(";", 1)[0].strip().lower()
+    return name[dot_position:] if dot_position >= 0 else ""
+
+
+def _mime_type(content_type: str | None) -> str:
+    """The bare, lower-case MIME type of a Content-Type header value."""
+    return (content_type or "").split(";", 1)[0].strip().lower()
+
+
+def is_video(filename: str | None, content_type: str | None) -> bool:
+    """A video file: a video extension, any video/* MIME type, or a .webm that isn't audio/webm.
+
+    .webm holds audio or video; only an explicit audio/webm MIME type marks it as audio.
+    """
+    extension = _extension(filename)
+    mime_type = _mime_type(content_type)
+    if extension in VIDEO_EXTENSIONS or mime_type.startswith("video/"):
+        return True
+    return extension == ".webm" and mime_type != "audio/webm"
+
+
+def detect_kind(filename: str | None, content_type: str | None) -> DocumentKind | None:
+    """Kind from the file extension, falling back to the MIME type; None when unsupported."""
+    extension = _extension(filename)
+    if extension in KIND_BY_EXTENSION:
+        return KIND_BY_EXTENSION[extension]
+    mime_type = _mime_type(content_type)
     if mime_type.startswith("audio/"):
         return DocumentKind.AUDIO
     return KIND_BY_MIME_TYPE.get(mime_type)
@@ -105,10 +141,17 @@ def normalize(text: str) -> str:
     return text[:MAX_CHARS]
 
 
-def _pdf_text(data: bytes) -> str:
+def stream_size(stream: BinaryIO) -> int:
+    """Bytes in a seekable stream (blocking for on-disk files); leaves it rewound."""
+    size = stream.seek(0, io.SEEK_END)
+    stream.seek(0)
+    return size
+
+
+def _pdf_text(stream: BinaryIO) -> str:
     from pypdf import PdfReader  # noqa: PLC0415 - heavy import, only needed for PDFs
 
-    reader = PdfReader(io.BytesIO(data))
+    reader = PdfReader(stream)
     page_texts: list[str] = []
     collected_chars = 0
     for page in reader.pages:
@@ -120,10 +163,10 @@ def _pdf_text(data: bytes) -> str:
     return "\n\n".join(page_texts)
 
 
-def _docx_text(data: bytes) -> str:
+def _docx_text(stream: BinaryIO) -> str:
     import docx  # noqa: PLC0415 - heavy import, only needed for Word files
 
-    document = docx.Document(io.BytesIO(data))
+    document = docx.Document(stream)
     parts = [paragraph.text for paragraph in document.paragraphs]
     for table in document.tables:
         for row in table.rows:
@@ -137,17 +180,22 @@ def _docx_text(data: bytes) -> str:
     return "\n".join(parts)
 
 
-def extract_text(kind: DocumentKind, data: bytes) -> Extraction:
-    """Read the text of an uploaded file (blocking: call it in a worker thread)."""
+def extract_text(kind: DocumentKind, data: bytes | BinaryIO) -> Extraction:
+    """Read the text of an uploaded file (blocking: call it in a worker thread).
+
+    `data` is the file's bytes or a seekable binary stream positioned at its start.
+    """
     if kind == DocumentKind.AUDIO:
         return Extraction.failed(AUDIO_ERROR)
+    stream = io.BytesIO(data) if isinstance(data, bytes) else data
     try:
         if kind == DocumentKind.PDF:
-            raw_text = _pdf_text(data)
+            raw_text = _pdf_text(stream)
         elif kind == DocumentKind.DOCX:
-            raw_text = _docx_text(data)
+            raw_text = _docx_text(stream)
         else:
-            raw_text = clean_transcript(data.decode("utf-8", errors="replace"))
+            raw_bytes = stream.read(TEXT_READ_LIMIT_BYTES)
+            raw_text = clean_transcript(raw_bytes.decode("utf-8", errors="replace"))
     except Exception:
         # Corrupt or malicious files: log the details, show only a fixed message.
         logger.warning("document text extraction failed", exc_info=True, extra={"kind": kind})

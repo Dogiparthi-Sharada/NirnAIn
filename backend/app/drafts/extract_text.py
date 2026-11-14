@@ -1,27 +1,37 @@
 """Plain text from an uploaded file: PDF, Word (.docx) or a transcript.
 
 Used by `POST /orgs/{orgId}/project-drafts/extract` (`app.api.v1.drafts`) before
-the draft is read. Pure functions (bytes in, text out) so they are easy to test
-and can run in a worker thread. Audio and anything else raise
-`UnsupportedFileError` (415); files are never stored here.
+the draft is read. Pure, blocking functions (bytes or a seekable stream in, text
+out) so they are easy to test and can run in a worker thread. Files may be up
+to 100 MB, like intake documents (`app.ai.documents`); a stream is read in
+place, never copied into one big bytes object. Video, audio and anything else
+raise `UnsupportedFileError` (415); files are never stored here.
 """
 
 from __future__ import annotations
 
+import codecs
 import io
 import re
 from pathlib import PurePath
+from typing import BinaryIO
 
 from docx import Document
 from pypdf import PdfReader
 
-from app.core.errors import AppError
-
-MAX_FILE_BYTES = 50 * 1024 * 1024
+from app.ai.documents import (
+    MAX_UPLOAD_BYTES,
+    TEXT_READ_LIMIT_BYTES,
+    TOO_LARGE_DETAIL,
+    VIDEO_DETAIL,
+    is_video,
+    stream_size,
+)
+from app.core.errors import AppError, ContentTooLargeError
 
 TEXT_SUFFIXES = {".txt", ".md"}
 CAPTION_SUFFIXES = {".vtt", ".srt"}
-AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".ogg", ".oga", ".webm", ".aac", ".flac", ".mp4"}
+AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".ogg", ".oga", ".webm", ".aac", ".flac"}
 CONTENT_TYPES = {
     "application/pdf": ".pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
@@ -35,7 +45,6 @@ AUDIO_DETAIL = "Audio transcription is not available yet."
 UNSUPPORTED_DETAIL = (
     "Unsupported file type. Use a PDF, a Word file (.docx) or a transcript (.txt, .vtt, .srt, .md)."
 )
-TOO_LARGE_DETAIL = "Files can be at most 50 MB."
 EMPTY_DETAIL = "We couldn't find any text in that file."
 UNREADABLE_DETAIL = "We couldn't read that file. Check that it isn't damaged or password-protected."
 
@@ -46,15 +55,9 @@ _TAG = re.compile(r"</?[^>]+>")
 
 
 class UnsupportedFileError(AppError):
-    """415: audio (no speech-to-text yet) or a type we can't read."""
+    """415: video, audio (no speech-to-text yet) or a type we can't read."""
 
     status, slug, title = 415, "unsupported-media-type", "Unsupported Media Type"
-
-
-class FileTooLargeError(AppError):
-    """413: over the 50 MB upload limit."""
-
-    status, slug, title = 413, "payload-too-large", "Payload Too Large"
 
 
 class UnreadableFileError(AppError):
@@ -75,7 +78,9 @@ def file_suffix(filename: str, content_type: str | None) -> str:
 
 
 def supported_suffix(filename: str, content_type: str | None) -> str:
-    """The file's suffix when we can read it; 415 for audio and unknown types."""
+    """The file's suffix when we can read it; 415 for video, audio and unknown types."""
+    if is_video(filename, content_type):
+        raise UnsupportedFileError(VIDEO_DETAIL)
     suffix = file_suffix(filename, content_type)
     if suffix in AUDIO_SUFFIXES:
         raise UnsupportedFileError(AUDIO_DETAIL)
@@ -84,19 +89,23 @@ def supported_suffix(filename: str, content_type: str | None) -> str:
     return suffix
 
 
-def extract_text(filename: str, content_type: str | None, data: bytes) -> str:
-    """The file's text, normalized; raises the 413 / 415 / 422 errors above. CPU-bound (PDFs)."""
+def extract_text(filename: str, content_type: str | None, data: bytes | BinaryIO) -> str:
+    """The file's text, normalized; raises 413 / 415 / 422 errors. CPU-bound (PDFs).
+
+    `data` is the file's bytes or a seekable binary stream positioned at its start.
+    """
     suffix = supported_suffix(filename, content_type)
-    if len(data) > MAX_FILE_BYTES:
-        raise FileTooLargeError(TOO_LARGE_DETAIL)
+    stream = io.BytesIO(data) if isinstance(data, bytes) else data
+    if stream_size(stream) > MAX_UPLOAD_BYTES:
+        raise ContentTooLargeError(TOO_LARGE_DETAIL)
     if suffix == ".pdf":
-        text = pdf_text(data)
+        text = pdf_text(stream)
     elif suffix == ".docx":
-        text = docx_text(data)
+        text = docx_text(stream)
     elif suffix in CAPTION_SUFFIXES:
-        text = caption_text(decode(data))
+        text = caption_text(decode(stream.read(TEXT_READ_LIMIT_BYTES)))
     else:
-        text = decode(data)
+        text = decode(stream.read(TEXT_READ_LIMIT_BYTES))
     text = normalize(text)
     if not text:
         raise UnreadableFileError(EMPTY_DETAIL)
@@ -104,9 +113,13 @@ def extract_text(filename: str, content_type: str | None, data: bytes) -> str:
 
 
 def decode(data: bytes) -> str:
-    """UTF-8 (with or without BOM), falling back to Windows-1252 for older exports."""
+    """UTF-8 (with or without BOM), falling back to Windows-1252 for older exports.
+
+    A character cut in half at the end (a text file read only up to
+    `TEXT_READ_LIMIT_BYTES`) is dropped instead of forcing the fallback.
+    """
     try:
-        return data.decode("utf-8-sig")
+        return codecs.getincrementaldecoder("utf-8-sig")().decode(data, final=False)
     except UnicodeDecodeError:
         return data.decode("cp1252", errors="replace")
 
@@ -121,10 +134,10 @@ def normalize(text: str) -> str:
     return "\n".join(out).strip()
 
 
-def pdf_text(data: bytes) -> str:
+def pdf_text(stream: BinaryIO) -> str:
     """Text of every page; any parser failure on the untrusted file becomes a 422."""
     try:
-        reader = PdfReader(io.BytesIO(data))
+        reader = PdfReader(stream)
         encrypted = reader.is_encrypted and not reader.decrypt("")
         pages = [] if encrypted else [page.extract_text() or "" for page in reader.pages]
     except Exception as error:  # any parser failure on an untrusted file
@@ -134,10 +147,10 @@ def pdf_text(data: bytes) -> str:
     return "\n\n".join(pages)
 
 
-def docx_text(data: bytes) -> str:
+def docx_text(stream: BinaryIO) -> str:
     """Paragraphs, then table rows as "cell | cell" lines (merged cells counted once)."""
     try:
-        document = Document(io.BytesIO(data))
+        document = Document(stream)
         parts = [paragraph.text for paragraph in document.paragraphs]
         for table in document.tables:
             for row in table.rows:

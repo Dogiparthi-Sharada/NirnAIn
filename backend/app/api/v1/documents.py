@@ -4,45 +4,104 @@ Every endpoint runs under the caller's RLS session (`Documents` is built from
 `UserDB`), so the database itself enforces who may see, add or delete a
 project's documents; the explicit checks only turn RLS outcomes into clear
 404 / 403 responses.
+
+`uploaded_file` is the shared multipart reader for uploads (also used by
+`POST /orgs/{orgId}/project-drafts/extract`): it enforces the 100 MB limit
+while the body streams in, so an oversized file is refused early instead of
+being spooled in full.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Annotated
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
 
-from fastapi import APIRouter, File, Response, UploadFile, status
+from fastapi import APIRouter, Request, Response, status
+from starlette.datastructures import UploadFile
+from starlette.types import Message, Receive
 
 from app.ai.documents import (
     MAX_UPLOAD_BYTES,
     MIME_TYPE_LIMIT,
     TOO_LARGE_DETAIL,
     UNSUPPORTED_DETAIL,
+    VIDEO_DETAIL,
     detect_kind,
     extract_text,
     file_title,
+    is_video,
+    stream_size,
 )
 from app.api.deps import DocumentId, Documents, ProjectId
 from app.core.errors import (
     ContentTooLargeError,
     ForbiddenError,
     NotFoundError,
+    UnprocessableError,
     UnsupportedMediaTypeError,
 )
 from app.domain.intake import SourceDocument
 
 router = APIRouter(tags=["intake"])
 
+NO_FILE_DETAIL = "Attach the file in a form field named `file`."
+# Multipart framing (boundary lines, part headers) on top of the file itself.
+FORM_OVERHEAD_BYTES = 64 * 1024
 
-async def _read_capped(file: UploadFile) -> bytes:
-    """The upload's bytes; 413 when it is larger than the limit."""
-    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+UPLOAD_REQUEST_BODY: dict[str, Any] = {
+    "required": True,
+    "content": {
+        "multipart/form-data": {
+            "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": {"file": {"type": "string", "format": "binary"}},
+            }
+        }
+    },
+}
+
+
+def _capped_receive(receive: Receive, limit_bytes: int) -> Receive:
+    """`receive` that raises 413 as soon as more than `limit_bytes` of body have arrived."""
+    received_bytes = 0
+
+    async def receive_within_limit() -> Message:
+        nonlocal received_bytes
+        message = await receive()
+        if message["type"] == "http.request":
+            received_bytes += len(message.get("body", b""))
+            if received_bytes > limit_bytes:
+                raise ContentTooLargeError(TOO_LARGE_DETAIL)
+        return message
+
+    return receive_within_limit
+
+
+@asynccontextmanager
+async def uploaded_file(request: Request) -> AsyncIterator[tuple[UploadFile, int]]:
+    """The multipart `file` part and its size in bytes; 413 over `MAX_UPLOAD_BYTES`.
+
+    A declared Content-Length over the limit is refused before anything is
+    read; otherwise the body is counted while it streams in. Starlette spools
+    the file in chunks (memory, then disk), and the file stays open until the
+    `async with` block ends, so callers read it from `upload.file` in place.
+    """
+    body_limit = MAX_UPLOAD_BYTES + FORM_OVERHEAD_BYTES
+    declared_length = request.headers.get("content-length", "")
+    if declared_length.isdigit() and int(declared_length) > body_limit:
         raise ContentTooLargeError(TOO_LARGE_DETAIL)
-    # Read one byte past the limit so a missing/wrong size header can't sneak a bigger file in.
-    data = await file.read(MAX_UPLOAD_BYTES + 1)
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise ContentTooLargeError(TOO_LARGE_DETAIL)
-    return data
+    capped_request = Request(request.scope, _capped_receive(request.receive, body_limit))
+    async with capped_request.form(max_files=1, max_fields=1) as form:
+        upload = form.get("file")
+        if not isinstance(upload, UploadFile):
+            raise UnprocessableError(NO_FILE_DETAIL)
+        size_bytes = await asyncio.to_thread(stream_size, upload.file)
+        if size_bytes > MAX_UPLOAD_BYTES:
+            raise ContentTooLargeError(TOO_LARGE_DETAIL)
+        yield upload, size_bytes
 
 
 @router.post(
@@ -50,30 +109,34 @@ async def _read_capped(file: UploadFile) -> bytes:
     response_model=SourceDocument,
     status_code=status.HTTP_201_CREATED,
     summary="Upload a document for AI intake (only its extracted text is kept)",
+    openapi_extra={"requestBody": UPLOAD_REQUEST_BODY},
 )
 async def upload_document(
-    project_id: ProjectId, file: Annotated[UploadFile, File()], documents: Documents
+    project_id: ProjectId, request: Request, documents: Documents
 ) -> SourceDocument:
     """Read a PDF, Word or transcript file's text and keep it for the next intake run.
 
     A file whose text can't be read (audio, scanned PDF, corrupt file) is still
     stored, with `extractionStatus` 'failed' and a user-facing `extractionError`.
+    Video files are refused (415).
     """
     if not await documents.project_exists(project_id):
         raise NotFoundError("Project not found")
     if not await documents.can_write(project_id):
         raise ForbiddenError("You do not have permission to add documents to this project")
-    kind = detect_kind(file.filename, file.content_type)
-    if kind is None:
-        raise UnsupportedMediaTypeError(UNSUPPORTED_DETAIL)
-    data = await _read_capped(file)
-
-    # Parsing a large PDF takes a while; keep it off the event loop.
-    extraction = await asyncio.to_thread(extract_text, kind, data)
-    mime_type = (file.content_type or "").strip()[:MIME_TYPE_LIMIT] or None
-    document = await documents.create(
-        project_id, kind, file_title(file.filename), mime_type, len(data), extraction
-    )
+    async with uploaded_file(request) as (upload, size_bytes):
+        # Video is refused outright: there is no transcription, and the meeting's
+        # transcript (.vtt/.srt/.txt) is what intake can actually read.
+        if is_video(upload.filename, upload.content_type):
+            raise UnsupportedMediaTypeError(VIDEO_DETAIL)
+        kind = detect_kind(upload.filename, upload.content_type)
+        if kind is None:
+            raise UnsupportedMediaTypeError(UNSUPPORTED_DETAIL)
+        # Parsing a large PDF takes a while; keep it off the event loop.
+        extraction = await asyncio.to_thread(extract_text, kind, upload.file)
+        title, content_type = file_title(upload.filename), upload.content_type
+    mime_type = (content_type or "").strip()[:MIME_TYPE_LIMIT] or None
+    document = await documents.create(project_id, kind, title, mime_type, size_bytes, extraction)
     if document is None:
         raise ForbiddenError("The document was saved but is not visible to you")
     return document
