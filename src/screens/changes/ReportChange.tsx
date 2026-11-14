@@ -92,6 +92,11 @@ function NotesPane({ orgId, busy, onSubmit }: { orgId: string | null; busy: bool
   const [reading, setReading] = useState(false)
   const [fileError, setFileError] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  // Why "Find what changed" can't run yet (null = it can).
+  let blocked: string | null = null
+  if (busy) blocked = 'Reading the notes…'
+  else if (reading) blocked = 'Reading the file…'
+  else if (!text.trim()) blocked = 'Paste the meeting notes or upload a file first.'
 
   const onFile = async (file: File | undefined) => {
     if (!file) return
@@ -141,7 +146,20 @@ function NotesPane({ orgId, busy, onSubmit }: { orgId: string | null; busy: bool
         </div>
       )}
       <div className="row end mt">
-        <button className="btn" data-find="notes" type="button" disabled={busy || reading || !text.trim()} onClick={() => onSubmit(text)}>
+        {blocked && (
+          <span className="small muted" id="chg-find-why">
+            {blocked}
+          </span>
+        )}
+        <button
+          className="btn"
+          data-find="notes"
+          type="button"
+          disabled={blocked !== null}
+          aria-describedby={blocked ? 'chg-find-why' : undefined}
+          title={blocked ?? undefined}
+          onClick={() => onSubmit(text)}
+        >
           Find what changed
         </button>
       </div>

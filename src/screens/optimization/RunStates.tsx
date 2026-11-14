@@ -5,13 +5,15 @@
  * Solving mirrors the run's real status (queued → "Building model", running → "Solving"); the
  * screen polls the run meanwhile. Infeasible lists the constraints that can't all hold
  * (`run.iis`) and the priced remedies the backend computed (`run.result.remedies`); picking one
- * and pressing "Re-solve with this change" starts a new run with that remedy.
+ * and pressing "Re-solve with this change" starts a new run with that remedy. The wording names
+ * the kind of conflict, and "Change these together" lists every change it makes.
  */
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { formatDate, formatMoney } from '@/lib/format'
 import type { PlanRun, Remedy, RemedyId } from '@/lib/optimize'
 import { stepPath } from '@/lib/steps'
+import { blockerWording, changeCount, RemedyChanges } from './KeepDateCard'
 import { ProblemAlert } from './ui'
 
 const SOLVE_STEPS = ['Building model', 'Solving', 'Preparing results']
@@ -58,6 +60,8 @@ export function InfeasibleState({ projectId, run, resolving, resolveError, onRes
   const [picked, setPicked] = useState<RemedyId | null>(null)
   const conflicts = run.iis ?? []
   const remedies = run.result?.remedies ?? []
+  // What blocks the plan, in the words of its conflict (budget, date, skills or hours).
+  const wording = blockerWording(conflicts, null)
 
   return (
     <div id="opt-infeasible">
@@ -84,12 +88,12 @@ export function InfeasibleState({ projectId, run, resolving, resolveError, onRes
         <h3>What it would take</h3>
         {remedies.length === 0 ? (
           <p className="small muted" style={{ margin: 0 }}>
-            No single change makes this plan possible. Edit the constraints on step 5 and run again.
+            {wording.problem} {wording.none} Edit the constraints on step 5 and run again.
           </p>
         ) : (
           <>
             <p className="small muted" id="remedy-help" style={{ margin: '0 0 4px' }}>
-              Each option changes as little as possible. Pick one and the solver runs again.
+              {wording.problem} Each option changes as little as possible. Pick one and the solver runs again.
             </p>
             <div role="group" aria-describedby="remedy-help">
               {remedies.map((remedy) => (
@@ -103,9 +107,10 @@ export function InfeasibleState({ projectId, run, resolving, resolveError, onRes
                 >
                   <span className="radio" aria-hidden="true" />
                   <span>
-                    <b>{remedy.title}</b> <span className="chip st-inferred">1 change</span>
+                    <b>{remedy.title}</b> <span className="chip st-inferred">{changeCount(remedy)}</span>
                     <br />
                     <span className="small muted">{remedyFacts(remedy)}</span>
+                    <RemedyChanges option={remedy} />
                   </span>
                 </button>
               ))}

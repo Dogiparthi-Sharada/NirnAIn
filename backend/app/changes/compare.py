@@ -25,15 +25,32 @@ def _snapshot_start(meta: RunMeta) -> tuple[date, int]:
     return start - timedelta(days=start.weekday()), min(max(per_week, 1), 7)
 
 
+def schedule_dates(raw: object) -> dict[uuid.UUID, tuple[date, date]]:
+    """Start and end day of each work package in a run's `result.schedule` (rows of
+    `{wbsNodeId, start, end}`, ISO dates); rows it can't read are skipped."""
+    out: dict[uuid.UUID, tuple[date, date]] = {}
+    for row in raw if isinstance(raw, list) else []:
+        try:
+            node_id = uuid.UUID(str(row["wbsNodeId"]))
+            out[node_id] = (date.fromisoformat(row["start"]), date.fromisoformat(row["end"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
 def _bars(
     meta: RunMeta, rows: Sequence[PlanRow], names: dict[uuid.UUID, str]
 ) -> dict[uuid.UUID, Bar]:
-    """Week indexes count from the Monday of the run's planning start (as planned_assignments)."""
+    """Each work package's days and owner. The run's schedule gives the exact days; older
+    runs fall back to whole weeks of planned_assignments (week indexes count from the Monday
+    of the run's planning start)."""
     monday, per_week = _snapshot_start(meta)
     out: dict[uuid.UUID, Bar] = {}
     for row in rows:
         start = monday + timedelta(days=7 * row.start_week)
         end = monday + timedelta(days=7 * row.end_week + per_week - 1)
+        if row.wbs_node_id in meta.schedule:
+            start, end = meta.schedule[row.wbs_node_id]
         owner = names.get(row.employee_id) if row.employee_id is not None else row.contractor_label
         previous = out.get(row.wbs_node_id)
         if previous is None:

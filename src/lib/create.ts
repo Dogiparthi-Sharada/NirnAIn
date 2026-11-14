@@ -6,7 +6,8 @@
  *   returns each project value with its quote and status; nothing is saved (`useExtractDraft`).
  * - `useCreateFromDraft`: creates the project from a reviewed draft, keeps the file as a project
  *   document and starts the AI intake, degrading gracefully when either can't happen.
- * - `useIntakeRuns`: the "Previous Intakes" history.
+ * - `useIntakeRuns`: the "Previous Intakes" history; `creationSource` reads from it whether the
+ *   intake already ran when the project was created.
  * Screens: `CreateProject`, `CreateFromUpload`, `AIProjectIntake` (and their components).
  */
 import { useState } from 'react'
@@ -15,7 +16,7 @@ import { checkFile, type UploadEntry } from '@/components/DocumentUpload'
 import { apiFetch, errorMessage, isApiError } from './api'
 import { queryKeys, uploadDocument, useMembers } from './queries'
 import { useOrg } from '@/org/useOrg'
-import type { IntakeRun, Project, ProjectCreate, ScopeItem } from './types'
+import type { IntakeRun, Project, ProjectCreate, ScopeItem, SourceDocument } from './types'
 
 /** Project manager choices: org members, always including the current user (the default). */
 export function usePmOptions() {
@@ -207,24 +208,28 @@ export function useCreateFromDraft() {
 
 /* ───────────────────────────── Where a project started ───────────────────────────── */
 
-const SOURCE_KEY = 'nirnain:upload-source:'
+// Create from upload starts the intake right after creating the project and storing its file.
+const CREATION_INTAKE_MS = 15_000
+// The run history holds at most this many runs (backend RUN_HISTORY_LIMIT): beyond it the first run is unknown.
+const RUN_HISTORY_LIMIT = 20
 
-/** Remembers (in this browser) that a project was created from an upload, for AI Project Intake's note. */
-export function rememberUploadSource(projectId: string, sourceName: string): void {
-  try {
-    window.localStorage.setItem(SOURCE_KEY + projectId, sourceName)
-  } catch {
-    // Storage unavailable (private mode): the note is a nicety.
+/**
+ * What a project was created from, when its first intake ran as part of creating it ("Create from
+ * upload"), read from the server so every browser shows the same note (QA I-07): the oldest
+ * intake run was queued within seconds of the project's creation or of an upload stored with it.
+ * The upload's title, else "your pasted notes"; null when the first intake ran later on its own.
+ */
+export function creationSource(projectCreatedAt: string, runs: IntakeRun[], documents: SourceDocument[]): string | null {
+  if (runs.length === 0 || runs.length >= RUN_HISTORY_LIMIT) return null
+  const first = runs.reduce((oldest, run) => (Date.parse(run.createdAt) < Date.parse(oldest.createdAt) ? run : oldest))
+  const queued = Date.parse(first.createdAt)
+  const justBefore = (iso: string) => {
+    const gap = queued - Date.parse(iso)
+    return gap >= 0 && gap <= CREATION_INTAKE_MS
   }
-}
-
-/** The source a project was created from in this browser, if any. */
-export function uploadSource(projectId: string): string | null {
-  try {
-    return window.localStorage.getItem(SOURCE_KEY + projectId)
-  } catch {
-    return null
-  }
+  const upload = documents.find((document) => justBefore(document.createdAt))
+  if (upload) return upload.title
+  return justBefore(projectCreatedAt) ? 'your pasted notes' : null
 }
 
 /* ───────────────────────────── AI Project Intake ───────────────────────────── */

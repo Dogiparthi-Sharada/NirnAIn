@@ -189,7 +189,14 @@ export function ChangeImpact({
           )}
           {run && !running && !solved && <RunProblem run={run} />}
           {run && !running && !decided && (solved || run.status === 'infeasible') && (
-            <KeepDateCard keepDate={keepDateOf(run)} infeasible={!solved} busy={deciding} onUse={(remedy) => replanWith(remedy)} onAccept={approve} />
+            <KeepDateCard
+              keepDate={keepDateOf(run)}
+              infeasible={!solved}
+              conflicts={run.iis ?? []}
+              busy={deciding}
+              onUse={(remedy) => replanWith(remedy)}
+              onAccept={approve}
+            />
           )}
           {!running && !solved && !decided && (runError || run) && (
             <div className="row end">

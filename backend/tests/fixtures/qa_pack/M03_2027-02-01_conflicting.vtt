@@ -1,0 +1,39 @@
+WEBVTT
+
+NOTE
+SYNTHETIC QA PROJECT - fictional people, rates and decisions
+Meeting M03: Conflicting deadline, skill loss and contractor restriction
+Date: 2027-02-01 09:00 America/Los_Angeles
+Project: PRJ-QA-1042
+
+M03-01
+00:00:00.000 --> 00:01:29.000
+<v Jane Doe, project manager>This is the February 1, 2027 steering meeting for PRJ-QA-1042. It updates the accepted January 18 proposal, assumed applied as Plan v2 for this test. Changes listed here supersede earlier values prospectively; historical actuals remain intact. Do not interpret this meeting itself as an application-level approval of a replacement plan.</v>
+
+M03-02
+00:01:30.000 --> 00:02:59.000
+<v Robert Walsh, sponsor>The board now requires go-live by April 30, 2027. This replaces the July 30 target and is a hard deadline. Replace the $350,000 soft budget with a $200,000 hard budget. Contingency remains 10% inside the total, so $20,000 is reserved. Labor and infrastructure category targets are still soft; the total budget is hard. Capacity and required skills remain hard.</v>
+
+M03-03
+00:03:00.000 --> 00:04:29.000
+<v Priya Shah, SAP specialist>The vendor access date moves from February 8 to May 3, 2027. W02 cannot start before May 3, regardless of who performs it. W02 remains mandatory and still requires 128 hours. This is a confirmed vendor gate, not a preference.</v>
+
+M03-04
+00:04:30.000 --> 00:05:59.000
+<v Robert Walsh, sponsor>External specialists are prohibited from February 1 onward. Priya must not receive future assignments; do not delete her history or identity. No internal team member has SAP Integration. Mark taking a SAP course was only a suggestion: no course duration, cost, approval or qualification date exists. Do not treat him as qualified.</v>
+
+M03-05
+00:06:00.000 --> 00:07:29.000
+<v James Wu, security engineer>My SOC2 Controls qualification is withdrawn effective February 1 until revalidated. Keep my RBAC and Audit Logging skills. W11 still requires SOC2 Controls, and nobody else has it. A possible renewal next month is unconfirmed. My previously recorded work remains valid history.</v>
+
+M03-06
+00:07:30.000 --> 00:08:59.000
+<v Robert Walsh, sponsor>Reduce internal sources from 18 to 14 and replace W03 total effort with 280 hours. Reduce concurrent users from 800 to 600 and replace W07 total effort with 128 hours. Reduce trainees from 450 to 200 and replace W14 total effort with 60 hours. Cancel unstarted W08 self-service analytics and remove its predecessor link into W13; retain its history as canceled. W13 remains 120 hours. Disaster recovery W16 and its four-hour RTO and one-hour RPO remain mandatory.</v>
+
+M03-07
+00:09:00.000 --> 00:10:29.000
+<v Jane Doe, project manager>Progress through January 29 is: W01 and W04 unchanged and done; W03 has 64 actual hours and $6,400 actual cost, actual start January 18; W09 has 64 actual hours and $8,320 cost, started January 4 and finished January 29; W12 has 80 actual hours and $8,800 cost, started January 4 and finished January 29. Lock these actuals. W03 remaining effort is 216 hours after the new total of 280. W09 and W12 are done. All other active packages are not started. Future scheduling starts February 1.</v>
+
+M03-08
+00:10:30.000 --> 00:11:59.000
+<v Robert Walsh, sponsor>Do not silently drop SAP, waive its required skill, move the vendor date, allow contractors, or relax the deadline to force a solution. Present conflicts and explicit alternatives for review. A June deadline or a contractor exception is a possible alternative, not an approved decision. This meeting leaves the previously applied plan active while the conflicts are resolved.</v>

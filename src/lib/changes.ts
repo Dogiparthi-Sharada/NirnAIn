@@ -80,6 +80,8 @@ export interface DetectedChange {
   confidence: number
   note: string | null
   candidates: TargetOption[]
+  /** The policy the notes state with a new budget or deadline ("must hold" = hard); absent on older changes. */
+  mode?: 'hard' | 'soft' | null
 }
 
 export interface ChangeQuestion {
@@ -113,6 +115,9 @@ export interface PlanOverrides {
   hoursPerWeek?: Record<string, number>
   addMembers?: AddedMember[]
   removeMembers?: string[]
+  /** The policy the notes state with the chosen budget / deadline (sent to the re-plan as is). */
+  budgetMode?: 'hard' | 'soft'
+  deadlineMode?: 'hard' | 'soft'
 }
 
 export interface ChangeRequest {
@@ -182,8 +187,12 @@ export interface ChangeComparison {
   rows: CompareRow[]
 }
 
-/** A priced way to keep the target date after a re-plan slips (C1/H11 `result.remedies[]`). */
-export type KeepDateRemedyId = 'specialist' | 'overtime' | 'move_deadline'
+/**
+ * A priced way to keep the target date after a re-plan slips (C1/H11 `result.remedies[]`), or to
+ * get a plan at all; `combined` (round 3, R6) changes several inputs together when no single one
+ * is enough (absent on older servers).
+ */
+export type KeepDateRemedyId = 'specialist' | 'overtime' | 'move_deadline' | 'combined'
 
 export interface KeepDateRemedy {
   id: KeepDateRemedyId
@@ -192,6 +201,8 @@ export interface KeepDateRemedy {
   /** Extra cost versus the re-planned plan, in cents. */
   costCents: number | null
   completionDate: string | null
+  /** What the combined option changes, e.g. `{kind: 'deadline', label: 'Move go-live to Jun 24, 2027'}`. */
+  changes?: { kind: 'deadline' | 'budget' | 'specialist' | 'capacity'; label: string }[]
 }
 
 /** What the re-plan says about the date: the date it tried to keep and how far it slipped. */

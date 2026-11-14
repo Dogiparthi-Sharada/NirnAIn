@@ -14,7 +14,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { errorMessage } from '@/lib/api'
 import { isSolved, useChanges, usePlanVersions, useRun, type ChangeRequest, type PlanVersion } from '@/lib/changes'
-import { formatDate, formatMoney } from '@/lib/format'
+import { formatDate, formatDateTime, formatMoney } from '@/lib/format'
 import { useProject } from '@/lib/queries'
 import { stepPath } from '@/lib/steps'
 import { ChangeImpact } from './changes/ChangeImpact'
@@ -94,8 +94,9 @@ export default function ChangesVersions() {
 }
 
 /**
- * `#chg-main`: report a change, the version list, and the active change. The active change
- * is the one just recorded, else the newest still-open one; after "Keep Plan vN" none is.
+ * `#chg-main`: report a change, the version list, the open changes and the active change. The
+ * active change is the one just recorded or picked, else the newest still-open one; after
+ * "Keep Plan vN" none is. Every open change stays reachable from the list (QA NEW-7f).
  */
 function ChangeFlow({ projectId, orgId, versions, onToast }: { projectId: string; orgId: string | null; versions: PlanVersion[]; onToast: (message: string) => void }) {
   const changes = useChanges(projectId)
@@ -104,7 +105,8 @@ function ChangeFlow({ projectId, orgId, versions, onToast }: { projectId: string
   const [localRuns, setLocalRuns] = useState<Record<string, string>>({})
   const current = versions[versions.length - 1]
   const all = changes.data ?? []
-  const active = activeId === null ? all.find((change) => OPEN.includes(change.status)) : all.find((change) => change.id === activeId)
+  const open = all.filter((change) => OPEN.includes(change.status))
+  const active = activeId === null ? open[0] : all.find((change) => change.id === activeId)
   const runId = active && active.status !== 'rejected' ? (active.proposedRunId ?? localRuns[active.id] ?? null) : null
   const run = useRun(projectId, runId)
   const draft = Boolean(active && OPEN.includes(active.status) && isSolved(run.data?.status))
@@ -124,6 +126,7 @@ function ChangeFlow({ projectId, orgId, versions, onToast }: { projectId: string
           </div>
         </div>
       </div>
+      <OpenChanges changes={open} activeId={active?.id ?? null} onOpen={setActiveId} />
       {changes.isError && (
         <div className="alert bad mt" role="alert">
           We couldn’t load the changes recorded for this project. {errorMessage(changes.error)}{' '}
@@ -152,6 +155,54 @@ function ChangeFlow({ projectId, orgId, versions, onToast }: { projectId: string
           }}
         />
       )}
+    </div>
+  )
+}
+
+const SOURCE_LABELS: Record<ChangeRequest['source'], string> = {
+  notes: 'Meeting notes',
+  edits: 'Edited inputs',
+  progress: 'Progress update',
+}
+const STATUS_LABELS: Partial<Record<ChangeRequest['status'], string>> = {
+  ready: 'not re-planned yet',
+  replanning: 're-planning',
+  proposed: 're-planned, waiting for your decision',
+}
+
+/**
+ * The changes still open (recorded, re-planning or re-planned but not decided), newest first.
+ * Shown when there is one besides the change on screen, so each can be opened and decided.
+ */
+function OpenChanges({ changes, activeId, onOpen }: { changes: ChangeRequest[]; activeId: string | null; onOpen: (id: string) => void }) {
+  if (!changes.some((change) => change.id !== activeId)) return null
+  return (
+    <div className="card mt" id="chg-open">
+      <h3>Open changes ({changes.length})</h3>
+      <p className="small muted" style={{ marginTop: 0 }}>
+        Each stays open until you approve its plan or keep the current one. Open one to see its impact.
+      </p>
+      {changes.map((change) => {
+        const found = change.impact?.changes.length ?? 0
+        const shown = change.id === activeId
+        return (
+          <div className="ver row between" key={change.id}>
+            <div>
+              <b>{SOURCE_LABELS[change.source]}</b> &middot; {formatDateTime(change.createdAt)}
+              <div className="small muted">
+                {found} change{found === 1 ? '' : 's'} &middot; {STATUS_LABELS[change.status] ?? change.status}
+              </div>
+            </div>
+            {shown ? (
+              <Chip kind="stated">Shown below</Chip>
+            ) : (
+              <button className="btn sm sec" type="button" onClick={() => onOpen(change.id)}>
+                Open
+              </button>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

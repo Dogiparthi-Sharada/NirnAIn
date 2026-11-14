@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from app.ai.transcripts import clean_transcript
+
 DAYS_PER_WEEK = 5
 DAYS_PER_MONTH = 21
 
@@ -34,27 +36,23 @@ _NUMBER = (
     r"\d+(?:\.\d+)?|a couple of|couple of|a few|an?|one|two|three|four|five|six|seven|eight"
     r"|nine|ten|eleven|twelve"
 )
-_MONTHS = {
-    "jan": 1,
-    "feb": 2,
-    "mar": 3,
-    "apr": 4,
-    "may": 5,
-    "jun": 6,
-    "jul": 7,
-    "aug": 8,
-    "sep": 9,
-    "oct": 10,
-    "nov": 11,
-    "dec": 12,
-}
-_MONTH = (
+_MONTH_KEYS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+_MONTHS = {key: number for number, key in enumerate(_MONTH_KEYS, start=1)}
+# Month names (also read by app.changes.statements).
+MONTH = (
     r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?"
     r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
 )
 
 _SPLIT = re.compile(r"(?<=[.!?;])\s+|\n+")
-_SPEAKER = re.compile(r"^(?P<speaker>[A-Z][\w .'&()/-]{0,48}?)\s*:\s+(?P<body>\S.*)$", re.S)
+# "Robert:", "Jane Doe, project manager:", "Robert Walsh (VP Eng):". A speaker's name is up to
+# four capitalised words without digits, so "W04 also completed on January 15:" is not one.
+_NAME_WORD = r"[A-Z][A-Za-z'\u2019.-]*"
+_SPEAKER = re.compile(
+    rf"^(?P<speaker>{_NAME_WORD}(?:\s+{_NAME_WORD}){{0,3}}(?:\s*\([^()\d]{{1,40}}\))?"
+    r"(?:,\s*[A-Za-z][A-Za-z .'&/-]{0,40})?)\s*:\s+(?P<body>\S.*)$",
+    re.S,
+)
 _BULLET = re.compile(r"^[\s\u2022\u2013\u00b7*>-]+")
 _MONEY = re.compile(
     r"(?:\$|\bUSD\s?)\s?(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
@@ -77,10 +75,10 @@ _UNITS = {
 }
 _ISO_DATE = re.compile(r"\b(?P<y>\d{4})-(?P<m>\d{2})-(?P<d>\d{2})\b")
 _MONTH_DAY_YEAR = re.compile(
-    rf"\b(?P<mon>{_MONTH})\.?\s+(?P<d>\d{{1,2}})(?:st|nd|rd|th)?\b(?:,?\s+(?P<y>\d{{4}}))?", re.I
+    rf"\b(?P<mon>{MONTH})\.?\s+(?P<d>\d{{1,2}})(?:st|nd|rd|th)?\b(?:,?\s+(?P<y>\d{{4}}))?", re.I
 )
 _DAY_MONTH_YEAR = re.compile(
-    rf"\b(?P<d>\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?(?P<mon>{_MONTH})\b\.?(?:,?\s+(?P<y>\d{{4}}))?",
+    rf"\b(?P<d>\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?(?P<mon>{MONTH})\b\.?(?:,?\s+(?P<y>\d{{4}}))?",
     re.I,
 )
 _SPAN = re.compile(
@@ -88,8 +86,13 @@ _SPAN = re.compile(
     r"(?P<unit>weeks?|wks?|(?:working |business |work )?days?|months?)\b",
     re.I,
 )
-_HOURS = re.compile(
-    rf"\b(?P<count>{_NUMBER})\s*(?:hours?|hrs?|h)\b(?:\s*(?:a|per|/|each)\s*(?:week|wk))?", re.I
+# "16 hours a week", "32 project hours per week", "20h/wk": hours someone gives each week.
+# Increments ("16 more hours") and totals of work ("80 actual hours") are not weekly hours.
+_WEEKLY_HOURS = re.compile(
+    rf"\b(?P<count>{_NUMBER})\s*(?:(?!more\b|extra\b|additional\b|fewer\b|less\b|actual\b"
+    r"|total\b|remaining\b|overtime\b)[a-z-]+\s+){0,2}?(?:hours?|hrs?|h)\b"
+    r"\s*(?:(?:a|per|/|each|every)\s*(?:week|wk)\b|weekly\b)",
+    re.I,
 )
 _TOKEN = re.compile(r"[a-z0-9]+")
 _STOP = frozenset(
@@ -140,9 +143,13 @@ class Sentence:
 
 
 def sentences(text: str) -> list[Sentence]:
-    """Split notes into sentences (and lines), dropping bullets and keeping text verbatim."""
+    """Split notes into sentences (and lines), dropping bullets and keeping text verbatim.
+
+    Pasted captions (WebVTT / SRT) are first reduced to their spoken lines, with `<v Name>`
+    voice tags as "Name: " speakers.
+    """
     out: list[Sentence] = []
-    for raw in _SPLIT.split(text):
+    for raw in _SPLIT.split(clean_transcript(text)):
         line = _BULLET.sub("", raw).strip()
         if not line:
             continue
@@ -164,9 +171,18 @@ def _number(raw: str) -> float | None:
         return None
 
 
-def money_cents(text: str) -> list[int]:
-    """Money amounts in a sentence as integer cents, in order of appearance."""
-    found: list[tuple[int, int]] = []
+@dataclass(frozen=True, slots=True)
+class Amount:
+    """A money amount in a sentence: where it is (`start`, `end`) and its value in cents."""
+
+    start: int
+    end: int
+    cents: int
+
+
+def amounts(text: str) -> list[Amount]:
+    """Money amounts in a sentence, in order of appearance (zero and repeats dropped)."""
+    found: list[Amount] = []
     for pattern in (_MONEY, _MONEY_WORDS):
         for match in pattern.finditer(text):
             try:
@@ -175,37 +191,54 @@ def money_cents(text: str) -> list[int]:
                 continue
             unit = (match["unit"] or "").lower()
             value *= _UNITS.get(unit, 1)
-            found.append((match.start(), int(value * 100)))
-    found.sort()
-    seen: list[int] = []
-    for _, cents in found:
-        if cents > 0 and cents not in seen:
-            seen.append(cents)
-    return seen
+            found.append(Amount(match.start(), match.end(), int(value * 100)))
+    found.sort(key=lambda amount: amount.start)
+    out: list[Amount] = []
+    for amount in found:
+        if amount.cents > 0 and all(kept.cents != amount.cents for kept in out):
+            out.append(amount)
+    return out
 
 
-def dates(text: str, default_year: int) -> list[date]:
-    """Calendar dates in a sentence. A date without a year takes `default_year`."""
-    found: list[tuple[int, date]] = []
+@dataclass(frozen=True, slots=True)
+class DateSpan:
+    """A calendar date in a sentence and where it is (`start`, `end`)."""
+
+    start: int
+    end: int
+    value: date
+
+
+def date_spans(text: str, default_year: int) -> list[DateSpan]:
+    """Calendar dates in a sentence, in order (repeats dropped). A date without a year
+    takes `default_year`."""
+    found: list[DateSpan] = []
     for match in _ISO_DATE.finditer(text):
         try:
-            found.append((match.start(), date(int(match["y"]), int(match["m"]), int(match["d"]))))
+            value = date(int(match["y"]), int(match["m"]), int(match["d"]))
         except ValueError:
             continue
+        found.append(DateSpan(match.start(), match.end(), value))
     for pattern in (_MONTH_DAY_YEAR, _DAY_MONTH_YEAR):
         for match in pattern.finditer(text):
             month = _MONTHS[match["mon"][:3].lower()]
             year = int(match["y"]) if match["y"] else default_year
             try:
-                found.append((match.start(), date(year, month, int(match["d"]))))
+                value = date(year, month, int(match["d"]))
             except ValueError:
                 continue
-    found.sort()
-    out: list[date] = []
-    for _, found_date in found:
-        if found_date not in out:
-            out.append(found_date)
+            found.append(DateSpan(match.start(), match.end(), value))
+    found.sort(key=lambda span: span.start)
+    out: list[DateSpan] = []
+    for span in found:
+        if all(kept.value != span.value for kept in out):
+            out.append(span)
     return out
+
+
+def dates(text: str, default_year: int) -> list[date]:
+    """Calendar dates in a sentence. A date without a year takes `default_year`."""
+    return [span.value for span in date_spans(text, default_year)]
 
 
 def spans_days(text: str) -> list[int]:
@@ -226,13 +259,14 @@ def spans_days(text: str) -> list[int]:
     return out
 
 
-def hours(text: str) -> list[float]:
-    """Hour figures ("20 hours a week", "16h") between 0 and 80."""
-    out: list[float] = []
-    for match in _HOURS.finditer(text):
+def weekly_hours(text: str) -> list[tuple[int, float]]:
+    """Hours a week ("20 hours a week", "32 project hours per week", "16h/wk") between 0
+    and 80, each with where it starts. Other hour figures (a task's 80 hours) don't count."""
+    out: list[tuple[int, float]] = []
+    for match in _WEEKLY_HOURS.finditer(text):
         number = _number(match["count"])
         if number is not None and 0 <= number <= 80:
-            out.append(number)
+            out.append((match.start(), number))
     return out
 
 

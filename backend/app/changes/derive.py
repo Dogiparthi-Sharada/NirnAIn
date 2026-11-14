@@ -3,7 +3,8 @@
 `from_edits` turns the Edit inputs / Progress update tabs into changes as they are.
 `derive_overrides` maps the changes plus the answers to the `overrides` body of C1's
 optimization run (budgetTotalCents, mustFinishBy, durationDays, hoursPerWeek, addMembers,
-removeMembers); it returns None until every question is answered, which is what keeps
+removeMembers, and budgetMode / deadlineMode when the notes state one with the chosen value);
+it returns None until every question is answered, which is what keeps
 "Re-plan" locked.
 `build_impact` assembles the `impact` JSON stored on the change request.
 """
@@ -24,6 +25,8 @@ from app.domain.changes import (
     ChangeAffects,
     ChangeEdits,
     ChangeImpact,
+    ChangeKind,
+    ChangeMode,
     ChangeSource,
     DetectedChange,
     PlanOverrides,
@@ -120,6 +123,9 @@ def derive_overrides(impact: ChangeImpact, answers: dict[str, str]) -> PlanOverr
         budget = int(answers["budget"])
     if answers.get("deadline", KEEP) != KEEP:
         deadline = date.fromisoformat(answers["deadline"])
+    # The policy stated with the chosen value ("$200,000 hard budget") goes with it.
+    budget_mode = _stated_mode(impact.changes, "budget", answers.get("budget"))
+    deadline_mode = _stated_mode(impact.changes, "deadline", answers.get("deadline"))
 
     for change in impact.changes:
         picked = _resolve(change, answers)
@@ -127,9 +133,9 @@ def derive_overrides(impact: ChangeImpact, answers: dict[str, str]) -> PlanOverr
             continue
         target, to = picked
         if change.kind == "budget" and "budget" not in asked and isinstance(to, int | float):
-            budget = int(to)
+            budget, budget_mode = int(to), change.mode
         elif change.kind == "deadline" and "deadline" not in asked and isinstance(to, str):
-            deadline = date.fromisoformat(to)
+            deadline, deadline_mode = date.fromisoformat(to), change.mode
         elif change.kind == "duration" and target is not None and isinstance(to, int | float):
             durations[str(target)] = int(to)
         elif change.kind == "capacity" and target is not None and isinstance(to, int | float):
@@ -142,7 +148,23 @@ def derive_overrides(impact: ChangeImpact, answers: dict[str, str]) -> PlanOverr
         hours_per_week=hours or None,
         add_members=added or None,
         remove_members=removed or None,
+        budget_mode=budget_mode if budget is not None else None,
+        deadline_mode=deadline_mode if deadline is not None else None,
     )
+
+
+def _stated_mode(
+    changes: list[DetectedChange], kind: ChangeKind, answer: str | None
+) -> ChangeMode | None:
+    """The policy the notes state with the value the answer picked (None if they don't)."""
+    if answer is None or answer == KEEP:
+        return None
+    stated = [
+        change.mode
+        for change in changes
+        if change.kind == kind and str(change.to) == answer and change.mode is not None
+    ]
+    return stated[-1] if stated else None
 
 
 def _resolve(

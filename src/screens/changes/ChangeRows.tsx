@@ -48,6 +48,7 @@ export function ChangeRow({
         {showValues && (
           <div className="ba">
             <b>{changeValue(change, change.from)}</b> &rarr; <b>{changeValue(change, change.to)}</b>
+            {change.mode && <> &middot; {change.mode === 'hard' ? 'must hold' : 'can flex'}, as the notes say</>}
           </div>
         )}
         {change.note && <div className="ba">{change.note}</div>}

@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from app.ai.llm import LLM
-from app.changes.compare import build_comparison
+from app.changes.compare import build_comparison, schedule_dates
 from app.changes.context import NodeRow, PlanRow, RunMeta
 from app.changes.derive import InvalidEditError, build_impact, derive_overrides, from_edits
 from app.changes.detect import detect
@@ -380,3 +380,37 @@ def test_comparison_shows_what_moved_and_why() -> None:
     assert rows["1.1.2"].before is not None
     assert rows["1.1.2"].before.start == date(2025, 2, 3)
     assert comparison.base.budget_cents == 37_500_000
+
+
+def test_comparison_uses_the_days_each_plan_schedules() -> None:
+    """QA pack CHANGE-009: ETL moves one day (Jan 11 → Jan 12), not a whole week."""
+    snapshot = {"start_date": "2027-01-04", "constraints": {"working_days_per_week": 5}}
+
+    def meta(ends: dict[uuid.UUID, str]) -> RunMeta:
+        schedule = schedule_dates(
+            [
+                {"wbsNodeId": str(node), "start": "2027-01-04", "end": end}
+                for node, end in ends.items()
+            ]
+            + [{"wbsNodeId": "not-a-uuid", "start": "2027-01-04", "end": "2027-01-04"}]
+        )
+        return RunMeta(
+            uuid.uuid4(), uuid.uuid4(), SolverStatus.OPTIMAL, 1, 1, None, snapshot, schedule
+        )
+
+    base = meta({SAP: "2027-01-05", ETL: "2027-01-11"})
+    proposed = meta({SAP: "2027-01-05", ETL: "2027-01-12"})
+    rows = [PlanRow(SAP, MARK, None, 0, 0), PlanRow(ETL, MARK, None, 1, 1)]
+    nodes = [
+        NodeRow(SAP, None, 2, "1.1", "SAP integration setup"),
+        NodeRow(ETL, None, 2, "1.2", "ETL"),
+    ]
+    comparison = build_comparison(base, rows, proposed, rows, nodes, {MARK: "Mark Chen"}, None)
+    by_code = {row.code: row for row in comparison.rows}
+    assert by_code["1.1"].before is not None
+    assert (by_code["1.1"].before.start, by_code["1.1"].before.end) == (
+        date(2027, 1, 4),
+        date(2027, 1, 5),
+    )
+    assert by_code["1.1"].shift_days == 0
+    assert by_code["1.2"].shift_days == 1

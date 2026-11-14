@@ -20,7 +20,13 @@ from typing import Literal
 
 from app.changes import parsing
 from app.changes.context import ChangeContext
-from app.domain.changes import ChangeQuestion, ChangeSource, DetectedChange, QuestionOption
+from app.domain.changes import (
+    ChangeMode,
+    ChangeQuestion,
+    ChangeSource,
+    DetectedChange,
+    QuestionOption,
+)
 
 # Option values with a fixed meaning; other values are amounts, ISO dates or target ids.
 KEEP = "keep"
@@ -28,6 +34,8 @@ NEW = "new"
 NONE = "none"
 # Hours a week offered for a newcomer from the notes who comes without hours.
 HOURS_CHOICES = (16, 24, 40)
+# How an option names the policy the notes state with its value.
+MODE_LABELS: dict[ChangeMode, str] = {"hard": " · must hold", "soft": " · can flex"}
 # Hourly rates (cents) offered for a contractor from the notes when the project has none.
 RATE_CHOICES = (12_500, 15_000, 17_500, 20_000)
 
@@ -151,6 +159,8 @@ def _group_question(
 ) -> ChangeQuestion:
     """One question for all budget (or deadline) values the notes give, plus "keep"."""
     values: list[str] = parsing.unique(str(change.to) for change in changes)
+    # A value the notes give with a policy says so: "Use Apr 30, 2027 · must hold".
+    modes = {str(change.to): MODE_LABELS[change.mode] for change in changes if change.mode}
     noun = "budget" if kind == "budget" else "deadline"
     if current is None:
         text = f"The notes give a {noun}. Which should the new plan use?"
@@ -168,7 +178,11 @@ def _group_question(
         tier="blocking",
         text=text,
         options=[
-            QuestionOption(value=value, label=f"Use {format_value(value)}") for value in values
+            QuestionOption(
+                value=value,
+                label=f"Use {format_value(value)}{modes.get(value, '')}",
+            )
+            for value in values
         ]
         + [QuestionOption(value=KEEP, label=keep_label)],
     )

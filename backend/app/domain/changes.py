@@ -26,6 +26,8 @@ QuestionKind = Literal["budget", "deadline", "duration", "capacity", "target", "
 ChangeAction = Literal["add", "remove"]
 # Employees are people already in the company; contractors are hired in at their own rate.
 WorkerType = Literal["employee", "contractor"]
+# A budget / deadline policy the notes state: hard = must hold, soft = can flex.
+ChangeMode = Literal["hard", "soft"]
 
 MAX_TEXT = 50_000
 MAX_EDITS = 500
@@ -114,7 +116,8 @@ class AddedMember(NewMember):
 class DetectedChange(CamelModel):
     """One change. Values: budget = cents, deadline = ISO date, duration = working days,
     capacity = hours per week (0 = leaves the project), scope = the requirement text,
-    team = hours per week of who joins (`member`; null until the notes say) or leaves."""
+    team = hours per week of who joins (`member`; null until the notes say) or leaves.
+    `mode` is the policy the notes state for a new budget or deadline ("must hold" = hard)."""
 
     id: str
     kind: ChangeKind
@@ -129,6 +132,7 @@ class DetectedChange(CamelModel):
     confidence: float = Field(default=1.0, ge=0, le=1)
     note: str | None = None
     candidates: list[TargetOption] = Field(default_factory=list)
+    mode: ChangeMode | None = None
 
 
 class QuestionOption(CamelModel):
@@ -194,12 +198,17 @@ class PlanOverrides(CamelModel):
     hours_per_week: dict[str, float] | None = Field(default=None, exclude_if=_omit_none)
     add_members: list[AddedMember] | None = Field(default=None, exclude_if=_omit_none)
     remove_members: list[uuid.UUID] | None = Field(default=None, exclude_if=_omit_none)
+    # The policy the notes state with the new value (omitted = the project's own policy).
+    budget_mode: ChangeMode | None = Field(default=None, exclude_if=_omit_none)
+    deadline_mode: ChangeMode | None = Field(default=None, exclude_if=_omit_none)
 
     @property
     def empty(self) -> bool:
         return not (
             self.budget_total_cents is not None
             or self.must_finish_by is not None
+            or self.budget_mode is not None
+            or self.deadline_mode is not None
             or self.duration_days
             or self.hours_per_week
             or self.add_members
