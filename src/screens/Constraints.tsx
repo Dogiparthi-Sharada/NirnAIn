@@ -68,13 +68,14 @@ export default function Constraints() {
   else if (wbsQuery.isError) effort = { kind: 'error', message: errorMessage(wbsQuery.error), retry: () => void wbsQuery.refetch() }
   else effort = { kind: 'ready', packages: workPackages, openEstimates, weeks: totalWeeks(nodes) }
 
+  const serverMissing = sheetQuery.data?.missing ?? []
   const blockers = gateBlockers({
     constraints,
     team: teamQuery.data,
     workPackages: wbsQuery.isSuccess ? workPackages : undefined,
     openEstimates: wbsQuery.isSuccess ? openEstimates : undefined,
     skillGaps: gaps,
-    serverMissing: sheetQuery.data?.missing ?? [],
+    serverMissing,
     serverBlocking: sheetQuery.data?.blocking ?? [],
   })
 
@@ -139,7 +140,15 @@ export default function Constraints() {
         <div className="g2">
           {constraints && policy ? (
             <>
-              <QuestionsPanel projectId={projectId} constraints={constraints} skillGaps={gaps} effort={effort} locked={locked} onSave={save} />
+              <QuestionsPanel
+                projectId={projectId}
+                constraints={constraints}
+                skillGaps={gaps}
+                workPackageGap={gaps.length === 0 && serverMissing.includes('specialist')}
+                effort={effort}
+                locked={locked}
+                onSave={save}
+              />
               <BudgetCard
                 constraints={constraints}
                 policy={policy}

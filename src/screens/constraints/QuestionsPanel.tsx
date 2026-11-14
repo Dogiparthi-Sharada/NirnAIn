@@ -184,11 +184,16 @@ function Question({ id, tier, title, why, children }: { id: string; tier: 'high'
   )
 }
 
-/** The questions card. `onSave` handles the plan lock; `skillGaps` are required skills nobody has. */
-export function QuestionsPanel({ projectId, constraints, skillGaps, effort, locked, onSave }: {
+/**
+ * The questions card. `onSave` handles the plan lock; `skillGaps` are required skills on the
+ * project's list that nobody has; `workPackageGap` is the server noticing a work package that
+ * needs a skill nobody on the team has (outside the list), which also makes the question count.
+ */
+export function QuestionsPanel({ projectId, constraints, skillGaps, workPackageGap, effort, locked, onSave }: {
   projectId: string
   constraints: ConstraintInputs
   skillGaps: string[]
+  workPackageGap: boolean
   effort: EffortState
   locked: boolean
   onSave: (changes: ConstraintChanges) => void
@@ -199,6 +204,7 @@ export function QuestionsPanel({ projectId, constraints, skillGaps, effort, lock
   const specialistTitle = specialistQuestion(skillGaps)
   const deadlineTitle = deadlineQuestion(deadlineDate)
   const gapNames = skillGaps.join(', ')
+  const specialistMatters = skillGaps.length > 0 || workPackageGap
   const packages = effort.kind === 'ready' && effort.packages > 0 ? `${effort.packages} ` : ''
 
   return (
@@ -220,13 +226,19 @@ export function QuestionsPanel({ projectId, constraints, skillGaps, effort, lock
 
       <Question
         id={SPECIALIST_QUESTION_ID}
-        tier={skillGaps.length > 0 ? 'high' : 'low'}
+        tier={specialistMatters ? 'high' : 'low'}
         title={specialistTitle}
         why={
-          skillGaps.length > 0 ? (
+          specialistMatters ? (
             <>
-              no one on the team has {gapNames}, which {skillGaps.length === 1 ? 'is a required skill' : 'are required skills'}. Yes &rarr; an
-              outside specialist may do that work, at a cost. No &rarr; the team has to cover it, which can move go-live.
+              {skillGaps.length > 0 ? (
+                <>
+                  no one on the team has {gapNames}, which {skillGaps.length === 1 ? 'is a required skill' : 'are required skills'}.
+                </>
+              ) : (
+                'some work packages need a skill no one on the team has.'
+              )}{' '}
+              Yes &rarr; an outside specialist may do that work, at a cost. No &rarr; the team has to cover it, which can move go-live.
             </>
           ) : (
             <>the team covers every required skill today, so this only matters if that changes. Yes &rarr; an outside specialist may be booked for work nobody on the team can do.</>
