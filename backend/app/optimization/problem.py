@@ -1,0 +1,136 @@
+"""Pre-computed numbers behind the CP-SAT model and its explanations.
+
+`prepare` turns a frozen planning input into what the model needs as plain
+integers: who may take each task, how long it takes with each of them and
+the load it puts on them per day (`load.task_mode`: part-timers stretch
+tasks), the labor cost of each choice, daily capacities, other projects'
+bookings, the horizon and the deadline / milestone indices. The main model
+and the explanation model (`builder.py`) and the conflict texts
+(`conflicts.py`) all read the same `Problem`.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date
+
+from app.optimization.baseline import baseline_plan, task_dependencies
+from app.optimization.calendar import workday_date, workdays_through
+from app.optimization.load import (
+    Block,
+    Mode,
+    allocation_blocks,
+    daily_capacity_tenths,
+    task_mode,
+)
+from app.optimization.model import (
+    Dependency,
+    Plan,
+    PlanningInput,
+    Resource,
+    Task,
+    build_resources,
+    qualified,
+)
+
+
+@dataclass(slots=True)
+class Problem:
+    """Pre-computed numbers shared by the main and the explanation model."""
+
+    inp: PlanningInput
+    resources: tuple[Resource, ...]
+    baseline: Plan
+    tasks: dict[str, Task]
+    dependencies: list[Dependency]
+    horizon: int
+    capacity: dict[str, int]  # employee id -> tenths of an hour per working day
+    blocks: dict[str, list[Block]]
+    candidates: dict[str, list[Resource]]  # everyone who may ever take the task
+    modes: dict[tuple[str, str], Mode]  # (task id, resource id) -> duration and daily load
+    cost: dict[tuple[str, str], int]  # (task id, resource id) -> cents
+    deadline: int | None  # max exclusive end index
+    milestone_ends: dict[str, int] = field(default_factory=dict)
+
+    def finish_date(self, end: int) -> date:
+        """Calendar date of the last working day before the exclusive end index `end`."""
+        return workday_date(
+            self.inp.start_date, max(end - 1, 0), self.inp.constraints.working_days_per_week
+        )
+
+    def allowed(self, task: Task) -> list[Resource]:
+        """Candidates the main model may assign (only qualified ones when skills must hold)."""
+        if self.inp.constraints.skill_mode == "soft":
+            return self.candidates[task.id]
+        return [resource for resource in self.candidates[task.id] if qualified(resource, task)]
+
+
+def prepare(inp: PlanningInput) -> Problem:
+    """Everything the model needs from `inp`, as integers in working days and cents."""
+    constraints = inp.constraints
+    per_week = constraints.working_days_per_week
+    resources = build_resources(inp)
+    blocks = allocation_blocks(inp)
+    links = task_dependencies(inp)
+    capacity = {
+        resource.id: daily_capacity_tenths(resource.weekly_capacity_hours, per_week)
+        for resource in resources
+        if resource.kind == "employee"
+    }
+    # Every employee may be considered (skills are checked by the model); contractor
+    # profiles only for the tasks whose skills they were created for.
+    candidates = {
+        task.id: [
+            resource
+            for resource in resources
+            if resource.kind == "employee" or qualified(resource, task)
+        ]
+        for task in inp.tasks
+    }
+    # Contractor profiles have no capacity entry, so they keep the WBS duration.
+    modes = {
+        (task.id, resource.id): task_mode(task, capacity.get(resource.id))
+        for task in inp.tasks
+        for resource in candidates[task.id]
+    }
+    # With each task at its longest candidate duration a serial schedule always fits.
+    longest = sum(
+        max(
+            (modes[task.id, resource.id].duration_days for resource in candidates[task.id]),
+            default=task.duration_days,
+        )
+        for task in inp.tasks
+    )
+    tasks = {task.id: task for task in inp.tasks}
+    return Problem(
+        inp=inp,
+        resources=resources,
+        baseline=baseline_plan(inp),
+        tasks=tasks,
+        dependencies=links,
+        horizon=(
+            longest
+            + sum(abs(link.lag_days) for link in links)
+            + max((block.hi for booked in blocks.values() for block in booked), default=0)
+            + per_week
+        ),
+        capacity=capacity,
+        blocks=blocks,
+        candidates=candidates,
+        modes=modes,
+        cost={
+            (task.id, resource.id): round(task.hours * resource.rate_cents)
+            for task in inp.tasks
+            for resource in candidates[task.id]
+        },
+        deadline=(
+            workdays_through(inp.start_date, constraints.must_finish_by, per_week)
+            if constraints.must_finish_by is not None
+            else None
+        ),
+        milestone_ends={
+            milestone.id: workdays_through(inp.start_date, milestone.due_date, per_week)
+            for milestone in inp.milestones
+            if any(task_id in tasks for task_id in milestone.task_ids)
+        },
+    )

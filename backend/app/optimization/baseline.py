@@ -1,12 +1,15 @@
 """Baseline ("before optimization") plan, plan.md §6.5.
 
 Forward pass: every task starts as early as its dependencies allow, keeps its
-current owner, and capacity is ignored (no levelling). Because it ignores
-resources it is also a lower bound on every task's start in any feasible
-plan, which the solver relies on.
+current owner at its WBS duration, and capacity is ignored (no levelling).
+The infeasibility explanations use it as the earliest the dependency chain
+can finish with everyone at the WBS durations ("even with unlimited
+people"); the solver charges for starting later than it.
 """
 
 from __future__ import annotations
+
+from collections.abc import Mapping
 
 from app.optimization.model import Dependency, Plan, PlanningInput, ScheduledTask
 
@@ -39,18 +42,27 @@ def task_dependencies(inp: PlanningInput) -> list[Dependency]:
     ]
 
 
-def earliest_starts(inp: PlanningInput) -> dict[str, int]:
-    """Longest-path earliest starts (Bellman-Ford style, so cycles can't hang it)."""
-    duration = {t.id: t.duration_days for t in inp.tasks}
-    deps = task_dependencies(inp)
+def earliest_starts(
+    inp: PlanningInput, durations: Mapping[str, int] | None = None
+) -> dict[str, int]:
+    """Longest-path earliest starts (Bellman-Ford style, so cycles can't hang it).
+
+    `durations` (task id -> working days) overrides the WBS durations, e.g.
+    with each task at its fastest candidate's duration.
+    """
+    duration = {task.id: task.duration_days for task in inp.tasks}
+    duration.update(durations or {})
+    links = task_dependencies(inp)
     start = dict.fromkeys(duration, 0)
     for _ in range(len(duration)):
         changed = False
-        for d in deps:
-            w = dependency_offset(d, duration[d.predecessor_id], duration[d.successor_id])
-            candidate = start[d.predecessor_id] + w
-            if candidate > start[d.successor_id]:
-                start[d.successor_id] = candidate
+        for link in links:
+            offset = dependency_offset(
+                link, duration[link.predecessor_id], duration[link.successor_id]
+            )
+            candidate = start[link.predecessor_id] + offset
+            if candidate > start[link.successor_id]:
+                start[link.successor_id] = candidate
                 changed = True
         if not changed:
             break

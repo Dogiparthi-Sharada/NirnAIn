@@ -8,8 +8,13 @@ returns.
     model.py      planning input / output dataclasses + snapshot (de)serialisation
     calendar.py   working-day <-> date arithmetic
     baseline.py   "before" plan: forward pass with current owners, no levelling
-    solver.py     CP-SAT model, status mapping, infeasibility explanation
+    load.py       daily load arithmetic; how long a task takes with whom (part-timers stretch it)
+    problem.py    numbers pre-computed for the model (candidates, durations, costs, horizon)
+    builder.py    CP-SAT variables and constraints (main and explanation model)
+    conflicts.py  plain-English texts of conflicting hard constraints
+    solver.py     formulation docs, solving, status mapping, infeasibility explanation
     explain.py    UI payload (kpis, reassignments, scheduleChanges, utilization)
+    report_context.py  lookups behind the payload (dates, hours, load, binding links)
     run_summary.py  timeline rows and plain-number summary added to the payload
     overrides.py  per-run what-ifs (budget, deadline, durations, hours) and baseline owners
     remedies.py   priced ways out of an infeasible plan ("What it would take")

@@ -114,7 +114,7 @@ class Constraints:
     deadline_penalty_per_day: float = 500.0  # objective cost per working day late
     working_days_per_week: int = 5
     capacity_mode: ConstraintMode = "soft"
-    capacity_penalty: float = 100.0  # objective cost per hour/day of peak over-allocation
+    capacity_penalty: float = 100.0  # objective cost per hour of work above capacity (soft)
     skill_mode: ConstraintMode = "hard"
     allow_contractors: bool = True
     contractor_rate_cents: int | None = None

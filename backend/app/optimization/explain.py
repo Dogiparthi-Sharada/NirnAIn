@@ -6,9 +6,12 @@ plan; nothing here invents facts:
 * moved later and a predecessor moved too   -> "Dependency cascade from {pred}"
 * moved later behind the same assignee      -> "Waits for {name} to finish {task}"
 * moved later, person busy on other projects-> "{name} is committed to other projects"
+* same start, longer at a part-timer's hours -> "{name} at {h}h/week: {n} working days …"
 * taken off a person over 100% in baseline  -> "Over-allocation"
 * given to someone with the required skill  -> "Skill gap"
 * unchanged                                 -> omitted from reassignments, "—" delta
+
+`report_context.py` holds the lookups (dates, hours, load, binding links).
 """
 
 from __future__ import annotations
@@ -19,23 +22,14 @@ from datetime import date
 from typing import Any
 
 from app.optimization import formatting as fmt
-from app.optimization.baseline import dependency_offset, task_dependencies
-from app.optimization.calendar import week_index, workday_date
-from app.optimization.load import (
-    TENTHS,
-    allocation_blocks,
-    daily_capacity_tenths,
-    task_daily_tenths,
-)
 from app.optimization.model import (
-    Plan,
     PlanningInput,
-    Resource,
     RunStatus,
     SolveOutcome,
     Task,
     qualified,
 )
+from app.optimization.report_context import ReportContext, critical_chain, planned_days
 from app.optimization.run_summary import run_summary, timeline
 
 
@@ -84,121 +78,6 @@ class Report:
 
 
 # --------------------------------------------------------------------------- helpers
-class ReportContext:
-    """Lookups shared by every part of the report (tasks, resources, calendar, load)."""
-
-    def __init__(self, inp: PlanningInput, outcome: SolveOutcome, plan: Plan) -> None:
-        self.inp = inp
-        self.plan = plan
-        self.baseline = outcome.baseline
-        self.per_week = inp.constraints.working_days_per_week
-        self.tasks = {t.id: t for t in inp.tasks}
-        self.resources = {r.id: r for r in outcome.resources}
-        self.blocks = allocation_blocks(inp)
-        self.deps = task_dependencies(inp)
-
-    def date_of(self, index: int) -> date:
-        return workday_date(self.inp.start_date, index, self.per_week)
-
-    def week_of(self, index: int) -> int:
-        return week_index(self.inp.start_date, self.date_of(index))
-
-    def weeks(self, start: int, end: int) -> tuple[int, int]:
-        return self.week_of(start), self.week_of(max(end - 1, start))
-
-    def hours(self, plan: Plan, resource_id: str) -> float:
-        return sum(
-            self.tasks[s.task_id].hours for s in plan.tasks.values() if s.resource_id == resource_id
-        )
-
-    def other_hours(self, resource_id: str, span: int) -> float:
-        """Hours committed to other projects inside working days [0, span)."""
-        total = 0.0
-        for b in self.blocks.get(resource_id, []):
-            days = max(0, min(b.hi, span) - b.lo)
-            total += days * b.tenths / TENTHS
-        return total
-
-    def utilization(self, plan: Plan, res: Resource) -> int:
-        span = plan.makespan
-        if span <= 0:
-            return 0
-        available = res.weekly_capacity_hours * span / self.per_week
-        if available <= 0:
-            return 0
-        used = self.hours(plan, res.id) + self.other_hours(res.id, span)
-        pct = round(100 * used / available)
-        return min(pct, 100) if res.kind == "contractor" else pct
-
-    def over_allocated(self, plan: Plan, resource_id: str) -> bool:
-        res = self.resources.get(resource_id)
-        if res is None or res.kind != "employee":
-            return False
-        cap = daily_capacity_tenths(res.weekly_capacity_hours, self.per_week)
-        span = plan.makespan
-        load = [0] * span
-        for b in self.blocks.get(resource_id, []):
-            for d in range(b.lo, min(b.hi, span)):
-                load[d] += b.tenths
-        for s in plan.tasks.values():
-            if s.resource_id == resource_id:
-                demand = task_daily_tenths(self.tasks[s.task_id])
-                for d in range(s.start, s.end):
-                    load[d] += demand
-        return any(x > cap for x in load)
-
-    def name(self, resource_id: str | None) -> str:
-        if resource_id is None:
-            return "Unassigned"
-        res = self.resources.get(resource_id)
-        return res.name if res else "Unassigned"
-
-    def cost(self, plan: Plan) -> int:
-        return sum(
-            round(self.tasks[s.task_id].hours * self.resources[s.resource_id].rate_cents)
-            for s in plan.tasks.values()
-            if s.resource_id is not None and s.resource_id in self.resources
-        )
-
-    def tight_predecessors(self, plan: Plan, task_id: str) -> list[str]:
-        out = []
-        for d in self.deps:
-            if d.successor_id != task_id:
-                continue
-            pred, succ = self.tasks[d.predecessor_id], self.tasks[d.successor_id]
-            w = dependency_offset(d, pred.duration_days, succ.duration_days)
-            if plan.tasks[succ.id].start == plan.tasks[pred.id].start + w:
-                out.append(pred.id)
-        return out
-
-
-def critical_chain(ctx: ReportContext, plan: Plan) -> list[Task]:
-    """Walk back from the last task through binding dependencies or the same assignee."""
-    if not plan.tasks:
-        return []
-    current = max(plan.tasks.values(), key=lambda s: (s.end, -s.start)).task_id
-    chain = [current]
-    seen = {current}
-    while True:
-        s = plan.tasks[current]
-        preds = [p for p in ctx.tight_predecessors(plan, current) if p not in seen]
-        if not preds:
-            preds = [
-                o.task_id
-                for o in plan.tasks.values()
-                if o.task_id not in seen
-                and o.resource_id is not None
-                and o.resource_id == s.resource_id
-                and o.end == s.start
-            ]
-        if not preds or s.start == 0:
-            break
-        current = preds[0]
-        chain.append(current)
-        seen.add(current)
-    return [ctx.tasks[t] for t in reversed(chain)]
-
-
 def _chain_label(chain: list[Task]) -> str:
     names = [t.name for t in chain]
     if len(names) > 4:
@@ -226,28 +105,44 @@ def _reassignment_reason(ctx: ReportContext, task: Task, before: str | None, aft
     return "Balances workload"
 
 
+def _stretch_reason(ctx: ReportContext, task_id: str) -> str | None:
+    """Why a task that starts on time runs longer than its WBS duration, if it does."""
+    scheduled = ctx.plan.tasks[task_id]
+    days, wbs_days = planned_days(ctx.plan, task_id), ctx.tasks[task_id].duration_days
+    resource = ctx.resources.get(scheduled.resource_id) if scheduled.resource_id else None
+    if days <= wbs_days or resource is None:
+        return None
+    return (
+        f"{resource.name} at {resource.weekly_capacity_hours:g}h/week: "
+        f"{fmt.plural(days, 'working day')} instead of {wbs_days}"
+    )
+
+
 def _schedule_reason(ctx: ReportContext, task_id: str, shift: int) -> str:
+    plan, base = ctx.plan, ctx.baseline
+    scheduled = plan.tasks[task_id]
     if shift == 0:
-        return "No change needed"
+        return _stretch_reason(ctx, task_id) or "No change needed"
     if shift < 0:
         return "Starts earlier"
-    plan, base = ctx.plan, ctx.baseline
-    for pred in ctx.tight_predecessors(plan, task_id):
-        if plan.tasks[pred].start > base.tasks[pred].start:
-            return f"Dependency cascade from {ctx.tasks[pred].name}"
-    s = plan.tasks[task_id]
+    for predecessor in ctx.tight_predecessors(plan, task_id):
+        if plan.tasks[predecessor].start > base.tasks[predecessor].start:
+            return f"Dependency cascade from {ctx.tasks[predecessor].name}"
     blocker = next(
         (
-            o
-            for o in plan.tasks.values()
-            if o.task_id != task_id and o.resource_id == s.resource_id and o.end == s.start
+            other
+            for other in plan.tasks.values()
+            if other.task_id != task_id
+            and other.resource_id == scheduled.resource_id
+            and other.end == scheduled.start
         ),
         None,
     )
     if blocker is not None:
-        return f"Waits for {ctx.name(s.resource_id)} to finish {ctx.tasks[blocker.task_id].name}"
-    if s.resource_id in ctx.blocks:
-        return f"{ctx.name(s.resource_id)} is committed to other projects"
+        name = ctx.name(scheduled.resource_id)
+        return f"Waits for {name} to finish {ctx.tasks[blocker.task_id].name}"
+    if scheduled.resource_id in ctx.blocks:
+        return f"{ctx.name(scheduled.resource_id)} is committed to other projects"
     return "Resolves a resource conflict"
 
 
@@ -306,7 +201,79 @@ def _kpis(
     return kpis
 
 
+def _task_rows(
+    ctx: ReportContext,
+    task: Task,
+    reassignments: list[dict[str, str]],
+    recs: list[RecommendationRow],
+) -> tuple[AssignmentRow, dict[str, str]]:
+    """The task's `planned_assignments` row and schedule change; adds its recommendations."""
+    planned, before = ctx.plan.tasks[task.id], ctx.baseline.tasks[task.id]
+    resource = ctx.resources[planned.resource_id] if planned.resource_id else None
+    start_week, end_week = ctx.weeks(planned.start, planned.end)
+    baseline_start_week, baseline_end_week = ctx.weeks(before.start, before.end)
+    # Effort spread over the days the plan gives it (longer at a part-timer's hours).
+    days = planned_days(ctx.plan, task.id)
+    hours_per_week = min(round(task.hours / days * ctx.per_week, 1), 168.0)
+    assignment = AssignmentRow(
+        wbs_node_id=task.id,
+        employee_id=resource.employee_id if resource else None,
+        contractor_label=resource.name if resource and resource.kind == "contractor" else None,
+        start_week=start_week,
+        end_week=end_week,
+        hours_per_week=hours_per_week,
+        baseline_start_week=baseline_start_week,
+        baseline_end_week=baseline_end_week,
+        baseline_employee_id=before.resource_id,
+    )
+    if planned.resource_id != before.resource_id and planned.resource_id is not None:
+        current = ctx.name(before.resource_id)
+        if before.resource_id is not None:
+            current += (
+                f" ({ctx.utilization(ctx.baseline, ctx.resources[before.resource_id])}% util)"
+            )
+        row = {
+            "task": task.label,
+            "current": current,
+            "recommended": f"{ctx.name(planned.resource_id)} ({hours_per_week:g}h/wk)",
+            "reason": _reassignment_reason(ctx, task, before.resource_id, planned.resource_id),
+        }
+        reassignments.append(row)
+        recs.append(
+            RecommendationRow(
+                "reassignment",
+                task.id,
+                row["current"],
+                row["recommended"],
+                row["reason"],
+                len(recs),
+            )
+        )
+    shift = planned.start - before.start
+    change = {
+        "wbs": task.code,
+        "name": task.name,
+        "original": fmt.weeks_label(baseline_start_week, baseline_end_week),
+        "optimized": fmt.weeks_label(start_week, end_week),
+        "delta": fmt.shift(shift, ctx.per_week),
+        "reason": _schedule_reason(ctx, task.id, shift),
+    }
+    if shift or days != before.end - before.start:
+        recs.append(
+            RecommendationRow(
+                "schedule_change",
+                task.id,
+                change["original"],
+                change["optimized"],
+                change["reason"],
+                len(recs),
+            )
+        )
+    return assignment, change
+
+
 def build_report(inp: PlanningInput, outcome: SolveOutcome) -> Report:
+    """Everything stored for a run: KPIs and result payload, DB rows, or the IIS."""
     runtime_ms = round(outcome.wall_seconds * 1000)
     common: dict[str, Any] = {
         "status": outcome.status,
@@ -316,7 +283,10 @@ def build_report(inp: PlanningInput, outcome: SolveOutcome) -> Report:
     }
     if outcome.plan is None:
         iis = (
-            [{"name": c.name, "explanation": c.explanation} for c in outcome.conflicts]
+            [
+                {"name": conflict.name, "explanation": conflict.explanation}
+                for conflict in outcome.conflicts
+            ]
             if outcome.status == "infeasible"
             else None
         )
@@ -325,97 +295,43 @@ def build_report(inp: PlanningInput, outcome: SolveOutcome) -> Report:
     plan, base = outcome.plan, outcome.baseline
     ctx = ReportContext(inp, outcome, plan)
     ordered = sorted(
-        inp.tasks, key=lambda t: [int(x) if x.isdigit() else 0 for x in t.code.split(".")]
+        inp.tasks,
+        key=lambda task: [int(part) if part.isdigit() else 0 for part in task.code.split(".")],
     )
 
     assignments: list[AssignmentRow] = []
     reassignments: list[dict[str, str]] = []
     schedule: list[dict[str, str]] = []
     recs: list[RecommendationRow] = []
-    for t in ordered:
-        s, b = plan.tasks[t.id], base.tasks[t.id]
-        res = ctx.resources[s.resource_id] if s.resource_id else None
-        sw, ew = ctx.weeks(s.start, s.end)
-        bsw, bew = ctx.weeks(b.start, b.end)
-        hours_per_week = min(round(t.hours / t.duration_days * ctx.per_week, 1), 168.0)
-        assignments.append(
-            AssignmentRow(
-                wbs_node_id=t.id,
-                employee_id=res.employee_id if res else None,
-                contractor_label=res.name if res and res.kind == "contractor" else None,
-                start_week=sw,
-                end_week=ew,
-                hours_per_week=hours_per_week,
-                baseline_start_week=bsw,
-                baseline_end_week=bew,
-                baseline_employee_id=b.resource_id,
-            )
-        )
-        if s.resource_id != b.resource_id and s.resource_id is not None:
-            current = ctx.name(b.resource_id)
-            if b.resource_id is not None:
-                current += f" ({ctx.utilization(base, ctx.resources[b.resource_id])}% util)"
-            row = {
-                "task": t.label,
-                "current": current,
-                "recommended": f"{ctx.name(s.resource_id)} ({hours_per_week:g}h/wk)",
-                "reason": _reassignment_reason(ctx, t, b.resource_id, s.resource_id),
-            }
-            reassignments.append(row)
-            recs.append(
-                RecommendationRow(
-                    "reassignment",
-                    t.id,
-                    row["current"],
-                    row["recommended"],
-                    row["reason"],
-                    len(recs),
-                )
-            )
-        shift = s.start - b.start
-        change = {
-            "wbs": t.code,
-            "name": t.name,
-            "original": fmt.weeks_label(bsw, bew),
-            "optimized": fmt.weeks_label(sw, ew),
-            "delta": fmt.shift(shift, ctx.per_week),
-            "reason": _schedule_reason(ctx, t.id, shift),
-        }
+    for task in ordered:
+        assignment, change = _task_rows(ctx, task, reassignments, recs)
+        assignments.append(assignment)
         schedule.append(change)
-        if shift:
-            recs.append(
-                RecommendationRow(
-                    "schedule_change",
-                    t.id,
-                    change["original"],
-                    change["optimized"],
-                    change["reason"],
-                    len(recs),
-                )
-            )
 
-    used = {s.resource_id for s in plan.tasks.values()}
-    before_used = {s.resource_id for s in base.tasks.values()}
+    used = {scheduled.resource_id for scheduled in plan.tasks.values()}
+    before_used = {scheduled.resource_id for scheduled in base.tasks.values()}
     utilization: list[dict[str, Any]] = []
-    for r in outcome.resources:
-        if r.id not in used and r.id not in before_used:
+    for resource in outcome.resources:
+        if resource.id not in used and resource.id not in before_used:
             continue
-        before = ctx.utilization(base, r) if r.kind == "employee" else 0
-        utilization.append({"name": r.name, "before": before, "after": ctx.utilization(plan, r)})
-        if r.kind == "contractor" and r.id in used:
-            hours = ctx.hours(plan, r.id)
+        before = ctx.utilization(base, resource) if resource.kind == "employee" else 0
+        utilization.append(
+            {"name": resource.name, "before": before, "after": ctx.utilization(plan, resource)}
+        )
+        if resource.kind == "contractor" and resource.id in used:
+            hours = ctx.hours(plan, resource.id)
             recs.append(
                 RecommendationRow(
                     "hire",
                     None,
                     None,
-                    r.name,
+                    resource.name,
                     f"Skill gap: about {hours:g} hours, est. "
-                    f"{fmt.money(round(hours * r.rate_cents))}",
+                    f"{fmt.money(round(hours * resource.rate_cents))}",
                     len(recs),
                 )
             )
-    after = [u["after"] for u in utilization if u["after"] > 0]
+    after = [row["after"] for row in utilization if row["after"] > 0]
     avg = round(sum(after) / len(after)) if after else 0
 
     cost = ctx.cost(plan)
@@ -436,7 +352,7 @@ def build_report(inp: PlanningInput, outcome: SolveOutcome) -> Report:
         expected_cost_cents=cost,
         completion_date=finish,
         avg_utilization=avg / 100,
-        critical_path=[{"id": t.id, "code": t.code, "name": t.name} for t in chain],
+        critical_path=[{"id": task.id, "code": task.code, "name": task.name} for task in chain],
         result=result,
         error=None,
         assignments=assignments,

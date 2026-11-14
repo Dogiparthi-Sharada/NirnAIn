@@ -18,7 +18,7 @@ from app.optimization.calendar import workdays_through
 from app.optimization.model import Task, qualified
 
 if TYPE_CHECKING:
-    from app.optimization.explain import ReportContext
+    from app.optimization.report_context import ReportContext
 
 
 def deliverable_code(code: str) -> str:
