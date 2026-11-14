@@ -1,13 +1,20 @@
+/**
+ * Error pages in the approved design's style (`.card`, `h1`/`.sub`, `.btn`): page not found, a
+ * crashed page and a build that is missing configuration. `App.tsx` uses `RouteError` as the
+ * router's `errorElement`, `NotFound` for unknown URLs and `AppErrorBoundary` around everything;
+ * `main.tsx` shows `ConfigErrorPage` instead of the app when env vars are missing.
+ *
+ * Inside the signed-in shell (`inline`) the message sits in the page area; otherwise it fills the
+ * window with the brand above it. The crash page uses plain anchors because it can render outside
+ * the router.
+ */
 import { Component, useEffect, type ErrorInfo, type ReactNode } from 'react'
 import { isRouteErrorResponse, Link, useRouteError } from 'react-router'
 import { APP_NAME } from './Brand'
 
-const primaryLinkClass =
-  'inline-flex items-center justify-center rounded-[4px] bg-primary px-5 py-[9px] text-[13px] font-semibold text-white hover:bg-[#5E262D] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary'
-const secondaryButtonClass =
-  'inline-flex items-center justify-center rounded-[4px] border border-border bg-white px-5 py-[9px] text-[13px] font-medium text-primary hover:bg-[#FAF5EB] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary cursor-pointer'
+const DASHBOARD_PATH = '/dashboard'
 
-/** Presentational full-page message. Uses plain anchors when rendered outside the router. */
+/** A centred message card with optional status code and actions; `inline` keeps it inside the shell. */
 export function MessagePage({
   code,
   title,
@@ -21,18 +28,61 @@ export function MessagePage({
   actions?: ReactNode
   inline?: boolean
 }) {
-  return (
-    <div className={inline ? 'flex min-h-[60vh] items-center justify-center px-6 py-16' : 'flex min-h-screen items-center justify-center bg-background px-6 py-16'}>
-      <div className="max-w-md text-center">
-        {code && <div className="mono mb-3 text-xs tracking-[0.2em] text-[#8F7B74]">{code}</div>}
-        <h1 className="text-[22px] font-bold text-foreground">{title}</h1>
-        <div className="mt-2 text-sm leading-6 text-muted-foreground">{message}</div>
-        {actions && <div className="mt-7 flex justify-center gap-3">{actions}</div>}
+  const card = (
+    <div className="card" style={{ width: '100%', maxWidth: 480, padding: '32px 32px 28px', textAlign: 'center' }}>
+      {code && (
+        <div className="mono small muted" style={{ letterSpacing: '.2em', marginBottom: 10 }}>
+          {code}
+        </div>
+      )}
+      <h1 style={{ justifyContent: 'center' }}>{title}</h1>
+      <div className="sub" style={{ marginTop: 8, lineHeight: 1.6 }}>
+        {message}
       </div>
+      {actions && (
+        <div className="row" style={{ justifyContent: 'center', marginTop: 24 }}>
+          {actions}
+        </div>
+      )}
     </div>
+  )
+
+  if (inline) {
+    return (
+      <section className="view on" id="v-error">
+        <div className="pg" style={{ display: 'flex', justifyContent: 'center', paddingTop: 72 }}>
+          {card}
+        </div>
+      </section>
+    )
+  }
+  return (
+    <main
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 20,
+        padding: '64px 24px',
+        background: 'var(--bg)',
+      }}
+    >
+      <div className="brand">
+        <span className="bmark" aria-hidden="true">
+          N
+        </span>
+        <span className="bname">
+          Nirn<em>AI</em>n
+        </span>
+      </div>
+      {card}
+    </main>
   )
 }
 
+/** "Page not found", with a way back to the dashboard. */
 export function NotFound({ inline = false }: { inline?: boolean }) {
   useEffect(() => {
     document.title = `Page not found · ${APP_NAME}`
@@ -42,10 +92,10 @@ export function NotFound({ inline = false }: { inline?: boolean }) {
       inline={inline}
       code="404"
       title="We can't find that page"
-      message="The link may be broken, or the page may have moved. Check the address or head back to your dashboard."
+      message="The link may be broken, or the page may have moved. Check the address, or head back to your dashboard and pick up where you left off."
       actions={
-        <Link to="/" className={primaryLinkClass}>
-          Go to dashboard
+        <Link to={DASHBOARD_PATH} className="btn">
+          Back to Dashboard
         </Link>
       }
     />
@@ -63,19 +113,20 @@ export function RouteError({ inline = false }: { inline?: boolean }) {
   return <CrashPage inline={inline} />
 }
 
+/** An unexpected error: reload, or start again from the dashboard. Your saved work is not affected. */
 function CrashPage({ inline }: { inline?: boolean }) {
   return (
     <MessagePage
       inline={inline}
       title="Something went wrong"
-      message="An unexpected error interrupted this page. Reloading usually fixes it — if it keeps happening, please contact support."
+      message="An unexpected error interrupted this page. Your saved work is safe; reloading usually fixes it. If it keeps happening, please contact support."
       actions={
         <>
-          <button type="button" className={secondaryButtonClass} onClick={() => window.location.reload()}>
+          <button type="button" className="btn sec" onClick={() => window.location.reload()}>
             Reload page
           </button>
-          <a href="/" className={primaryLinkClass}>
-            Go to dashboard
+          <a href={DASHBOARD_PATH} className="btn">
+            Back to Dashboard
           </a>
         </>
       }
@@ -107,15 +158,23 @@ export function ConfigErrorPage({ problems }: { problems: { name: string; messag
       title={`${APP_NAME} isn't configured`}
       message={
         <>
-          <p>This build is missing required configuration. Set the following variables and rebuild:</p>
-          <ul className="mt-4 space-y-1.5 rounded-md border border-[#E8DCC6] bg-white px-4 py-3 text-left">
-            {problems.map((p) => (
-              <li key={p.name} className="text-[13px]">
-                <code className="mono font-medium text-foreground">{p.name}</code> <span>{p.message}</span>
+          <p style={{ margin: 0 }}>This build is missing required configuration. Set the following variables and rebuild:</p>
+          <ul
+            className="small"
+            style={{ margin: '14px 0 0', padding: '10px 16px', listStyle: 'none', textAlign: 'left', background: 'var(--soft)', border: '1px solid var(--line)', borderRadius: 6 }}
+          >
+            {problems.map((problem) => (
+              <li key={problem.name} style={{ padding: '3px 0' }}>
+                <code className="mono" style={{ color: 'var(--fg)', fontWeight: 500 }}>
+                  {problem.name}
+                </code>{' '}
+                <span>{problem.message}</span>
               </li>
             ))}
           </ul>
-          <p className="mt-4 text-xs text-[#8F7B74]">See .env.example in the repository for the full list.</p>
+          <p className="small" style={{ margin: '14px 0 0' }}>
+            See .env.example in the repository for the full list.
+          </p>
         </>
       }
     />

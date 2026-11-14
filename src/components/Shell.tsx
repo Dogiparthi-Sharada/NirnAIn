@@ -16,7 +16,7 @@ import { useOrg } from '@/org/useOrg'
 import { useProject } from '@/lib/queries'
 import { FLOW_STEPS, stepPath, type FlowStepKey } from '@/lib/steps'
 import { initials } from '@/lib/format'
-import { useCurrentProjectId, useLastProjectId, usePlanVersions, useScreenContext } from '@/lib/frame'
+import { rememberLastProjectId, useCurrentProjectId, useLastProjectId, usePlanVersions, useScreenContext } from '@/lib/frame'
 import { toast } from '@/lib/toast'
 import AIChat from './AIChat'
 
@@ -65,6 +65,11 @@ export default function Shell({ children }: { children: ReactNode }) {
   useEffect(() => {
     mainRef.current?.scrollTo({ top: 0 })
   }, [pathname])
+
+  // The project the PM works on becomes the dashboard's default.
+  useEffect(() => {
+    if (routeProjectId) rememberLastProjectId(routeProjectId)
+  }, [routeProjectId])
 
   useEffect(() => {
     if (!focusAfterToggle.current) return
