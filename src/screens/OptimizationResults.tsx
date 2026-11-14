@@ -67,6 +67,7 @@ export default function OptimizationResults() {
   const showSheet = !run || sheetRequested || (inputsChanged && !stalePlanAccepted)
   const planShown = !solving && !showSheet && (status === 'optimal' || status === 'feasible')
 
+  /** Starts a run (with a remedy when re-solving an infeasible plan); success closes the sheet. */
   function start(remedy?: RemedyId) {
     startRun.mutate(remedy ? { remedy } : {}, {
       onSuccess: () => {
@@ -76,11 +77,13 @@ export default function OptimizationResults() {
     })
   }
 
+  /** Re-opens the confirmation sheet for a fresh run. */
   function runAgain() {
     startRun.reset()
     setSheetRequested(true)
   }
 
+  /** Leaves the sheet and shows the latest run again, even if its inputs changed since. */
   function backToResults() {
     startRun.reset()
     setSheetRequested(false)

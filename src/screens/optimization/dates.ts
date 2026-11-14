@@ -4,7 +4,7 @@
  * negative-offset time zone never shifts a bar or a label by a day.
  */
 
-const DAY_MS = 86_400_000
+export const DAY_MS = 86_400_000
 
 const shortDayFormat = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
 const monthFormat = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' })

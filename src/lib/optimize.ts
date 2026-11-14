@@ -152,6 +152,7 @@ const optimizationKeys = {
   planVersions: (projectId: string) => ['projects', projectId, 'plan-versions'] as const,
 }
 
+/** `/api/v1/projects/{id}<suffix>`. */
 function projectPath(projectId: string, suffix: string): string {
   return `/api/v1/projects/${encodeURIComponent(projectId)}${suffix}`
 }

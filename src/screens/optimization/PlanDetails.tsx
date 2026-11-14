@@ -27,10 +27,12 @@ function UtilizationBar({ percent }: { percent: number }) {
   )
 }
 
+/** The empty state of a tab. */
 function EmptyTab({ children }: { children: string }) {
   return <p className="small muted">{children}</p>
 }
 
+/** Who the solver moved work to, and why. */
 function ReassignmentsTable({ result }: { result: PlanResult }) {
   if (result.reassignments.length === 0) return <EmptyTab>No reassignments needed: the current owners already fit the plan.</EmptyTab>
   return (
@@ -59,6 +61,7 @@ function ReassignmentsTable({ result }: { result: PlanResult }) {
   )
 }
 
+/** Work packages whose dates moved against the baseline schedule. */
 function ScheduleTable({ result }: { result: PlanResult }) {
   if (result.scheduleChanges.length === 0) return <EmptyTab>The schedule is unchanged from the baseline.</EmptyTab>
   return (
@@ -91,6 +94,7 @@ function ScheduleTable({ result }: { result: PlanResult }) {
   )
 }
 
+/** Each person's load before and after optimization. */
 function UtilizationTable({ result }: { result: PlanResult }) {
   if (result.utilization.length === 0) return <EmptyTab>No resource utilization to show.</EmptyTab>
   return (
@@ -134,6 +138,7 @@ export function PlanDetails({ result }: { result: PlanResult }) {
   const [activeTab, setActiveTab] = useState<DetailTab>('reassignments')
   const tabButtons = useRef<Record<DetailTab, HTMLButtonElement | null>>({ reassignments: null, schedule: null, utilization: null })
 
+  /** Left/right arrows select and focus the neighbouring tab (wrapping around). */
   function moveFocus(event: KeyboardEvent<HTMLButtonElement>, currentIndex: number) {
     const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
     if (step === 0) return

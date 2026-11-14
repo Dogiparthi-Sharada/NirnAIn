@@ -69,6 +69,7 @@ export function PlanView({ projectId, run, constraints, constraintsError, onRetr
   const canApply = !applied && rateKnown && !needsRate && !applyRun.isPending
   const deadline = constraints?.mustFinishBy ?? summary?.deadline ?? null
 
+  /** Saves the current constraint set with the specialist rate marked as confirmed. */
   function confirmRate() {
     if (!constraints) return
     const confirmed: ConstraintAnswers = { ...constraints, specialistRateConfirmed: true }
@@ -80,16 +81,18 @@ export function PlanView({ projectId, run, constraints, constraintsError, onRetr
     })
   }
 
+  /** Makes this run the next plan version. */
   function apply() {
     applyRun.mutate(run.id, {
-      onSuccess: (appliedRun) => {
+      onSuccess: (appliedRun: PlanRun) => {
         refreshAfterApply()
-        const version = (appliedRun as PlanRun).version
+        const version = appliedRun.version
         showToast(`Plan${version != null ? ` v${version}` : ''} applied. Step 7, Changes & Versions, is now open.`)
       },
     })
   }
 
+  /** Downloads the plan in one format, reporting failures under the actions. */
   async function download(format: ExportFormat) {
     setExporting(format)
     setExportError(null)

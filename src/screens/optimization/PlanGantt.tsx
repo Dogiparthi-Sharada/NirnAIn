@@ -9,7 +9,7 @@
  */
 import { formatDate } from '@/lib/format'
 import type { ScheduleItem } from '@/lib/optimize'
-import { dayCount, dayValue, monthName, nextMonthStart, shortDay, weekStart } from './dates'
+import { DAY_MS, dayCount, dayValue, monthName, nextMonthStart, shortDay, weekStart } from './dates'
 
 interface DeliverableBar {
   code: string
@@ -56,7 +56,7 @@ export function deliverableBars(schedule: ScheduleItem[]): DeliverableBar[] {
 /** Month labels from the axis start to its end, the first one carrying the year. */
 function monthLabels(axisStart: number, totalDays: number): AxisLabel[] {
   const labels: AxisLabel[] = []
-  const axisEnd = axisStart + totalDays * 86_400_000
+  const axisEnd = axisStart + totalDays * DAY_MS
   let cursor = axisStart
   let lastPercent = -Infinity
   while (cursor < axisEnd) {
