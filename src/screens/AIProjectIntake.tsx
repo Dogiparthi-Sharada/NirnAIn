@@ -5,15 +5,21 @@
  * Data: the latest run (`useLatestIntakeRun`, polled while queued/running), the project's documents
  * (`POST/GET/DELETE …/documents`, text extracted server-side), the run history ("Previous Intakes",
  * `GET …/intake/runs`) and the extracted scope items (counted by evidence). Projects created from an
- * upload already had their intake run at creation; the `#in-from-upload` note says so.
+ * upload already had their intake run at creation; the `#in-from-upload` note says so, read from the
+ * server's runs and documents (`creationSource`), so it shows in every browser.
+ *
+ * Analyze says why it is disabled (nothing to read yet, or an upload still going), and the status
+ * line only says "✓ Analysis complete" for a run started on this visit; an earlier run is shown as
+ * the last analysis.
  */
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router'
 import DocumentUpload, { checkFile, type UploadEntry } from '@/components/DocumentUpload'
 import PreviousIntakes from '@/components/PreviousIntakes'
 import { errorMessage as describeError, isApiError } from '@/lib/api'
-import { uploadSource, type ScopeItemWithEvidence } from '@/lib/create'
-import { useDeleteDocument, useDocuments, useLatestIntakeRun, useScopeItems, useStartIntakeRun, useUploadDocument } from '@/lib/queries'
+import { creationSource, useIntakeRuns, type ScopeItemWithEvidence } from '@/lib/create'
+import { formatDateTime } from '@/lib/format'
+import { useDeleteDocument, useDocuments, useLatestIntakeRun, useProject, useScopeItems, useStartIntakeRun, useUploadDocument } from '@/lib/queries'
 import { useStepNav } from '@/lib/steps'
 import { PlanInForceBanner } from './changes/InForceBanner'
 
@@ -46,8 +52,11 @@ export default function AIProjectIntake() {
   const documentUpload = useUploadDocument(projectId)
   const documentDelete = useDeleteDocument(projectId)
   const scope = useScopeItems(projectId)
+  const project = useProject(projectId)
   const [uploading, setUploading] = useState<UploadEntry[]>([])
   const [uploadError, setUploadError] = useState<string | null>(routeState.uploadError ?? null)
+  // A run started on this visit: only its success reads "✓ Analysis complete".
+  const [startedHere, setStartedHere] = useState(false)
 
   useEffect(() => {
     document.title = 'AI Project Intake · NirnAIn'
@@ -98,12 +107,29 @@ export default function AIProjectIntake() {
   const startError = startRun.error && isApiError(startRun.error) ? startRun.error.message : null
   const errorText = startError ?? (status === 'failed' ? (run?.error ?? 'The analysis failed. Try again.') : null)
   const canAnalyze = Boolean(text.trim()) || readyDocuments > 0
-  // Created from an upload: the intake ran at creation (this browser remembers the source's name).
-  const sourceName = routeState.sourceName ?? (projectId ? uploadSource(projectId) : null)
-  const fromUpload = Boolean(run && (routeState.fromUpload || sourceName))
+  // Same query (and key) as "Previous Intakes", so the history is fetched once.
+  const runs = useIntakeRuns(projectId, run ? `${run.id}:${run.status}` : undefined)
+  // Created from an upload: the intake ran at creation (read from the server's runs and documents).
+  const serverSource = project.data && runs.data ? creationSource(project.data.createdAt, runs.data, sourceDocuments) : null
+  const sourceName = serverSource ?? (routeState.fromUpload ? (routeState.sourceName ?? null) : null)
+  const fromUpload = Boolean(run && sourceName)
+  // Why Analyze can't start (it explains itself while a run is going).
+  let blocked: string | null = null
+  if (uploading.length > 0) blocked = 'Wait for the upload to finish.'
+  else if (!canAnalyze) blocked = run ? 'Paste new notes or attach a file to analyze again.' : 'Paste notes or attach a file first.'
+  // The status line: progress, a problem, why Analyze waits, or the last result (green only when fresh).
+  let statusText = ''
+  let statusColor = 'var(--mfg)'
+  if (analyzing) statusText = 'Analyzing… this can take a minute.'
+  else if (startError || (errorText && !blocked)) [statusText, statusColor] = [errorText ?? '', 'var(--red)']
+  else if (blocked) statusText = blocked
+  else if (analyzed && startedHere) [statusText, statusColor] = [`✓ Analysis complete — ${run?.itemsExtracted ?? 0} items extracted`, 'var(--green)']
+  else if (analyzed && run) statusText = `Last analysis ${formatDateTime(run.finishedAt ?? run.createdAt)}: ${run.itemsExtracted ?? 0} items extracted`
 
   function handleAnalyze() {
-    if (!analyzing && uploading.length === 0 && canAnalyze) startRun.mutate(text)
+    if (analyzing || blocked) return
+    setStartedHere(true)
+    startRun.mutate(text)
   }
 
   return (
@@ -168,18 +194,18 @@ export default function AIProjectIntake() {
                 <span
                   id="in-status"
                   role="status"
-                  style={{ fontSize: 13, fontWeight: 500, color: errorText ? 'var(--red)' : analyzing ? 'var(--mfg)' : 'var(--green)', maxWidth: 360 }}
+                  style={{ fontSize: 13, fontWeight: 500, color: statusColor, maxWidth: 360 }}
                 >
-                  {analyzing
-                    ? 'Analyzing… this can take a minute.'
-                    : errorText ?? (analyzed ? `✓ Analysis complete — ${run?.itemsExtracted ?? 0} items extracted` : '')}
+                  {statusText}
                 </span>
                 <button
                   className="btn lg"
                   id="btn-analyze"
                   type="button"
                   onClick={handleAnalyze}
-                  disabled={analyzing || uploading.length > 0 || !canAnalyze}
+                  disabled={analyzing || blocked !== null}
+                  aria-describedby={blocked && !analyzing ? 'in-status' : undefined}
+                  title={!analyzing ? (blocked ?? undefined) : undefined}
                   aria-busy={analyzing || undefined}
                 >
                   {analyzing ? 'Analyzing…' : run ? 'Re-Analyze' : 'Analyze Project'}

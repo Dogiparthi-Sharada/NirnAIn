@@ -18,7 +18,6 @@ import { errorMessage } from '@/lib/api'
 import { DEPARTMENTS } from '@/lib/createForm'
 import {
   MAX_NOTES_CHARS,
-  rememberUploadSource,
   useCreateFromDraft,
   useExtractDraft,
   usePmOptions,
@@ -131,7 +130,6 @@ export default function CreateFromUpload() {
         // Pasted notes next to a file are read by the intake too; on their own they are the draft's text.
         notes: file ? notes : '',
       })
-      rememberUploadSource(project.id, draft.sourceName)
       if (intent === 'draft') {
         navigate('/dashboard', { state: { notice: [`Draft “${project.name}” saved.`, problem].filter(Boolean).join(' ') } })
       } else {
