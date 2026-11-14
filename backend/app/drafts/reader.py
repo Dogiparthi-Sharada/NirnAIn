@@ -41,8 +41,13 @@ class DraftReader:
         if llm is not None and llm.configured:
             try:
                 fields = await asyncio.to_thread(ai_draft, llm, text, self._timeout_s)
-            except (anthropic.APIError, LLMNotConfiguredError, ValueError):
-                logger.exception("AI draft extraction failed; using the rules reader")
+            except (anthropic.APIError, LLMNotConfiguredError, ValueError) as exc:
+                # Security rule (SEC-006): the error can quote the notes or the model's
+                # answer, so only its class is logged.
+                logger.warning(
+                    "AI draft extraction failed; using the rules reader",
+                    extra={"error": type(exc).__name__},
+                )
             else:
                 return ProjectDraft(
                     fields=fields, text=text, source_name=source_name, model=llm.model

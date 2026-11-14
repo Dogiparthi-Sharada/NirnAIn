@@ -169,7 +169,8 @@ async def _update_pay(
     "/projects/{projectId}/team/{employeeId}",
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
-    summary="Take a person off this project's team (they stay in the organization)",
+    summary="Take a person off this project's team (they stay in the organization; the "
+    "work packages they own lose their owner)",
 )
 async def remove_team_member(
     project_id: ProjectId, employee_id: EmployeeId, team: Team

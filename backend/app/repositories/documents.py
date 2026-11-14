@@ -32,6 +32,7 @@ def _document_select() -> sa.Select[Any]:
         source_documents.c.extraction_status,
         source_documents.c.extraction_error,
         sa.func.coalesce(sa.func.char_length(source_documents.c.content_text), 0).label("chars"),
+        source_documents.c.content_truncated.label("truncated"),
         source_documents.c.created_at,
     )
 
@@ -78,6 +79,7 @@ class DocumentRepository:
                 mime_type=mime_type,
                 size_bytes=size_bytes,
                 content_text=extraction.text,
+                content_truncated=extraction.truncated,
                 extraction_status=extraction.status,
                 extraction_error=extraction.error,
             )

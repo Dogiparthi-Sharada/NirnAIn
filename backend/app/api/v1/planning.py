@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Response, status
@@ -16,12 +17,15 @@ from app.domain.planning import (
     DependencyUpdate,
     PoolEmployee,
     SkillCoverage,
+    cycle_path,
     planning_weeks,
     skill_coverage,
 )
 from app.repositories.access import ProjectRef
 
 router = APIRouter(tags=["planning"])
+
+NODE_NOT_IN_PROJECT = "Work package not found in this project"
 
 
 async def _project(planning: Planning, project_id: ProjectId) -> ProjectRef:
@@ -104,6 +108,35 @@ async def list_employees(org_id: OrgId, orgs: Orgs, planning: Planning) -> list[
 
 
 # --------------------------------------------------------------------------- dependencies
+async def _ensure_project_nodes(
+    planning: Planning, project_id: uuid.UUID, node_ids: set[uuid.UUID]
+) -> None:
+    """404 unless every node is a WBS node of the project that the caller can see.
+
+    Security rule (SEC-001): a dependency links work packages of its own project only.
+    Unknown ids and other projects' ids get the same 404, so the answer tells nothing
+    about other workspaces (the database enforces the same rule)."""
+    if node_ids - await planning.node_ids(project_id, node_ids):
+        raise NotFoundError(NODE_NOT_IN_PROJECT)
+
+
+async def _ensure_no_cycle(
+    planning: Planning, project_id: uuid.UUID, body: DependencyCreate
+) -> None:
+    """422 naming the cycle the new link would close ("1.1 A → 1.2 B → 1.1 A", WBS-009).
+
+    The database refuses cycles too (without naming them), for links added concurrently."""
+    existing = await planning.dependencies(project_id)
+    links = [(link.predecessor_id, link.successor_id) for link in existing]
+    cycle = cycle_path(links, body.predecessor_id, body.successor_id)
+    if cycle is None:
+        return
+    labels = {link.predecessor_id: link.predecessor_label for link in existing}
+    labels |= {link.successor_id: link.successor_label for link in existing}
+    named = " → ".join(labels.get(node_id) or str(node_id) for node_id in cycle)
+    raise UnprocessableError(f"Dependency would create a cycle: {named}")
+
+
 @router.get(
     "/projects/{projectId}/dependencies",
     response_model=list[Dependency],
@@ -123,7 +156,10 @@ async def list_dependencies(project_id: ProjectId, planning: Planning) -> list[D
 async def create_dependency(
     project_id: ProjectId, body: DependencyCreate, planning: Planning
 ) -> Dependency:
+    """Link two work packages of the project (404 when one isn't the project's)."""
     await _writable_project(planning, project_id)
+    await _ensure_project_nodes(planning, project_id, {body.predecessor_id, body.successor_id})
+    await _ensure_no_cycle(planning, project_id, body)
     dependency_id = await planning.create_dependency(project_id, body)
     dependency = await planning.dependency(dependency_id)
     if dependency is None:
@@ -131,12 +167,13 @@ async def create_dependency(
     return dependency
 
 
-async def _writable_dependency(planning: Planning, dependency_id: DependencyId) -> None:
+async def _writable_dependency(planning: Planning, dependency_id: DependencyId) -> uuid.UUID:
     project_id = await planning.dependency_project(dependency_id)
     if project_id is None:
         raise NotFoundError("Dependency not found")
     if not await planning.can_write(project_id):
         raise ForbiddenError("You do not have permission to edit this project's plan")
+    return project_id
 
 
 @router.patch(
@@ -145,7 +182,14 @@ async def _writable_dependency(planning: Planning, dependency_id: DependencyId) 
 async def update_dependency(
     dependency_id: DependencyId, body: DependencyUpdate, planning: Planning
 ) -> Dependency:
-    await _writable_dependency(planning, dependency_id)
+    """Change a dependency's type or lag (404 when it links another project's work)."""
+    project_id = await _writable_dependency(planning, dependency_id)
+    current = await planning.dependency(dependency_id)
+    if current is None:
+        raise NotFoundError("Dependency not found")
+    await _ensure_project_nodes(
+        planning, project_id, {current.predecessor_id, current.successor_id}
+    )
     if not await planning.update_dependency(dependency_id, body.changes()):
         raise ForbiddenError("You do not have permission to edit this project's plan")
     dependency = await planning.dependency(dependency_id)

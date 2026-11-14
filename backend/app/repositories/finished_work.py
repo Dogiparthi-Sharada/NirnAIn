@@ -4,7 +4,8 @@ Business rule (round 3, R2, "done work stays done"): approving a step-7 progress
 writes 0 working days left into the WBS. Such a package is still part of the project: it
 was planned and finished. A 0-day package that an applied plan scheduled is therefore
 finished work, kept in every later plan as done at the dates the latest applied plan that
-scheduled it gave it. A 0-day package no applied plan ever scheduled is not work at all.
+scheduled it gave it. A 0-day package no applied plan ever scheduled has no usable duration:
+it blocks the optimizer (`work_packages.py`).
 """
 
 from __future__ import annotations

@@ -418,5 +418,9 @@ export interface SourceDocument {
   extractionError: string | null
   /** Characters of text extracted for the AI (0 when extraction failed). */
   chars: number
+  /** The file had more text than is kept: only its first `chars` characters were read. */
+  truncated: boolean
+  /** "Only the first 200,000 characters were read." when `truncated`, else null. */
+  extractionNote: string | null
   createdAt: string
 }

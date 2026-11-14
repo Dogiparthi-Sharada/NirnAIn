@@ -135,6 +135,8 @@ export interface PlanRun extends Omit<OptimizationRun, 'result'> {
 /** Body of `POST …/optimization/runs` used by this screen. */
 export interface RunRequest {
   remedy?: RemedyId
+  /** The inputs `hash` the approved sheet showed: the server refuses (409) when the inputs changed since. */
+  reviewedHash?: string
 }
 
 /** The constraint set including the answers to the step 5 questions. */
@@ -194,7 +196,8 @@ export function useProjectSkillList(projectId: string) {
 
 /**
  * Starts a run (optionally with a remedy for an infeasible plan) and shows it straight away.
- * A 409 means a run is already going: refetch so the screen polls that one instead.
+ * A 409 means a run is already going, or the inputs changed since the sheet was reviewed:
+ * refetch both so the screen polls that run or shows the current inputs to review again.
  */
 export function useStartOptimization(projectId: string) {
   const queryClient = useQueryClient()
@@ -208,6 +211,7 @@ export function useStartOptimization(projectId: string) {
     onError: (error) => {
       if (isApiError(error) && error.status === 409) {
         void queryClient.invalidateQueries({ queryKey: queryKeys.latestRun(projectId) })
+        void queryClient.invalidateQueries({ queryKey: optimizationKeys.inputs(projectId) })
       }
     },
   })
@@ -339,6 +343,7 @@ export interface MissingInputHint {
 
 const MISSING_INPUT_HINTS: Record<string, Omit<MissingInputHint, 'key'>> = {
   workPackages: { label: 'Work packages with durations', step: 'wbs', action: 'Open WBS Builder' },
+  durations: { label: 'A duration for every work package', step: 'wbs', action: 'Open WBS Builder' },
   estimates: { label: 'Confirmed AI estimates', step: 'wbs', action: 'Open WBS Builder' },
   team: { label: 'Team members', step: 'constraints', action: 'Open Constraints' },
   deadline: { label: 'An answer to the deadline question', step: 'constraints', action: 'Open Constraints' },

@@ -252,11 +252,28 @@ class TeamRepository:
         return result.rowcount > 0
 
     async def remove_member(self, project_id: uuid.UUID, employee_id: uuid.UUID) -> bool:
-        t = project_team_members
+        """Take a person off the team; False when they weren't on it.
+
+        Business rule (RES-017): the project's work packages they own lose their owner, so
+        step 4 doesn't name someone who is off the project (step 7 departures do the same).
+        """
+        member = project_team_members
         result = await self._conn.execute(
-            sa.delete(t).where(t.c.project_id == project_id, t.c.employee_id == employee_id)
+            sa.delete(member).where(
+                member.c.project_id == project_id, member.c.employee_id == employee_id
+            )
         )
-        return result.rowcount > 0
+        if result.rowcount == 0:
+            return False
+        await self._conn.execute(
+            sa.update(wbs_nodes)
+            .where(
+                wbs_nodes.c.project_id == project_id,
+                wbs_nodes.c.owner_employee_id == employee_id,
+            )
+            .values(owner_employee_id=None)
+        )
+        return True
 
     async def ensure_skills(self, org_id: uuid.UUID, names: list[str]) -> list[uuid.UUID]:
         """Ids of the organization's skills with these names, creating missing ones."""

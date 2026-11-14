@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import Field
+from pydantic import Field, computed_field
 
 from app.domain.common import (
     CamelModel,
@@ -80,4 +80,14 @@ class SourceDocument(CamelModel):
     extraction_status: JobStatus
     extraction_error: str | None
     chars: int
+    # The file had more text than is kept: only its first `chars` characters were read.
+    truncated: bool = False
     created_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def extraction_note(self) -> str | None:
+        """What the screen says about a cut text (INTAKE-020: never silently)."""
+        if not self.truncated:
+            return None
+        return f"Only the first {self.chars:,} characters were read."

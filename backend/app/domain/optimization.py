@@ -22,6 +22,8 @@ from app.domain.common import CamelModel, InputModel, SolverStatus
 RemedyId = Literal["specialist", "overtime", "move_deadline", "combined"]
 RemedyChangeKind = Literal["deadline", "budget", "specialist", "capacity"]
 InputSource = Literal["stated", "confirmed", "needs_you", "default", "assumed", "yours"]
+# SHA-256 in hex, as `app.optimization.inputs.inputs_hash` returns it.
+InputsHash = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
 class RunKpi(CamelModel):
@@ -187,12 +189,17 @@ class RunOverrides(InputModel):
 
 
 class RunCreate(InputModel):
-    """Body of `POST …/optimization/runs` (every field optional), stored as `options`."""
+    """Body of `POST …/optimization/runs` (every field optional), stored as `options`.
+
+    `reviewed_hash` is the inputs `hash` the confirmation sheet showed when the PM approved
+    it: the run is refused (409) when the saved inputs no longer hash to it.
+    """
 
     remedy: RemedyId | None = None
     overrides: RunOverrides | None = None
     change_request_id: uuid.UUID | None = None
     baseline_run_id: uuid.UUID | None = None
+    reviewed_hash: InputsHash | None = None
 
 
 # --------------------------------------------------------------------------- inputs sheet

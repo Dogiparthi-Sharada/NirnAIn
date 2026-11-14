@@ -157,6 +157,7 @@ source_documents = sa.Table(
     sa.Column("content_text", sa.Text),
     sa.Column("extraction_status", job_status, nullable=False, server_default=sa.FetchedValue()),
     sa.Column("extraction_error", sa.Text),
+    sa.Column("content_truncated", sa.Boolean, nullable=False, server_default=sa.FetchedValue()),
     sa.Column("created_at", _ts, nullable=False, server_default=sa.FetchedValue()),
 )
 

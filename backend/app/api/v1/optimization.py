@@ -9,7 +9,9 @@ sheet showed for the saved inputs, so the screen can tell when the latest
 plan is out of date (the sheet's `appliedHash` is that hash for the plan in
 force), and `solverSettings`: how the worker solves it (solver, version,
 time limit, workers, seed, objective weights). With `changeRequestId` this
-is also the re-plan of a change on step 7. Inputs stay editable after a
+is also the re-plan of a change on step 7. With `reviewedHash` (the hash the
+sheet showed when the PM approved it) the run is refused with 409 when the
+inputs changed since that review. Inputs stay editable after a
 plan is applied; a run then starts from the plan in force (its baseline)
 unless the body names another `baselineRunId`.
 """
@@ -17,6 +19,7 @@ unless the body names another `baselineRunId`.
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Request, Response, status
@@ -25,7 +28,7 @@ from app.api.deps import OptimizationRuns, Optimizer, ProjectId, RunId
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableError
 from app.domain.optimization import InputRow, OptimizationInputs, OptimizationRun, RunCreate
 from app.jobs.optimizer import RESTART_ERROR, run_settings
-from app.optimization.input_sheet import Blocker, Sheet, blocking_detail, build_sheet
+from app.optimization.input_sheet import Blocker, Row, Sheet, blocking_detail, build_sheet
 from app.optimization.inputs import inputs_hash
 from app.optimization.model import PlanningInput
 from app.optimization.overrides import apply_overrides, with_baseline, with_plan_in_force
@@ -35,6 +38,7 @@ from app.repositories.optimization import ActiveRunExistsError, ProjectContext
 router = APIRouter(tags=["optimization"])
 
 ACTIVE_RUN_DETAIL = "An optimization is already running for this project."
+STALE_REVIEW_DETAIL = "The inputs changed since you reviewed them. Review again."
 DECIDED_CHANGE_DETAIL = "This change was already decided; record a new change to re-plan."
 DECIDED_CHANGE_STATUSES = ("approved", "rejected")
 # A remedy the PM picked answers the questions it relaxes, for that run only.
@@ -43,6 +47,8 @@ LIFTED_BY_REMEDY = {
     "move_deadline": ("deadline",),
     "combined": ("specialist", "deadline"),
 }
+DURATIONS_KEY = "durations"
+LISTED_PACKAGES = 5
 
 
 class AppliedInputs(OptimizationInputs):
@@ -72,9 +78,39 @@ async def _plan_in_force(
     return dates, summary.completion_date if summary is not None else None
 
 
+def _with_unplanned_work(sheet: Sheet, packages: list[str]) -> Sheet:
+    """The sheet with a blocker naming the work packages the solver can't plan.
+
+    Business rule (WBS-003, WBS-004): a work package without a usable duration is never
+    left out of a plan silently; the run waits until a person enters one on step 4.
+    """
+    if not packages:
+        return sheet
+    if len(packages) == 1:
+        message = f"{packages[0]} has no duration: enter one on step 4"
+    else:
+        names = packages[:LISTED_PACKAGES]
+        if len(packages) > LISTED_PACKAGES:
+            names.append(f"{len(packages) - LISTED_PACKAGES} more")
+        message = f"{', '.join(names[:-1])} and {names[-1]} have no duration: enter them on step 4"
+
+    def flagged(row: Row) -> Row:
+        if row.key != "workPackages":
+            return row
+        return replace(
+            row, value=f"{row.value} · {len(packages)} without a duration", source="needs_you"
+        )
+
+    return Sheet(
+        rows=[flagged(row) for row in sheet.rows],
+        blockers=[Blocker(DURATIONS_KEY, message), *sheet.blockers],
+    )
+
+
 async def _sheet(runs: OptimizationRuns, project: ProjectContext) -> tuple[PlanningInput, Sheet]:
     inp = await runs.load_input(project, datetime.now(UTC).date())
-    return inp, build_sheet(await runs.input_facts(project, inp))
+    sheet = build_sheet(await runs.input_facts(project, inp))
+    return inp, _with_unplanned_work(sheet, await runs.packages_without_duration(project.id))
 
 
 async def _from_baseline(
@@ -143,12 +179,15 @@ async def create_run(
     optimizer: Optimizer,
     body: RunCreate | None = None,
 ) -> OptimizationRun:
-    """Freeze the inputs into a queued run; 422 with `missing` while the sheet isn't ready."""
+    """Freeze the inputs into a queued run; 422 with `missing` while the sheet isn't ready,
+    409 while another run is active or when the inputs changed since `reviewedHash`."""
     body = body or RunCreate()
     project = await _project(runs, project_id)
     if not await runs.can_write(project_id):
         raise ForbiddenError("You do not have permission to optimize this project")
 
+    if not await runs.lock_run_creation(project_id):  # another request is starting one
+        raise ConflictError(ACTIVE_RUN_DETAIL)
     stale_after_s = request.app.state.settings.optimizer_stale_after_s
     active = await runs.active_run(project_id, stale_after_s)
     if active is not None:
@@ -160,6 +199,9 @@ async def create_run(
     # Fingerprint of the saved inputs, before this run's baseline, overrides and
     # remedy: exactly the `hash` GET …/optimization/inputs returns for the same data.
     saved_inputs_hash = inputs_hash(inp)
+    # CON-019: the PM approved the sheet showing `reviewedHash`; never run other inputs.
+    if body.reviewed_hash is not None and body.reviewed_hash != saved_inputs_hash:
+        raise ConflictError(STALE_REVIEW_DETAIL)
     lifted = LIFTED_BY_REMEDY.get(body.remedy or "", ())
     blockers: list[Blocker] = [blocker for blocker in sheet.blockers if blocker.key not in lifted]
     if blockers:

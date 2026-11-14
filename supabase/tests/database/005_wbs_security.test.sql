@@ -36,7 +36,7 @@ select lives_ok(
 select throws_ok(
   $$ insert into public.wbs_nodes (project_id, parent_id, level, name)
      values ('a1000000-0000-0000-0000-000000000002', 'a2000000-0000-0000-0000-000000000001', 2, 'Cross project') $$,
-  'P0001', 'WBS parent belongs to a different project', 'cross-project parents are rejected');
+  'P0001', 'WBS parent not found in this project', 'cross-project parents are rejected');
 
 set local request.jwt.claims = '{"sub":"a0000000-0000-0000-0000-000000000003","role":"authenticated"}';
 select is((select count(*)::int from public.wbs_nodes), 2, 'viewer can read WBS');

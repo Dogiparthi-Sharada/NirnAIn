@@ -87,11 +87,11 @@ All endpoints are under `/api/v1` except health. JSON uses camelCase. Errors are
 | GET | `/api/v1/notifications` | `unread=true/false`, `limit`, `cursor` |
 | POST | `/api/v1/notifications/{id}/read` | Idempotent. Returns the notification. |
 | GET | `/api/v1/projects/{projectId}/optimization/inputs` | Confirmation sheet: `{rows: [{key, label, value, source, from}], ready, blocking, missing, hash, appliedHash}` (`appliedHash`: the inputs hash of the plan in force, or null) |
-| POST | `/api/v1/projects/{projectId}/optimization/runs` | Optional body `{remedy?: 'specialist'\|'overtime'\|'move_deadline'\|'combined', overrides?: {budgetTotalCents?, mustFinishBy?, deadlineMode?, budgetMode?, durationDays?, hoursPerWeek?, addMembers?, removeMembers?}, changeRequestId?, baselineRunId?}` (stored as `options`, plus `inputsHash` = the inputs sheet's `hash` for the saved inputs, and `solverSettings` = `{solver, version, timeLimitS, workers, seed, weights}`). Without `baselineRunId`, a run while a plan is in force starts from that plan (its owners are the current owners). Inputs stay editable after a plan is applied. 202 + `OptimizationRun` (`queued`), solved in the background. 403 not a writer, 404 project / change request / baseline run not visible, 409 a run is already queued/running or the change was decided, 422 inputs not ready (`missing`: `workPackages`, `estimates`, `deadline`, `specialist`, `team`). |
+| POST | `/api/v1/projects/{projectId}/optimization/runs` | Optional body `{remedy?: 'specialist'\|'overtime'\|'move_deadline'\|'combined', overrides?: {budgetTotalCents?, mustFinishBy?, deadlineMode?, budgetMode?, durationDays?, hoursPerWeek?, addMembers?, removeMembers?}, changeRequestId?, baselineRunId?, reviewedHash?}` (stored as `options`, plus `inputsHash` = the inputs sheet's `hash` for the saved inputs, and `solverSettings` = `{solver, version, timeLimitS, workers, seed, weights}`). Without `baselineRunId`, a run while a plan is in force starts from that plan (its owners are the current owners). Inputs stay editable after a plan is applied. 202 + `OptimizationRun` (`queued`), solved in the background. 403 not a writer, 404 project / change request / baseline run not visible, 409 a run is already queued/running, the change was decided or the inputs no longer hash to `reviewedHash` (the sheet the PM approved), 422 inputs not ready (`missing`: `durations`, `workPackages`, `estimates`, `deadline`, `specialist`, `team`). |
 | GET | `/api/v1/projects/{projectId}/optimization/runs/latest` | Latest run, or 404 when there are none |
 | GET | `/api/v1/projects/{projectId}/optimization/runs/{runId}` | One run |
 
-| POST | `/api/v1/projects/{projectId}/documents` | Multipart `file`. 201 + `SourceDocument`. 403 not a writer, 404 project not visible, 413 over 100 MB, 415 video or unsupported type. |
+| POST | `/api/v1/projects/{projectId}/documents` | Multipart `file`. 201 + `SourceDocument` (at most 200,000 characters of text are kept; a longer file has `truncated: true` and `extractionNote: "Only the first 200,000 characters were read."`). 403 not a writer, 404 project not visible, 413 over 100 MB, 415 video or unsupported type. |
 | GET | `/api/v1/projects/{projectId}/documents` | Uploaded documents, newest first (pasted notes are not listed) |
 | DELETE | `/api/v1/documents/{documentId}` | 204. 403 not a writer, 404 not visible. |
 | POST | `/api/v1/projects/{projectId}/intake/runs` | `{text}` (may be empty when an upload was read; 422 when there is nothing to analyze). 202 + `IntakeRun`, extracted in the background. 409 a run is active. |
@@ -147,7 +147,9 @@ tagged with them (`PATCH /wbs/nodes/{nodeId}` `{skills: [name]}`, needed at leve
 else those whose name or description mention every word of the skill
 (`skill_links.py`); a Required skill no package uses is a `needs_you` warning on the
 inputs sheet. Unconfirmed AI estimates and unanswered questions that matter block the
-run (422). A person's skill level sets their pace on a work package: each level above
+run (422), and so does a work package without a usable duration (none, or 0 days on
+work no applied plan scheduled): it is named on the sheet ("1.2.1 Data mapping has no
+duration: enter one on step 4") instead of being left out of the plan. A person's skill level sets their pace on a work package: each level above
 its minimum is 10% faster (at most 30%), each level below ("Can flex" skills only) 25%
 slower; the hours, and so the duration and cost, scale with it, on top of a
 part-timer's stretch (`speed.py`). The contingency reserve is held back from the

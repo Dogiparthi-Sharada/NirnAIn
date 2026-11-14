@@ -145,8 +145,9 @@ def test_plain_text_is_kept_verbatim_and_capped() -> None:
     notes = "OBJECTIVES:\n- Ship <fast>\r\n\n\n\n- Cut cost\x00"
     result = extract_text(DocumentKind.TRANSCRIPT, notes.encode() + b"\xff")
     assert result.text == "OBJECTIVES:\n- Ship <fast>\n\n- Cut cost\ufffd"
+    assert not result.truncated
     huge = extract_text(DocumentKind.TRANSCRIPT, b"a" * (MAX_CHARS + 10))
-    assert len(huge.text or "") == MAX_CHARS
+    assert (len(huge.text or ""), huge.truncated) == (MAX_CHARS, True)
     from_stream = extract_text(DocumentKind.PDF, io.BytesIO(pdf_with_text("Scope")))
     assert from_stream == Extraction(JobStatus.SUCCEEDED, "Scope")
 
@@ -193,6 +194,7 @@ class FakeDocuments:
             extraction_status=extraction.status,
             extraction_error=extraction.error,
             chars=len(extraction.text or ""),
+            truncated=extraction.truncated,
             created_at=NOW + timedelta(seconds=len(self.data.documents)),
         )
         self.data.documents[document.id] = document
@@ -273,6 +275,8 @@ def test_upload_list_and_delete(
         "extractionStatus",
         "extractionError",
         "chars",
+        "truncated",
+        "extractionNote",
         "createdAt",
     }
 
@@ -399,6 +403,7 @@ def _document_row(**overrides: object) -> dict[str, object]:
         "extraction_status": "succeeded",
         "extraction_error": None,
         "chars": 5,
+        "truncated": False,
         "created_at": NOW,
     }
     row.update(overrides)
@@ -417,8 +422,10 @@ async def test_repository_stores_uploads_and_hides_pasted_notes() -> None:
     insert, select = conn.sql
     assert insert.startswith("INSERT INTO public.source_documents")
     assert conn.params[0]["content_text"] == "Scope"
+    assert conn.params[0]["content_truncated"] is False
     assert conn.params[0]["extraction_status"] == JobStatus.SUCCEEDED
     assert "char_length(public.source_documents.content_text)" in select
+    assert "public.source_documents.content_truncated AS truncated" in select
     assert "public.source_documents.kind != " in select
 
     listing = Conn(Rows([_document_row(), _document_row()]))
