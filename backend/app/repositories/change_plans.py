@@ -16,6 +16,7 @@ from datetime import date
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.changes.compare import schedule_dates
 from app.changes.context import ChangeContext, NodeRow, PersonRef, PlanRow, RunMeta, TaskRef
 from app.domain.common import SolverStatus
 from app.repositories import access
@@ -113,7 +114,7 @@ class ChangePlanReads:
         )
 
     async def run_meta(self, run_id: uuid.UUID) -> RunMeta | None:
-        """A run's KPIs and frozen input snapshot, for the comparison."""
+        """A run's KPIs, frozen input snapshot and day-level schedule, for the comparison."""
         statement = sa.select(
             optimization_runs.c.id,
             optimization_runs.c.project_id,
@@ -122,6 +123,7 @@ class ChangePlanReads:
             optimization_runs.c.expected_cost_cents,
             optimization_runs.c.completion_date,
             optimization_runs.c.input_snapshot,
+            optimization_runs.c.result["schedule"].label("schedule"),
         ).where(optimization_runs.c.id == run_id)
         row = (await self._connection.execute(statement)).first()
         if row is None:
@@ -134,6 +136,7 @@ class ChangePlanReads:
             row.expected_cost_cents,
             row.completion_date,
             dict(row.input_snapshot or {}),
+            schedule_dates(row.schedule),
         )
 
     async def plan_rows(self, run_id: uuid.UUID) -> list[PlanRow]:

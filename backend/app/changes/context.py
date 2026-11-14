@@ -66,7 +66,8 @@ class ChangeContext:
 
 @dataclass(frozen=True, slots=True)
 class RunMeta:
-    """A run's KPIs and its frozen input snapshot (start date, constraints, tasks)."""
+    """A run's KPIs, its frozen input snapshot (start date, constraints, tasks) and the
+    day-level dates of each work package (`result.schedule`; empty on older runs)."""
 
     id: uuid.UUID
     project_id: uuid.UUID
@@ -75,6 +76,7 @@ class RunMeta:
     expected_cost_cents: int | None
     completion_date: date | None
     snapshot: dict[str, Any]
+    schedule: dict[uuid.UUID, tuple[date, date]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
