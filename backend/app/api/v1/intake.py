@@ -1,9 +1,15 @@
+"""AI intake endpoints: start / poll analysis runs and review the extracted scope items.
+
+All queries run under the caller's RLS session; only the background worker
+(`app.jobs.intake`) writes results on a service connection.
+"""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks, Request, Response, status
 
 from app.api.deps import Intaker, Intakes, ItemId, ProjectId, RunId
-from app.core.errors import ConflictError, ForbiddenError, NotFoundError
+from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableError
 from app.domain.intake import (
     IntakeRun,
     IntakeRunCreate,
@@ -17,13 +23,14 @@ from app.repositories.intake import ActiveRunExistsError
 router = APIRouter(tags=["intake"])
 
 ACTIVE_RUN_DETAIL = "AI intake is already running for this project."
+NOTHING_TO_ANALYZE_DETAIL = "Paste project notes or upload a document first."
 
 
 @router.post(
     "/projects/{projectId}/intake/runs",
     response_model=IntakeRun,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Analyze pasted project notes (extracted in the background)",
+    summary="Analyze pasted notes and uploaded documents (extracted in the background)",
 )
 async def create_run(
     project_id: ProjectId,
@@ -34,10 +41,13 @@ async def create_run(
     runs: Intakes,
     intaker: Intaker,
 ) -> IntakeRun:
+    """Queue a run over the pasted `text` plus every upload whose text was read."""
     if not await runs.project_exists(project_id):
         raise NotFoundError("Project not found")
     if not await runs.can_write(project_id):
         raise ForbiddenError("You do not have permission to analyze this project")
+    if not body.text and not await runs.has_readable_upload(project_id):
+        raise UnprocessableError(NOTHING_TO_ANALYZE_DETAIL)
 
     stale_after_s = request.app.state.settings.intake_stale_after_s
     active = await runs.active_run(project_id, stale_after_s)
@@ -61,6 +71,18 @@ async def create_run(
     return run
 
 
+@router.get(
+    "/projects/{projectId}/intake/runs",
+    response_model=list[IntakeRun],
+    summary="The project's 20 most recent intake runs, newest first",
+)
+async def list_runs(project_id: ProjectId, runs: Intakes) -> list[IntakeRun]:
+    """Run history for "Previous Intakes" (404 when the project is not visible)."""
+    if not await runs.project_exists(project_id):
+        raise NotFoundError("Project not found")
+    return await runs.list_runs(project_id)
+
+
 # Declared before /{runId} so "latest" isn't parsed as a run id.
 @router.get(
     "/projects/{projectId}/intake/runs/latest",
@@ -68,6 +90,7 @@ async def create_run(
     summary="Latest intake run (404 when the project has none)",
 )
 async def latest_run(project_id: ProjectId, runs: Intakes) -> IntakeRun:
+    """The newest run of the project."""
     run = await runs.latest(project_id)
     if run is None:
         raise NotFoundError("No intake runs yet")
@@ -80,6 +103,7 @@ async def latest_run(project_id: ProjectId, runs: Intakes) -> IntakeRun:
     summary="Get an intake run",
 )
 async def get_run(project_id: ProjectId, run_id: RunId, runs: Intakes) -> IntakeRun:
+    """One run of the project (the `Location` of a created run)."""
     run = await runs.get(project_id, run_id)
     if run is None:
         raise NotFoundError("Intake run not found")
@@ -92,6 +116,7 @@ async def get_run(project_id: ProjectId, run_id: RunId, runs: Intakes) -> Intake
     summary="Scope items extracted (or added) for a project",
 )
 async def list_scope_items(project_id: ProjectId, runs: Intakes) -> list[ScopeItem]:
+    """Every item except removed ones, by category and order, with its evidence."""
     if not await runs.project_exists(project_id):
         raise NotFoundError("Project not found")
     return await runs.list_scope_items(project_id)
@@ -106,6 +131,7 @@ async def list_scope_items(project_id: ProjectId, runs: Intakes) -> list[ScopeIt
 async def create_scope_item(
     project_id: ProjectId, body: ScopeItemCreate, runs: Intakes
 ) -> ScopeItem:
+    """Add the user's own item: accepted, origin manual, no evidence ("Yours")."""
     if not await runs.project_exists(project_id):
         raise NotFoundError("Project not found")
     if not await runs.can_write(project_id):
@@ -122,6 +148,7 @@ async def create_scope_item(
     summary="Accept, edit, or remove a scope item",
 )
 async def update_scope_item(item_id: ItemId, body: ScopeItemUpdate, runs: Intakes) -> ScopeItem:
+    """Partial update; text equal to `suggestedText` resolves a flagged item to stated."""
     patch = body.model_dump(exclude_unset=True)
     item = await runs.update_item(item_id, patch)
     if item is None:

@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.ai.llm import LLM, make_client
 from app.api.v1 import health
 from app.api.v1.router import api_router
 from app.core.config import Settings, get_settings
@@ -21,6 +22,8 @@ from app.core.middleware import (
     SecurityHeadersMiddleware,
 )
 from app.core.security import TokenVerifier
+from app.jobs.ai_jobs import AiJobRunner
+from app.jobs.ai_jobs import engine_store as ai_engine_store
 from app.jobs.intake import IntakeRunner
 from app.jobs.intake import engine_store as intake_engine_store
 from app.jobs.optimizer import OptimizationRunner, engine_store
@@ -40,13 +43,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         runner: OptimizationRunner = app.state.optimizer
         intaker: IntakeRunner = app.state.intaker
+        ai_runner: AiJobRunner = app.state.ai_runner
         await runner.recover_stale()
         await intaker.recover_stale(settings.intake_stale_after_s)
+        await ai_runner.recover_stale(settings.ai_job_stale_after_s)
         try:
             yield
         finally:
             await runner.shutdown()
             await intaker.shutdown()
+            await ai_runner.shutdown()
             engine = app.state.engine
             if engine is not None:
                 await engine.dispose()
@@ -71,12 +77,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.intaker = IntakeRunner(
         intake_engine_store(app.state.engine) if app.state.engine is not None else None, settings
     )
+    app.state.ai_runner = AiJobRunner(
+        ai_engine_store(app.state.engine) if app.state.engine is not None else None, settings
+    )
+    app.state.assistant_llm = LLM(make_client(settings), settings.ai_model)
     if app.state.engine is None:
         logger.warning("DATABASE_URL is not set; database endpoints will return 503")
     if app.state.token_verifier is None:
         logger.warning("SUPABASE_URL is not set; authenticated endpoints will return 503")
     if settings.anthropic_api_key is None:
-        logger.warning("ANTHROPIC_API_KEY is not set; AI intake runs will fail")
+        logger.warning("ANTHROPIC_API_KEY is not set; AI intake uses the rule-based extractor")
 
     register_exception_handlers(app)
 

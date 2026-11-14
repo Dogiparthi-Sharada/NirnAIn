@@ -1,3 +1,5 @@
+"""AI intake schemas: intake runs, scope items and uploaded source documents."""
+
 from __future__ import annotations
 
 import uuid
@@ -7,6 +9,8 @@ from pydantic import Field
 
 from app.domain.common import (
     CamelModel,
+    DocumentKind,
+    Evidence,
     InputModel,
     ItemOrigin,
     JobStatus,
@@ -16,6 +20,8 @@ from app.domain.common import (
 
 
 class ScopeItem(CamelModel):
+    """A scope item on the Scope Review screen (AI-extracted or added by hand)."""
+
     id: uuid.UUID
     project_id: uuid.UUID
     category: ScopeCategory
@@ -23,6 +29,12 @@ class ScopeItem(CamelModel):
     status: ScopeStatus
     origin: ItemOrigin
     confidence: float | None
+    # Evidence ("never invent"): null for items people added themselves.
+    source_quote: str | None
+    evidence: Evidence | None
+    evidence_note: str | None
+    suggested_text: str | None
+    source_document_id: uuid.UUID | None  # the upload the quote is from (null: pasted notes)
     sort_order: int
     created_at: datetime
     updated_at: datetime
@@ -41,7 +53,9 @@ class IntakeRun(CamelModel):
 
 
 class IntakeRunCreate(InputModel):
-    text: str = Field(min_length=1, max_length=50_000)
+    """Start an intake run; `text` (pasted notes) may be empty when an upload was read."""
+
+    text: str = Field(default="", max_length=50_000)
 
 
 class ScopeItemUpdate(InputModel):
@@ -52,3 +66,18 @@ class ScopeItemUpdate(InputModel):
 class ScopeItemCreate(InputModel):
     category: ScopeCategory
     text: str = Field(min_length=1, max_length=2000)
+
+
+class SourceDocument(CamelModel):
+    """An uploaded intake document: only its extracted text is stored (`chars` long)."""
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    kind: DocumentKind
+    title: str
+    mime_type: str | None
+    size_bytes: int | None
+    extraction_status: JobStatus
+    extraction_error: str | None
+    chars: int
+    created_at: datetime

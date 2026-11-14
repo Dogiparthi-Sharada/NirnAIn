@@ -60,3 +60,12 @@ def test_derived_urls_and_version(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.jwks_url == "https://x.supabase.co/auth/v1/.well-known/jwks.json"
     assert s.version == "abc123"
     assert make().sqlalchemy_database_url() is None
+
+
+def test_blank_anthropic_key_means_no_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "  ")
+    assert make().anthropic_api_key is None
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    key = make().anthropic_api_key
+    assert key is not None
+    assert key.get_secret_value() == "sk-test"

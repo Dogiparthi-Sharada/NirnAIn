@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     # Queued/running runs older than this are treated as orphaned (server restarted).
     optimizer_stale_after_s: int = Field(default=180, ge=30)
 
-    # AI intake (Claude). Unset ANTHROPIC_API_KEY: runs stay queued, then fail at startup recovery.
+    # AI intake (Claude). Without ANTHROPIC_API_KEY, intake uses the rule-based extractor.
     anthropic_api_key: SecretStr | None = None
     intake_model: str = "claude-opus-5-5"
     # Queued/running runs older than this are treated as orphaned (server restarted).
@@ -80,6 +80,13 @@ class Settings(BaseSettings):
         if "*" in value:
             raise ValueError("CORS_ORIGINS must list explicit origins; '*' is not allowed")
         return value
+
+    @field_validator("anthropic_api_key", mode="before")
+    @classmethod
+    def _blank_key_is_unset(cls, value: object) -> object:
+        # `ANTHROPIC_API_KEY=` (as in .env.example) means "no key": every AI feature must
+        # take its fallback rather than call Claude with an empty key.
+        return None if isinstance(value, str) and not value.strip() else value
 
     @field_validator("supabase_url")
     @classmethod

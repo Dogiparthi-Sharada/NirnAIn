@@ -151,8 +151,13 @@ source_documents = sa.Table(
     sa.Column("project_id", _uuid, nullable=False),
     sa.Column("kind", document_kind, nullable=False),
     sa.Column("title", sa.Text, nullable=False),
+    sa.Column("storage_path", sa.Text),
+    sa.Column("mime_type", sa.Text),
+    sa.Column("size_bytes", sa.BigInteger),
     sa.Column("content_text", sa.Text),
-    sa.Column("created_at", _ts, nullable=False),
+    sa.Column("extraction_status", job_status, nullable=False, server_default=sa.FetchedValue()),
+    sa.Column("extraction_error", sa.Text),
+    sa.Column("created_at", _ts, nullable=False, server_default=sa.FetchedValue()),
 )
 
 intake_runs = sa.Table(
