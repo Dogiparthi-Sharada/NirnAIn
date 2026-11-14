@@ -7,22 +7,24 @@
  * plan misleading. Constraints shows a warning next to the card it concerns; Optimization
  * Results repeats the same items in its "Constraint check" card.
  *
+ * Skills are not part of planning (every team member can do every work package), so there is no
+ * skills constraint here.
+ *
  * Why "hard deadline + flexible capacity" is flagged: it is valid maths, but the solver then
  * meets the date by booking overtime, so the plan looks on time while people are scheduled
  * above their hours — exactly the slip the PM needs to see.
  */
 import { formatMoney } from './format'
 
-export type PolicyKey = 'budget' | 'deadline' | 'capacity' | 'skills'
+export type PolicyKey = 'budget' | 'deadline' | 'capacity'
 export type PolicyMode = 'hard' | 'soft'
 export type DeadlineAnswer = 'hard' | 'soft' | 'unknown' | null
 
-export const POLICY_KEYS: PolicyKey[] = ['budget', 'deadline', 'capacity', 'skills']
+export const POLICY_KEYS: PolicyKey[] = ['budget', 'deadline', 'capacity']
 export const POLICY_NAME: Record<PolicyKey, string> = {
   budget: 'Budget',
   deadline: 'Deadline',
   capacity: 'Employee capacity',
-  skills: 'Required skills',
 }
 export const POLICY_LABEL: Record<PolicyMode, string> = { hard: 'Must hold', soft: 'Can flex' }
 
@@ -30,13 +32,10 @@ export const POLICY_LABEL: Record<PolicyMode, string> = { hard: 'Must hold', sof
 export interface PolicyInputs {
   budgetMode: PolicyMode
   capacityMode: PolicyMode
-  skillMode: PolicyMode
   deadlineAnswer: DeadlineAnswer
   budgetTotalCents: number | null
   /** ISO date, e.g. "2025-09-30". */
   mustFinishBy: string | null
-  /** Required skills nobody on the team has. */
-  skillGaps: string[]
   /** Source sentence for the budget, when the notes state it (shown in quotes). */
   budgetQuote?: string | null
 }
@@ -77,8 +76,7 @@ function shortDate(iso: string | null): string {
 export function policyOf(key: PolicyKey, inputs: PolicyInputs): PolicyMode {
   if (key === 'deadline') return inputs.deadlineAnswer === 'soft' ? 'soft' : 'hard'
   if (key === 'budget') return inputs.budgetMode
-  if (key === 'capacity') return inputs.capacityMode
-  return inputs.skillMode
+  return inputs.capacityMode
 }
 
 /** What each choice means for the solver, and the recommended default with its reason. */
@@ -109,13 +107,6 @@ export function policyHelp(key: PolicyKey, inputs: PolicyInputs): PolicyHelp {
         hard: 'Nobody is scheduled beyond the hours per week entered below.',
         soft: 'People may be scheduled up to 25% above their hours (overtime), with a penalty.',
       }
-    case 'skills':
-      return {
-        rec: 'hard',
-        recWhy: 'Work given to someone without the skill is the most common hidden delay.',
-        hard: 'Work goes only to people who have the skill, or to an outside specialist if you allow one.',
-        soft: 'Work may go to someone without the skill; ramp-up time is added to their tasks.',
-      }
   }
 }
 
@@ -129,16 +120,7 @@ export function policyRisks(inputs: PolicyInputs): PolicyRisk[] {
       level: 'change',
       title: 'Hold employee capacity when the deadline must hold',
       why: `With a fixed deadline and flexible hours, the solver meets ${date} by booking overtime instead of telling you the date is at risk. The plan looks on time while people are scheduled above their hours, and that is where projects really slip.`,
-      fix: `Set Employee capacity to Must hold. If ${date} then cannot be met, you see it now, with priced options (a specialist, more hours, or a later date).`,
-    })
-  }
-  if (policyOf('skills', inputs) === 'soft' && inputs.skillGaps.length > 0) {
-    out.push({
-      card: 'skills',
-      level: 'change',
-      title: 'Hold required skills while there is a skill gap',
-      why: `Nobody on the team has ${inputs.skillGaps.join(', ')}. With skills set to Can flex, the solver may give that work to someone without the skill and only add ramp-up time, which is usually underestimated.`,
-      fix: 'Set Required skills to Must hold, then allow an outside specialist or add someone who has the skill.',
+      fix: `Set Employee capacity to Must hold. If ${date} then cannot be met, you see it now, with priced options (a contractor, overtime, or a later date).`,
     })
   }
   if (policyOf('budget', inputs) === 'soft') {

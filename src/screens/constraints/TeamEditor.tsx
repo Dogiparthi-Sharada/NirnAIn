@@ -20,7 +20,6 @@ import {
   isWholeHours,
   ROLES,
   useAddTeamMember,
-  useProjectSkills,
   useRemoveTeamMember,
   useTeam,
   useUpdateTeamMember,
@@ -42,11 +41,10 @@ function memberChanges(member: ProjectTeamMember, input: TeamMemberInput): Parti
   if (input.roleTitle !== (member.roleTitle ?? '')) changes.roleTitle = input.roleTitle
   if (input.hoursPerWeek !== member.hoursPerWeek) changes.hoursPerWeek = input.hoursPerWeek
   if ((input.hourlyRateCents ?? null) !== (member.hourlyRateCents ?? null)) changes.hourlyRateCents = input.hourlyRateCents ?? null
-  if ([...input.skills].sort().join('\n') !== [...member.skills].sort().join('\n')) changes.skills = input.skills
   return changes
 }
 
-/** One person: name and role, inline hours, utilization, skills, Edit / Remove. */
+/** One person: name and role, inline hours, utilization, Edit / Remove. */
 function MemberRow({ member, locked, onHours, onEdit, onRemove }: {
   member: ProjectTeamMember
   locked: boolean
@@ -88,7 +86,6 @@ function MemberRow({ member, locked, onHours, onEdit, onRemove }: {
           </div>
         )}
       </td>
-      <td className="small">{member.skills.length > 0 ? member.skills.join(', ') : <span className="muted">None listed</span>}</td>
       <td className="row-acts">
         <button className="btn sec sm" type="button" data-medit={member.employeeId} onClick={onEdit} aria-label={`Edit ${member.fullName}`}>
           Edit
@@ -112,7 +109,6 @@ export function TeamEditor({ projectId, policy, risks, locked, editable, onSaveP
   onSavePolicy: (changes: ConstraintChanges) => void
 }) {
   const teamQuery = useTeam(projectId)
-  const skillsQuery = useProjectSkills(projectId)
   const addMember = useAddTeamMember(projectId)
   const updateMember = useUpdateTeamMember(projectId)
   const updateHours = useUpdateTeamMember(projectId)
@@ -189,7 +185,7 @@ export function TeamEditor({ projectId, policy, risks, locked, editable, onSaveP
   if (teamQuery.isPending) {
     body = (
       <tr>
-        <td colSpan={5} className="small muted" role="status">
+        <td colSpan={4} className="small muted" role="status">
           Loading the team&hellip;
         </td>
       </tr>
@@ -197,7 +193,7 @@ export function TeamEditor({ projectId, policy, risks, locked, editable, onSaveP
   } else if (teamQuery.isError) {
     body = (
       <tr>
-        <td colSpan={5} className="small" role="alert">
+        <td colSpan={4} className="small" role="alert">
           Couldn&rsquo;t load the team. {errorMessage(teamQuery.error)}{' '}
           <button className="btn sec sm" type="button" onClick={() => void teamQuery.refetch()}>
             Try again
@@ -208,7 +204,7 @@ export function TeamEditor({ projectId, policy, risks, locked, editable, onSaveP
   } else if (team.length === 0) {
     body = (
       <tr>
-        <td colSpan={5} className="small muted">
+        <td colSpan={4} className="small muted">
           No one on the team yet. Add the people who will work on this project.
         </td>
       </tr>
@@ -244,7 +240,6 @@ export function TeamEditor({ projectId, policy, risks, locked, editable, onSaveP
               <th>Person</th>
               <th>Hours / week</th>
               <th>Utilization</th>
-              <th>Skills</th>
               <th aria-label="Actions" />
             </tr>
           </thead>
@@ -256,8 +251,6 @@ export function TeamEditor({ projectId, policy, risks, locked, editable, onSaveP
           key={formFor}
           member={editing}
           team={team}
-          skills={skillsQuery.data ?? []}
-          skillsLoading={skillsQuery.isPending}
           saving={formSaving}
           serverError={formError}
           onSave={saveForm}

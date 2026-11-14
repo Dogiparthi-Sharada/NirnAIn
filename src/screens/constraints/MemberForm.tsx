@@ -1,13 +1,12 @@
 /**
  * The add / edit form under the team table on step 5 (approved mockup views/constraints-team.js
- * `openMemberForm` / `saveMember`): name, role, hours per week on this project, hourly rate and
- * skills.
+ * `openMemberForm` / `saveMember`): name, role, hours per week on this project and hourly rate.
+ * (Skills are not part of planning, so the design's skill picks are left out.)
  *
  * The form checks what it can before saving (a name, a role, no second person with the same name,
  * hours a whole number from 1 to 80, a rate in dollars or blank) and lists every problem at once;
  * the server's answer (for example a 409 duplicate or the plan lock) is shown in the same box. A
- * blank rate means the optimizer's default rate. Skills are picked from the project's skill list;
- * skills a person has outside that list are kept when they are edited.
+ * blank rate means the optimizer's default rate.
  */
 import { useEffect, useRef, useState } from 'react'
 import { errorMessage } from '@/lib/api'
@@ -16,7 +15,6 @@ import {
   hourlyRateText,
   isHourlyRate,
   isWholeHours,
-  type ProjectSkill,
   type ProjectTeamMember,
   type TeamMemberInput,
 } from '@/lib/inputs'
@@ -24,11 +22,9 @@ import {
 const NEW_MEMBER_HOURS = '40'
 
 /** The add / edit form. `member` null = a new person. */
-export function MemberForm({ member, team, skills, skillsLoading, saving, serverError, onSave, onCancel }: {
+export function MemberForm({ member, team, saving, serverError, onSave, onCancel }: {
   member: ProjectTeamMember | null
   team: ProjectTeamMember[]
-  skills: ProjectSkill[]
-  skillsLoading: boolean
   saving: boolean
   serverError: unknown
   onSave: (input: TeamMemberInput) => void
@@ -38,22 +34,12 @@ export function MemberForm({ member, team, skills, skillsLoading, saving, server
   const [role, setRole] = useState(member?.roleTitle ?? '')
   const [hours, setHours] = useState(member ? String(member.hoursPerWeek) : NEW_MEMBER_HOURS)
   const [rate, setRate] = useState(member?.hourlyRateCents != null ? String(member.hourlyRateCents / 100) : '')
-  const [picked, setPicked] = useState<Set<string>>(() => new Set(member?.skills ?? []))
   const [problems, setProblems] = useState<string[]>([])
   const nameRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     nameRef.current?.focus()
   }, [])
-
-  function togglePick(skillName: string) {
-    setPicked((previous) => {
-      const next = new Set(previous)
-      if (next.has(skillName)) next.delete(skillName)
-      else next.add(skillName)
-      return next
-    })
-  }
 
   function save() {
     const fullName = name.trim()
@@ -72,10 +58,7 @@ export function MemberForm({ member, team, skills, skillsLoading, saving, server
     }
     setProblems(found)
     if (found.length > 0) return
-    const listed = new Set(skills.map((skill) => skill.name))
-    const keptOutsideList = (member?.skills ?? []).filter((skillName) => !listed.has(skillName))
-    const chosen = skills.map((skill) => skill.name).filter((skillName) => picked.has(skillName))
-    onSave({ fullName, roleTitle, hoursPerWeek, hourlyRateCents, skills: [...chosen, ...keptOutsideList] })
+    onSave({ fullName, roleTitle, hoursPerWeek, hourlyRateCents })
   }
 
   const messages = serverError && problems.length === 0 ? [errorMessage(serverError)] : problems
@@ -125,22 +108,6 @@ export function MemberForm({ member, team, skills, skillsLoading, saving, server
             value={rate}
             onChange={(event) => setRate(event.target.value)}
           />
-        </div>
-      </div>
-      <div className="field mt">
-        <label id="mf-skills-label">Skills</label>
-        <div className="skill-picks" role="group" aria-labelledby="mf-skills-label">
-          {skillsLoading ? (
-            <span className="small muted">Loading skills&hellip;</span>
-          ) : skills.length > 0 ? (
-            skills.map((skill) => (
-              <label className="pick" key={skill.skillId}>
-                <input type="checkbox" value={skill.name} checked={picked.has(skill.name)} onChange={() => togglePick(skill.name)} /> {skill.name}
-              </label>
-            ))
-          ) : (
-            <span className="small muted">Add skills below first.</span>
-          )}
         </div>
       </div>
       <div className="row mt">

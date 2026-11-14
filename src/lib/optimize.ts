@@ -122,21 +122,12 @@ export interface RunRequest {
   remedy?: RemedyId
 }
 
-/** The constraint set including the answers to the step 5 questions. */
+/** The constraint set including the answer to the step 5 deadline question and the contractor rate. */
 export interface ConstraintAnswers extends ConstraintSet {
-  specialistAnswer?: 'yes' | 'no' | 'unknown' | null
   deadlineAnswer?: DeadlineAnswer
   specialistRateConfirmed?: boolean
   contractorRateCents?: number | null
   allowContractors?: boolean
-}
-
-/** A skill on the project's list and who on the team has it. */
-export interface ProjectSkill {
-  skillId: string
-  name: string
-  required: boolean
-  holders: string[]
 }
 
 export type ExportFormat = 'pdf' | 'msproject'
@@ -148,7 +139,6 @@ export const DEFAULT_SPECIALIST_RATE_CENTS = 17_500
 
 const optimizationKeys = {
   inputs: (projectId: string) => ['projects', projectId, 'optimization', 'inputs'] as const,
-  skills: (projectId: string) => ['projects', projectId, 'skills'] as const,
   planVersions: (projectId: string) => ['projects', projectId, 'plan-versions'] as const,
 }
 
@@ -162,15 +152,6 @@ export function useOptimizationInputs(projectId: string) {
   return useQuery({
     queryKey: optimizationKeys.inputs(projectId),
     queryFn: ({ signal }) => apiFetch<OptimizationInputs>(projectPath(projectId, '/optimization/inputs'), { signal }),
-    enabled: Boolean(projectId),
-  })
-}
-
-/** The project's skill list with holders, used to find required skills nobody on the team has. */
-export function useProjectSkillList(projectId: string) {
-  return useQuery({
-    queryKey: optimizationKeys.skills(projectId),
-    queryFn: ({ signal }) => apiFetch<ProjectSkill[]>(projectPath(projectId, '/skills'), { signal }),
     enabled: Boolean(projectId),
   })
 }
@@ -221,31 +202,20 @@ export function exportRun(projectId: string, runId: string, format: ExportFormat
 
 /* ───────────────────────────── Derived values ───────────────────────────── */
 
-/** Required skills nobody on the team has. */
-export function skillGapsOf(skills: ProjectSkill[] | undefined): string[] {
-  return (skills ?? []).filter((skill) => skill.required && skill.holders.length === 0).map((skill) => skill.name)
-}
-
 /** The quoted budget sentence from the sheet's budget row, without its curly quotes. */
 function budgetQuoteOf(inputs: OptimizationInputs | undefined): string | null {
   const budgetRow = inputs?.rows.find((row) => row.key === 'budget' && row.source === 'stated')
   return budgetRow ? budgetRow.from.replace(/^[\u201C"]|[\u201D"]$/g, '') : null
 }
 
-/** What `policyRisks()` needs, from the saved constraint set, the skill list and the sheet. */
-export function policyInputsOf(
-  constraints: ConstraintAnswers,
-  skills: ProjectSkill[] | undefined,
-  inputs: OptimizationInputs | undefined,
-): PolicyInputs {
+/** What `policyRisks()` needs, from the saved constraint set and the sheet. */
+export function policyInputsOf(constraints: ConstraintAnswers, inputs: OptimizationInputs | undefined): PolicyInputs {
   return {
     budgetMode: constraints.budgetMode,
     capacityMode: constraints.capacityMode,
-    skillMode: constraints.skillMode,
     deadlineAnswer: constraints.deadlineAnswer ?? null,
     budgetTotalCents: constraints.budgetTotalCents,
     mustFinishBy: constraints.mustFinishBy,
-    skillGaps: skillGapsOf(skills),
     budgetQuote: budgetQuoteOf(inputs),
   }
 }
@@ -285,7 +255,6 @@ const MISSING_INPUT_HINTS: Record<string, Omit<MissingInputHint, 'key'>> = {
   estimates: { label: 'Confirmed AI estimates', step: 'wbs', action: 'Open WBS Builder' },
   team: { label: 'Team members', step: 'constraints', action: 'Open Constraints' },
   deadline: { label: 'An answer to the deadline question', step: 'constraints', action: 'Open Constraints' },
-  specialist: { label: 'An answer to the specialist question', step: 'constraints', action: 'Open Constraints' },
 }
 
 /** The missing inputs named by a 422 from the run endpoint (unknown keys are skipped). */

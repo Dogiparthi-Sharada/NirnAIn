@@ -1,6 +1,6 @@
 /**
  * An input that saves when you leave it (or press Enter), used for every inline edit on the
- * Constraints screen: hours per week, skill names, budget amounts, dates and the specialist rate.
+ * Constraints screen: hours per week, budget amounts, contingency and dates.
  *
  * Why: the approved design edits values in place without a Save button. Saving on every
  * keystroke would send half-typed values to the server, so the typed text stays a local draft

@@ -1,6 +1,6 @@
 /**
- * The Must hold / Can flex controls on the Budget, Deadline, Team & capacity and Required skills
- * cards (approved mockup views/constraints.js `renderPolicy`).
+ * The Must hold / Can flex controls on the Budget, Deadline and Team & capacity cards (approved
+ * mockup views/constraints.js `renderPolicy`).
  *
  * Must hold = a hard constraint: the solver never breaks it. Can flex = a soft constraint: it may
  * bend, with a penalty, if that is the only way. The PM decides because it is a business call;
