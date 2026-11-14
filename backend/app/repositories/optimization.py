@@ -80,6 +80,9 @@ def _run_select() -> sa.Select[Any]:
         r.c.created_at,
         r.c.started_at,
         r.c.finished_at,
+        r.c.version,
+        r.c.applied_at,
+        r.c.options,
     )
 
 
@@ -98,6 +101,9 @@ def _to_run(row: sa.Row[Any]) -> OptimizationRun:
             "created_at": m["created_at"],
             "started_at": m["started_at"],
             "finished_at": m["finished_at"],
+            "version": m["version"],
+            "applied_at": m["applied_at"],
+            "options": m["options"] or {},
         }
     )
 

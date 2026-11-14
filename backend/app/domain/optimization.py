@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from pydantic import Field
 
@@ -61,3 +62,7 @@ class OptimizationRun(CamelModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    # Plan vN once the run is applied; options = how the run was set up.
+    version: int | None = None
+    applied_at: datetime | None = None
+    options: dict[str, Any] = Field(default_factory=dict)

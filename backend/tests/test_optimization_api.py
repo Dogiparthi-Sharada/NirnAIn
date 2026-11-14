@@ -166,6 +166,9 @@ RUN_KEYS = {
     "createdAt",
     "startedAt",
     "finishedAt",
+    "version",
+    "appliedAt",
+    "options",
 }
 
 
