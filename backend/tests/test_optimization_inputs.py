@@ -15,7 +15,7 @@ from app.optimization.inputs import (
     inputs_hash,
     quote_states_amount,
 )
-from app.optimization.model import Allocation, Task
+from app.optimization.model import Allocation, Employee, Task
 from tests.test_optimization_solver import SAP, make_input, with_constraints
 
 
@@ -53,6 +53,7 @@ def test_ready_sheet_rows_and_sources() -> None:
         "deadline",
         "specialists",
         "team",
+        "rates",
         "skills",
         "contingency",
         "workingDays",
@@ -76,6 +77,7 @@ def test_ready_sheet_rows_and_sources() -> None:
     )
     assert rows["specialists"][:2] == ("Allowed · $175/h (estimated)", "confirmed")
     assert rows["team"] == ("Mark Chen, Lisa Park · capacity can flex", "confirmed", "Step 5")
+    assert rows["rates"] == ("2 people at their own rate", "yours", "Step 5")
     assert rows["skills"][0] == "1 · nobody has SAP Integration yet · must hold"
     assert rows["contingency"][:2] == ("0%", "default")
     assert rows["milestones"] == ("Apr 15 and Jul 31 · soft", "yours", "Step 5")
@@ -129,6 +131,32 @@ def test_facts_from_input_and_org_fallback_team() -> None:
     assert rows["specialists"].source == "needs_you"
 
 
+def test_people_without_a_rate_are_shown_at_the_default() -> None:
+    team = ["Priya Raman", "Leo Martins", "Ana Souza"]
+    rows = {
+        row.key: row for row in build_sheet(_ready_facts(team=team, default_rate_team=team)).rows
+    }
+    assert (rows["rates"].label, rows["rates"].value, rows["rates"].source) == (
+        "Hourly rates",
+        "3 people at the $85/h default rate",
+        "default",
+    )
+    some = _ready_facts(team=team, default_rate_team=["Ana Souza"], team_from_project=False)
+    rates = next(row for row in build_sheet(some).rows if row.key == "rates")
+    assert rates.value == "1 person at the $85/h default rate (Ana Souza) · 2 at their own rate"
+    assert (rates.source, rates.from_) == ("default", "Organization")
+    nobody = next(row for row in build_sheet(_ready_facts(team=[])).rows if row.key == "rates")
+    assert nobody.value == "Nobody yet; anyone without a rate is planned at the $85/h default rate"
+
+    inp = make_input(
+        employees=(
+            Employee("e1", "Mark Chen", hourly_rate_cents=10_000),
+            Employee("e2", "Ana Souza"),
+        )
+    )
+    assert facts_from_input(inp).default_rate_team == ["Ana Souza"]
+
+
 def test_quote_must_name_the_amount() -> None:
     assert quote_states_amount("Budget approved at $375K", 37_500_000)
     assert quote_states_amount("a budget of $375,000 total", 37_500_000)
@@ -142,4 +170,9 @@ def test_inputs_hash_ignores_other_projects_bookings() -> None:
     booked = dataclasses.replace(inp, allocations=(Allocation("e1", date(2026, 10, 12), 8),))
     assert inputs_hash(inp) == inputs_hash(booked)
     assert inputs_hash(inp) != inputs_hash(with_constraints(inp, budget_total_cents=1))
+    first, second = inp.employees
+    repriced = dataclasses.replace(
+        inp, employees=(dataclasses.replace(first, hourly_rate_cents=None), second)
+    )
+    assert inputs_hash(inp) != inputs_hash(repriced)  # editing a rate invalidates the sheet
     assert len(inputs_hash(inp)) == 64

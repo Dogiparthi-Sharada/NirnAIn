@@ -20,6 +20,7 @@ from app.optimization.calendar import (
 )
 from app.optimization.load import allocation_blocks, daily_capacity_tenths, task_daily_tenths
 from app.optimization.model import (
+    DEFAULT_HOURLY_RATE_CENTS,
     Allocation,
     Constraints,
     Dependency,
@@ -185,14 +186,22 @@ def test_contractors_only_for_unstaffable_skills() -> None:
     assert len(build_resources(with_constraints(inp, allow_contractors=False))) == 2
 
 
-def test_unknown_rate_uses_team_average() -> None:
+def test_unknown_rate_uses_the_default_rate() -> None:
     inp = make_input(
         employees=(
             Employee("e1", "A", hourly_rate_cents=10_000),
             Employee("e2", "B", hourly_rate_cents=None),
         )
     )
-    assert [r.rate_cents for r in build_resources(inp)] == [10_000, 10_000]
+    assert [resource.rate_cents for resource in build_resources(inp)] == [
+        10_000,
+        DEFAULT_HOURLY_RATE_CENTS,
+    ]
+    # Nobody priced: the plan still costs something (QA saw $0 for every team built in the app).
+    unpriced = make_input(employees=(Employee("e1", "A"),))
+    out = solve(unpriced, FAST)
+    assert out.plan is not None
+    assert out.objective == 15 * 20_000 + 120 * DEFAULT_HOURLY_RATE_CENTS
 
 
 # --------------------------------------------------------------------------- solving

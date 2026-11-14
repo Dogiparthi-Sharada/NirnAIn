@@ -68,15 +68,21 @@ async def list_team(project_id: ProjectId, team: Team) -> list[TeamMember]:
 async def add_team_member(project_id: ProjectId, body: TeamMemberCreate, team: Team) -> TeamMember:
     project = await _editable_project(team, project_id)
     current = await team.member_names(project_id)
-    if body.full_name.casefold() in {n.casefold() for n in current.values()}:
+    if body.full_name.casefold() in {name.casefold() for name in current.values()}:
         raise ConflictError(f"{body.full_name} is already on the team")
     employee_id = await team.find_employee(project.org_id, body.full_name)
     if employee_id is None:
         employee_id = await team.create_employee(
-            project.org_id, body.full_name, body.role_title, body.hours_per_week
+            project.org_id,
+            body.full_name,
+            body.role_title,
+            body.hours_per_week,
+            body.hourly_rate_cents,
         )
     elif employee_id in current:
         raise ConflictError(f"{body.full_name} is already on the team")
+    elif body.hourly_rate_cents is not None:
+        await team.set_hourly_rate(employee_id, body.hourly_rate_cents)
     await team.add_member(project_id, employee_id, body.role_title, body.hours_per_week)
     await team.add_employee_skills(
         employee_id, await team.ensure_skills(project.org_id, body.skills)
@@ -87,7 +93,7 @@ async def add_team_member(project_id: ProjectId, body: TeamMemberCreate, team: T
 @router.patch(
     "/projects/{projectId}/team/{employeeId}",
     response_model=TeamMember,
-    summary="Change a team member's role, hours on this project, skills or name",
+    summary="Change a team member's role, hours on this project, rate, skills or name",
 )
 async def update_team_member(
     project_id: ProjectId, employee_id: EmployeeId, body: TeamMemberUpdate, team: Team
@@ -103,6 +109,8 @@ async def update_team_member(
         ):
             raise ConflictError(f"{body.full_name} is already on the team")
         await team.rename_employee(employee_id, body.full_name)
+    if body.rate_changed:
+        await team.set_hourly_rate(employee_id, body.hourly_rate_cents)
     changes = body.member_changes()
     if changes:
         await team.update_member(project_id, employee_id, changes)

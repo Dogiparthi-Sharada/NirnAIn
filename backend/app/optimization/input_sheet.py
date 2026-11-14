@@ -16,6 +16,7 @@ from typing import Literal
 
 from app.optimization import formatting as fmt
 from app.optimization.inputs import InputFacts
+from app.optimization.model import DEFAULT_HOURLY_RATE_CENTS
 from app.optimization.remedies import DEFAULT_SPECIALIST_RATE_CENTS
 
 Source = Literal["stated", "confirmed", "needs_you", "default", "assumed", "yours"]
@@ -80,6 +81,10 @@ def _effort(days: int, per_week: int) -> str:
     if days < per_week:
         return fmt.plural(days, "day")
     return fmt.plural(round(days / per_week), "week")
+
+
+def _people(count: int) -> str:
+    return "1 person" if count == 1 else f"{count} people"
 
 
 def _policy(mode: str) -> str:
@@ -173,6 +178,24 @@ def _team(facts: InputFacts) -> Line:
     return Row("team", "Team", value, "default", "Organization"), None
 
 
+def _rates(facts: InputFacts) -> Line:
+    """Who is planned at their own rate and who at the default: an assumption the PM can fix."""
+    label = "Hourly rates"
+    where = "Step 5" if facts.team_from_project else "Organization"
+    default = f"the ${DEFAULT_HOURLY_RATE_CENTS / 100:,.0f}/h default rate"
+    if not facts.team:
+        value = f"Nobody yet; anyone without a rate is planned at {default}"
+        return Row("rates", label, value, "default", where), None
+    defaulted = list(facts.default_rate_team)
+    own = len(facts.team) - len(defaulted)
+    if not defaulted:
+        return Row("rates", label, f"{_people(own)} at their own rate", "yours", where), None
+    value = f"{_people(len(defaulted))} at {default}"
+    if own:
+        value += f" ({_names(defaulted)}) · {own} at their own rate"
+    return Row("rates", label, value, "default", where), None
+
+
 def _skills(facts: InputFacts) -> Line:
     if not facts.skills and not facts.skill_gaps:
         return Row("skills", "Required skills", "None listed", "default", "Step 5"), None
@@ -214,6 +237,7 @@ SECTIONS = (
     _deadline,
     _specialists,
     _team,
+    _rates,
     _skills,
     _contingency,
     _working_days,

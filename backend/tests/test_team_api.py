@@ -69,15 +69,16 @@ class FakeTeam:
         self.t.weeks.append(weeks)
         return [
             TeamMember(
-                employee_id=e,
-                full_name=self.t.employees[e]["full_name"],
+                employee_id=employee_id,
+                full_name=self.t.employees[employee_id]["full_name"],
                 role_title=row["role_title"],
                 hours_per_week=row["hours_per_week"],
-                booked_hours=self.t.booked.get(e, 0),
-                skills=self._skill_names(e),
+                hourly_rate_cents=self.t.employees[employee_id].get("hourly_rate_cents"),
+                booked_hours=self.t.booked.get(employee_id, 0),
+                skills=self._skill_names(employee_id),
             )
-            for (p, e), row in self.t.team.items()
-            if p == project.id
+            for (project_id, employee_id), row in self.t.team.items()
+            if project_id == project.id
         ]
 
     async def member_names(self, project_id: uuid.UUID) -> dict[uuid.UUID, str]:
@@ -94,7 +95,12 @@ class FakeTeam:
         )
 
     async def create_employee(
-        self, org_id: uuid.UUID, full_name: str, role_title: str, hours_per_week: int
+        self,
+        org_id: uuid.UUID,
+        full_name: str,
+        role_title: str,
+        hours_per_week: int,
+        hourly_rate_cents: int | None,
     ) -> uuid.UUID:
         employee_id = uuid.uuid4()
         self.t.employees[employee_id] = {
@@ -102,8 +108,12 @@ class FakeTeam:
             "full_name": full_name,
             "role_title": role_title,
             "weekly_capacity_hours": hours_per_week,
+            "hourly_rate_cents": hourly_rate_cents,
         }
         return employee_id
+
+    async def set_hourly_rate(self, employee_id: uuid.UUID, hourly_rate_cents: int | None) -> None:
+        self.t.employees[employee_id]["hourly_rate_cents"] = hourly_rate_cents
 
     async def rename_employee(self, employee_id: uuid.UUID, full_name: str) -> None:
         self.t.employees[employee_id]["full_name"] = full_name
@@ -228,9 +238,9 @@ def test_team_crud(
     team_client: TestClient, store: Store, team_store: TeamStore, auth: Auth
 ) -> None:
     user, org, pid = _project(team_client, store, auth)
-    h = auth(user)
+    headers = auth(user)
     url = f"/api/v1/projects/{pid}/team"
-    assert team_client.get(url, headers=h).json() == []
+    assert team_client.get(url, headers=headers).json() == []
 
     existing = uuid.uuid4()
     team_store.employees[existing] = {"org_id": org, "full_name": "Mark Chen"}
@@ -241,61 +251,105 @@ def test_team_crud(
         "hoursPerWeek": 30,
         "skills": ["Spark", "spark"],
     }
-    r = team_client.post(url, json=body, headers=h)
-    assert r.status_code == 201, r.text
-    mark = r.json()
+    response = team_client.post(url, json=body, headers=headers)
+    assert response.status_code == 201, response.text
+    mark = response.json()
     assert mark == {
         "employeeId": str(existing),
         "fullName": "Mark Chen",
         "roleTitle": "Data Engineer",
         "hoursPerWeek": 30,
+        "hourlyRateCents": None,
         "bookedHours": 12.5,
         "skills": ["Spark"],
     }
     assert team_store.weeks[-1][0] == date(2026, 11, 16)
 
-    r = team_client.post(url, json=SARA, headers=h)
-    assert r.status_code == 201
-    sara = r.json()["employeeId"]
+    response = team_client.post(url, json=SARA, headers=headers)
+    assert response.status_code == 201
+    sara = response.json()["employeeId"]
     assert team_store.employees[uuid.UUID(sara)]["weekly_capacity_hours"] == 40
-    r = team_client.post(url, json={**SARA, "fullName": "SARA KIM"}, headers=h)
-    assert r.status_code == 409
-    assert r.json()["detail"] == "SARA KIM is already on the team"
+    response = team_client.post(url, json={**SARA, "fullName": "SARA KIM"}, headers=headers)
+    assert response.status_code == 409
+    assert response.json()["detail"] == "SARA KIM is already on the team"
     for bad in (
         {**SARA, "hoursPerWeek": 0},
         {**SARA, "hoursPerWeek": 81},
         {**SARA, "fullName": " "},
     ):
-        assert team_client.post(url, json=bad, headers=h).status_code == 422
+        assert team_client.post(url, json=bad, headers=headers).status_code == 422
 
     member = f"{url}/{sara}"
-    r = team_client.patch(member, json={"hoursPerWeek": 20, "skills": ["Data Modeling"]}, headers=h)
-    assert r.status_code == 200, r.text
-    assert (r.json()["hoursPerWeek"], r.json()["skills"]) == (20, ["Data Modeling"])
-    r = team_client.patch(member, json={"fullName": "Mark Chen"}, headers=h)
-    assert r.status_code == 409
-    r = team_client.patch(member, json={"fullName": "Sara Kimura"}, headers=h)
-    assert r.json()["fullName"] == "Sara Kimura"
-    assert team_client.patch(member, json={}, headers=h).status_code == 422
-    assert team_client.patch(member, json={"hoursPerWeek": None}, headers=h).status_code == 422
+    response = team_client.patch(
+        member, json={"hoursPerWeek": 20, "skills": ["Data Modeling"]}, headers=headers
+    )
+    assert response.status_code == 200, response.text
+    assert (response.json()["hoursPerWeek"], response.json()["skills"]) == (20, ["Data Modeling"])
+    response = team_client.patch(member, json={"fullName": "Mark Chen"}, headers=headers)
+    assert response.status_code == 409
+    response = team_client.patch(member, json={"fullName": "Sara Kimura"}, headers=headers)
+    assert response.json()["fullName"] == "Sara Kimura"
+    assert team_client.patch(member, json={}, headers=headers).status_code == 422
+    assert (
+        team_client.patch(member, json={"hoursPerWeek": None}, headers=headers).status_code == 422
+    )
     other = f"{url}/{uuid.uuid4()}"
-    assert team_client.patch(other, json={"hoursPerWeek": 5}, headers=h).status_code == 404
+    assert team_client.patch(other, json={"hoursPerWeek": 5}, headers=headers).status_code == 404
 
     viewer = store.add_user("Vic")
     store.members[(org, viewer)] = OrgRole.VIEWER
     assert team_client.get(url, headers=auth(viewer)).status_code == 200
     assert team_client.delete(member, headers=auth(viewer)).status_code == 403
 
-    assert team_client.delete(member, headers=h).status_code == 204
-    assert team_client.delete(member, headers=h).status_code == 404
-    assert [m["fullName"] for m in team_client.get(url, headers=h).json()] == ["Mark Chen"]
+    assert team_client.delete(member, headers=headers).status_code == 204
+    assert team_client.delete(member, headers=headers).status_code == 404
+    assert [listed["fullName"] for listed in team_client.get(url, headers=headers).json()] == [
+        "Mark Chen"
+    ]
 
     team_store.applied[uuid.UUID(pid)] = 1
-    r = team_client.post(url, json=SARA, headers=h)
-    assert r.status_code == 409
-    assert r.json()["detail"] == "Plan v1 is in force; record a change on step 7"
+    response = team_client.post(url, json=SARA, headers=headers)
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Plan v1 is in force; record a change on step 7"
     outsider = store.add_user("Eve")
     assert team_client.get(url, headers=auth(outsider)).status_code == 404
+
+
+def test_team_hourly_rates(
+    team_client: TestClient, store: Store, team_store: TeamStore, auth: Auth
+) -> None:
+    user, org, pid = _project(team_client, store, auth)
+    headers = auth(user)
+    url = f"/api/v1/projects/{pid}/team"
+    response = team_client.post(url, json={**SARA, "hourlyRateCents": 9_500}, headers=headers)
+    assert response.status_code == 201, response.text
+    sara = response.json()["employeeId"]
+    assert response.json()["hourlyRateCents"] == 9_500
+    assert team_store.employees[uuid.UUID(sara)]["hourly_rate_cents"] == 9_500
+    for bad in (-1, 100_000_001, 12.5, "lots"):
+        response = team_client.post(
+            url, json={**SARA, "fullName": "Ana", "hourlyRateCents": bad}, headers=headers
+        )
+        assert response.status_code == 422, bad
+
+    # Reusing an organization employee keeps their rate unless the body gives one.
+    known = uuid.uuid4()
+    team_store.employees[known] = {"org_id": org, "full_name": "Leo", "hourly_rate_cents": 8_000}
+    response = team_client.post(url, json={**SARA, "fullName": "Leo"}, headers=headers)
+    assert response.json()["hourlyRateCents"] == 8_000
+    member = f"{url}/{sara}"
+    response = team_client.patch(member, json={"hourlyRateCents": 12_000}, headers=headers)
+    assert (response.status_code, response.json()["hourlyRateCents"]) == (200, 12_000)
+    response = team_client.patch(member, json={"hoursPerWeek": 20}, headers=headers)
+    assert response.json()["hourlyRateCents"] == 12_000  # untouched when not sent
+    response = team_client.patch(member, json={"hourlyRateCents": None}, headers=headers)
+    assert (response.status_code, response.json()["hourlyRateCents"]) == (
+        200,
+        None,
+    )  # back to the default
+    assert (
+        team_client.patch(member, json={"hourlyRateCents": -5}, headers=headers).status_code == 422
+    )
 
 
 def test_skills_crud(
@@ -370,9 +424,13 @@ async def test_repo_members_average_booked_hours() -> None:
         "hours_per_week": 30,
         "total": 30,
     }
-    conn = Conn(Rows([row]), Rows([{"employee_id": emp, "name": "Python"}]))
+    conn = Conn(
+        Rows([{**row, "hourly_rate_cents": 9_000}]), Rows([{"employee_id": emp, "name": "Python"}])
+    )
     weeks = planning_weeks(date(2026, 11, 16), date(2026, 12, 31), date(2026, 11, 13))
     [member] = await TeamRepository(conn).members(project, weeks)  # type: ignore[arg-type]
     assert (member.booked_hours, member.hours_per_week, member.skills) == (4.5, 30.0, ["Python"])
+    assert member.hourly_rate_cents == 9_000
+    assert "employees.hourly_rate_cents" in conn.sql[0]
     assert "allocations.project_id != " in conn.sql[0]
     assert "FROM public.project_team_members" in conn.sql[0]

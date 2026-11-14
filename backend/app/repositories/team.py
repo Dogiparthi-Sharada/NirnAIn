@@ -69,49 +69,53 @@ class TeamRepository:
     # ------------------------------------------------------------------ team
     async def members(self, project: ProjectRef, weeks: Sequence[date]) -> list[TeamMember]:
         """The team, with average weekly hours already booked on other projects in `weeks`."""
-        t, e, al = project_team_members, employees, allocations
+        member, employee, booking = project_team_members, employees, allocations
         other = (
-            sa.select(al.c.employee_id, sa.func.sum(al.c.hours).label("total"))
+            sa.select(booking.c.employee_id, sa.func.sum(booking.c.hours).label("total"))
             .where(
-                al.c.project_id != project.id,
-                al.c.week_start >= min(weeks),
-                al.c.week_start <= max(weeks),
-                al.c.employee_id.in_(
-                    sa.select(t.c.employee_id).where(t.c.project_id == project.id)
+                booking.c.project_id != project.id,
+                booking.c.week_start >= min(weeks),
+                booking.c.week_start <= max(weeks),
+                booking.c.employee_id.in_(
+                    sa.select(member.c.employee_id).where(member.c.project_id == project.id)
                 ),
             )
-            .group_by(al.c.employee_id)
+            .group_by(booking.c.employee_id)
             .subquery()
         )
         rows = (
             await self._conn.execute(
                 sa.select(
-                    t.c.employee_id,
-                    e.c.full_name,
-                    sa.func.coalesce(t.c.role_title, e.c.role_title).label("role_title"),
-                    t.c.hours_per_week,
+                    member.c.employee_id,
+                    employee.c.full_name,
+                    sa.func.coalesce(member.c.role_title, employee.c.role_title).label(
+                        "role_title"
+                    ),
+                    member.c.hours_per_week,
+                    employee.c.hourly_rate_cents,
                     sa.func.coalesce(other.c.total, 0).label("total"),
                 )
                 .select_from(
-                    t.join(e, e.c.id == t.c.employee_id).outerjoin(
-                        other, other.c.employee_id == t.c.employee_id
+                    member.join(employee, employee.c.id == member.c.employee_id).outerjoin(
+                        other, other.c.employee_id == member.c.employee_id
                     )
                 )
-                .where(t.c.project_id == project.id)
-                .order_by(t.c.created_at, e.c.full_name, t.c.employee_id)
+                .where(member.c.project_id == project.id)
+                .order_by(member.c.created_at, employee.c.full_name, member.c.employee_id)
             )
         ).all()
-        names = await self._skill_names([r.employee_id for r in rows])
+        names = await self._skill_names([row.employee_id for row in rows])
         return [
             TeamMember(
-                employee_id=r.employee_id,
-                full_name=r.full_name,
-                role_title=r.role_title,
-                hours_per_week=float(r.hours_per_week),
-                booked_hours=average_weekly_hours(float(r.total), len(weeks)),
-                skills=names.get(r.employee_id, []),
+                employee_id=row.employee_id,
+                full_name=row.full_name,
+                role_title=row.role_title,
+                hours_per_week=float(row.hours_per_week),
+                hourly_rate_cents=row.hourly_rate_cents,
+                booked_hours=average_weekly_hours(float(row.total), len(weeks)),
+                skills=names.get(row.employee_id, []),
             )
-            for r in rows
+            for row in rows
         ]
 
     async def _skill_names(self, employee_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[str]]:
@@ -156,7 +160,12 @@ class TeamRepository:
         return (await self._conn.execute(stmt)).scalar()
 
     async def create_employee(
-        self, org_id: uuid.UUID, full_name: str, role_title: str, hours_per_week: int
+        self,
+        org_id: uuid.UUID,
+        full_name: str,
+        role_title: str,
+        hours_per_week: int,
+        hourly_rate_cents: int | None,
     ) -> uuid.UUID:
         employee_id = uuid.uuid4()
         await self._conn.execute(
@@ -166,9 +175,18 @@ class TeamRepository:
                 full_name=full_name,
                 role_title=role_title,
                 weekly_capacity_hours=hours_per_week,
+                hourly_rate_cents=hourly_rate_cents,
             )
         )
         return employee_id
+
+    async def set_hourly_rate(self, employee_id: uuid.UUID, hourly_rate_cents: int | None) -> None:
+        """The organization employee's rate (None: planned at the optimizer's default)."""
+        await self._conn.execute(
+            sa.update(employees)
+            .where(employees.c.id == employee_id)
+            .values(hourly_rate_cents=hourly_rate_cents)
+        )
 
     async def rename_employee(self, employee_id: uuid.UUID, full_name: str) -> None:
         e = employees

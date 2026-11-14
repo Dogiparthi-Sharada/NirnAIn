@@ -14,6 +14,8 @@ PersonName = Annotated[str, StringConstraints(min_length=1, max_length=200)]
 RoleTitle = Annotated[str, StringConstraints(min_length=1, max_length=120)]
 SkillName = Annotated[str, StringConstraints(min_length=1, max_length=100)]
 HoursPerWeek = Annotated[int, Field(ge=1, le=80)]
+# Cents per hour; up to $1M/h so a typo can't overflow the labor cost.
+HourlyRateCents = Annotated[int, Field(ge=0, le=100_000_000)]
 SkillNames = Annotated[list[SkillName], Field(max_length=50)]
 
 
@@ -44,14 +46,19 @@ class TeamMember(CamelModel):
     full_name: str
     role_title: str | None
     hours_per_week: float
+    # The organization employee's rate; null = planned at the optimizer's default rate.
+    hourly_rate_cents: int | None
     booked_hours: float
     skills: list[str]
 
 
 class TeamMemberCreate(InputModel):
+    """A person to add; a rate is stored on the organization employee (null keeps theirs)."""
+
     full_name: PersonName
     role_title: RoleTitle
     hours_per_week: HoursPerWeek
+    hourly_rate_cents: HourlyRateCents | None = None
     skills: SkillNames = Field(default_factory=list)
 
     @field_validator("full_name")
@@ -66,18 +73,26 @@ class TeamMemberCreate(InputModel):
 
 
 class TeamMemberUpdate(InputModel):
-    """Partial update; `fullName` renames the organization's employee record."""
+    """Partial update; `fullName` and `hourlyRateCents` change the organization's employee.
+
+    `hourlyRateCents: null` clears the rate, so the person is planned at the default rate.
+    """
 
     full_name: PersonName | None = None
     role_title: RoleTitle | None = None
     hours_per_week: HoursPerWeek | None = None
+    hourly_rate_cents: HourlyRateCents | None = None
     skills: SkillNames | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> TeamMemberUpdate:
         if not self.model_fields_set:
             raise ValueError("Provide at least one field to update")
-        nulls = sorted(f for f in self.model_fields_set if getattr(self, f) is None)
+        nulls = sorted(
+            name
+            for name in self.model_fields_set - {"hourly_rate_cents"}
+            if getattr(self, name) is None
+        )
         if nulls:
             raise ValueError(f"Fields cannot be null: {', '.join(nulls)}")
         if self.full_name is not None:
@@ -94,6 +109,11 @@ class TeamMemberUpdate(InputModel):
         if self.hours_per_week is not None:
             out["hours_per_week"] = self.hours_per_week
         return out
+
+    @property
+    def rate_changed(self) -> bool:
+        """Whether the body sets the rate (to a value, or to null for the default)."""
+        return "hourly_rate_cents" in self.model_fields_set
 
 
 # --------------------------------------------------------------------------- skills

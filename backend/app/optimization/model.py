@@ -9,7 +9,7 @@ changes while it is solving. `PlanningInput.to_snapshot()` and
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Literal, cast
@@ -22,6 +22,11 @@ RunStatus = Literal["optimal", "feasible", "infeasible", "timeout", "failed"]
 ResourceKind = Literal["employee", "contractor"]
 
 DEFAULT_HOURS_PER_DAY = 8.0
+# People added in the app often have no rate yet. They are planned at a blended
+# IT rate ($85/h): priced at $0 they would make every budget meaningless and
+# attract all the work, and a team average is $0 when nobody has a rate. The
+# confirmation sheet lists who is planned at this default.
+DEFAULT_HOURLY_RATE_CENTS = 8_500
 CONTRACTOR_WEEKLY_HOURS = 40.0
 MAX_PROFICIENCY = 5
 
@@ -371,11 +376,11 @@ def qualified(resource: Resource, task: Task) -> bool:
     return resource.skill_gap(task) == 0
 
 
-def _employee_rate(employees: Sequence[Employee]) -> int:
-    # Unknown rates are imputed with the team average so they neither look free
-    # (and attract all the work) nor block the budget.
-    known = [e.hourly_rate_cents for e in employees if e.hourly_rate_cents is not None]
-    return round(sum(known) / len(known)) if known else 0
+def planned_rate_cents(employee: Employee) -> int:
+    """The hourly rate the optimizer plans this person at (their own, else the default)."""
+    if employee.hourly_rate_cents is not None:
+        return employee.hourly_rate_cents
+    return DEFAULT_HOURLY_RATE_CENTS
 
 
 def build_resources(inp: PlanningInput) -> tuple[Resource, ...]:
@@ -384,42 +389,42 @@ def build_resources(inp: PlanningInput) -> tuple[Resource, ...]:
     Contractors are added only when `allow_contractors` is on, a contractor
     rate is set, and some task has no fully qualified employee. Tasks are
     grouped by the set of skills they need; each group gets one profile with
-    proficiency 5 in those skills.
+    proficiency 5 in those skills. People without a rate are planned at
+    `DEFAULT_HOURLY_RATE_CENTS`.
     """
-    default_rate = _employee_rate(inp.employees)
     resources = [
         Resource(
-            id=e.id,
-            name=e.name,
+            id=employee.id,
+            name=employee.name,
             kind="employee",
-            weekly_capacity_hours=e.weekly_capacity_hours,
-            rate_cents=e.hourly_rate_cents if e.hourly_rate_cents is not None else default_rate,
-            skills=dict(e.skills),
-            employee_id=e.id,
+            weekly_capacity_hours=employee.weekly_capacity_hours,
+            rate_cents=planned_rate_cents(employee),
+            skills=dict(employee.skills),
+            employee_id=employee.id,
         )
-        for e in inp.employees
+        for employee in inp.employees
     ]
-    c = inp.constraints
-    if not c.allow_contractors or c.contractor_rate_cents is None:
+    constraints = inp.constraints
+    if not constraints.allow_contractors or constraints.contractor_rate_cents is None:
         return tuple(resources)
 
     groups: dict[tuple[str, ...], dict[str, str]] = {}
     for task in inp.tasks:
-        if not task.skills or any(qualified(r, task) for r in resources):
+        if not task.skills or any(qualified(resource, task) for resource in resources):
             continue
-        key = tuple(sorted(s.skill_id for s in task.skills))
+        key = tuple(sorted(requirement.skill_id for requirement in task.skills))
         names = groups.setdefault(key, {})
-        for s in task.skills:
-            names[s.skill_id] = s.skill_name
+        for requirement in task.skills:
+            names[requirement.skill_id] = requirement.skill_name
     for key, names in groups.items():
-        label = " / ".join(names[k] for k in key)
+        label = " / ".join(names[skill_id] for skill_id in key)
         resources.append(
             Resource(
                 id="contractor:" + "+".join(key),
                 name=f"Contractor: {label} specialist",
                 kind="contractor",
                 weekly_capacity_hours=CONTRACTOR_WEEKLY_HOURS,
-                rate_cents=c.contractor_rate_cents,
+                rate_cents=constraints.contractor_rate_cents,
                 skills=dict.fromkeys(key, MAX_PROFICIENCY),
             )
         )
