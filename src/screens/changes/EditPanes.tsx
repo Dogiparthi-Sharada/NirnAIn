@@ -3,16 +3,21 @@
  *
  * Nothing here is parsed or guessed: the panes read the project's current inputs
  * (constraints, WBS, team), and send only the values that differ as `edits` to
- * POST /projects/{id}/changes through the `onSubmit` given by `ReportChange`.
+ * POST /projects/{id}/changes through the `onSubmit` given by `ReportChange`. People can
+ * join ("+ Add person", `TeamEdits.tsx`) or leave ("Remove") the project mid-way.
  * Progress is a percent per work package; the backend turns it into the remaining duration.
  */
 import { useMemo, useState } from 'react'
 import { errorMessage } from '@/lib/api'
-import { useChangeTeam, type ChangeEdits, type PlanVersion } from '@/lib/changes'
+import { useChangeTeam, type ChangeEdits, type NewMember, type PlanVersion } from '@/lib/changes'
 import { formatDate, formatMoney } from '@/lib/format'
 import { useConstraints, useWbs } from '@/lib/queries'
 import type { WbsNode } from '@/lib/types'
+import { NewcomerForm, NewcomerList } from './TeamEdits'
 import { DAYS_PER_WEEK, weeks } from './ui'
+
+// At most this many people join in one change (the server's limit).
+const MAX_NEWCOMERS = 10
 
 /** Work packages as the optimizer sees them: level-3 nodes and level-2 nodes without children. */
 function workPackages(nodes: WbsNode[] | undefined): WbsNode[] {
@@ -58,6 +63,9 @@ export function EditsPane({ projectId, current, busy, onSubmit }: { projectId: s
   const [hoursBy, setHoursBy] = useState<Record<string, string>>({})
   const [workPackageId, setWorkPackageId] = useState('')
   const [workPackageWeeks, setWorkPackageWeeks] = useState('')
+  const [newcomers, setNewcomers] = useState<NewMember[]>([])
+  const [leaving, setLeaving] = useState<Set<string>>(() => new Set())
+  const [adding, setAdding] = useState(false)
   const packages = useMemo(() => workPackages(wbs.data), [wbs.data])
 
   if (!constraints.data || !wbs.data || !team.data) {
@@ -84,13 +92,25 @@ export function EditsPane({ projectId, current, busy, onSubmit }: { projectId: s
   if (deadline && deadline !== constraintSet.mustFinishBy) edits.mustFinishBy = deadline
   const hoursEdits: Record<string, number> = {}
   for (const member of team.data) {
+    if (leaving.has(member.employeeId)) continue
     const raw = hoursBy[member.employeeId]?.trim()
     const hoursValue = raw ? Number(raw) : NaN
     if (Number.isFinite(hoursValue) && hoursValue >= 0 && hoursValue <= 80 && hoursValue !== member.hoursPerWeek) hoursEdits[member.employeeId] = hoursValue
   }
   if (Object.keys(hoursEdits).length) edits.hoursPerWeek = hoursEdits
+  if (newcomers.length) edits.addMembers = newcomers
+  if (leaving.size) edits.removeMembers = [...leaving]
+  // Business rule (the server checks it too): a plan needs at least one person.
+  const nobodyLeft = leaving.size > 0 && team.data.length - leaving.size + newcomers.length < 1
+  const toggleLeaving = (employeeId: string) =>
+    setLeaving((previous) => {
+      const next = new Set(previous)
+      if (next.has(employeeId)) next.delete(employeeId)
+      else next.add(employeeId)
+      return next
+    })
   if (workPackage && workPackageDays !== null && Number.isFinite(workPackageDays) && workPackageDays >= 0 && workPackageDays !== workPackage.durationDays) edits.durationDays = { [workPackage.id]: workPackageDays }
-  const invalid = (budgetCents !== null && Number.isNaN(budgetCents)) || (workPackageDays !== null && (!Number.isFinite(workPackageDays) || workPackageDays < 0))
+  const invalid = nobodyLeft || (budgetCents !== null && Number.isNaN(budgetCents)) || (workPackageDays !== null && (!Number.isFinite(workPackageDays) || workPackageDays < 0))
   const was = { fontWeight: 400 }
 
   return (
@@ -124,42 +144,84 @@ export function EditsPane({ projectId, current, busy, onSubmit }: { projectId: s
           <span className="small muted">weeks</span>
         </div>
       </div>
-      {team.data.length > 0 && (
-        <div className="field mt">
-          <label>Hours per week on this project</label>
+      <div className="field mt">
+        <label>Team: hours per week on this project</label>
+        {team.data.length > 0 && (
           <table className="tbl">
             <thead>
               <tr>
                 <th>Person</th>
                 <th>Plan v{current.version}</th>
                 <th>New</th>
+                <th>
+                  <span className="sr-only">On the project</span>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {team.data.map((member) => (
-                <tr key={member.employeeId}>
-                  <td>{member.fullName}</td>
-                  <td className="mono">{member.hoursPerWeek}h</td>
-                  <td>
-                    <input
-                      className="in sm"
-                      style={{ width: 80 }}
-                      inputMode="decimal"
-                      aria-label={`New hours per week for ${member.fullName}`}
-                      placeholder={String(member.hoursPerWeek)}
-                      value={hoursBy[member.employeeId] ?? ''}
-                      onChange={(event) => setHoursBy((previous) => ({ ...previous, [member.employeeId]: event.target.value }))}
-                    />
-                  </td>
-                </tr>
-              ))}
+              {team.data.map((member) => {
+                const leaves = leaving.has(member.employeeId)
+                return (
+                  <tr key={member.employeeId}>
+                    <td>
+                      {member.fullName}
+                      {leaves && <span className="small muted"> · leaves the project</span>}
+                    </td>
+                    <td className="mono">{member.hoursPerWeek}h</td>
+                    <td>
+                      <input
+                        className="in sm"
+                        style={{ width: 80 }}
+                        inputMode="decimal"
+                        aria-label={`New hours per week for ${member.fullName}`}
+                        placeholder={String(member.hoursPerWeek)}
+                        disabled={leaves}
+                        value={leaves ? '' : (hoursBy[member.employeeId] ?? '')}
+                        onChange={(event) => setHoursBy((previous) => ({ ...previous, [member.employeeId]: event.target.value }))}
+                      />
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <button
+                        className={`btn sm sec${leaves ? '' : ' danger'}`}
+                        type="button"
+                        aria-pressed={leaves}
+                        aria-label={leaves ? `Keep ${member.fullName} on the project` : `Remove ${member.fullName} from the project`}
+                        onClick={() => toggleLeaving(member.employeeId)}
+                      >
+                        {leaves ? 'Keep' : 'Remove'}
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
-          <div className="hint">0 takes someone off the project.</div>
-        </div>
-      )}
+        )}
+        <div className="hint">0 hours or Remove takes someone off the project; the re-plan gives their work to others.</div>
+        {nobodyLeft && (
+          <div className="note bad" role="alert">
+            Keep at least one person on the project, or add someone first.
+          </div>
+        )}
+        <NewcomerList newcomers={newcomers} onDrop={(fullName) => setNewcomers((previous) => previous.filter((member) => member.fullName !== fullName))} />
+        {adding ? (
+          <NewcomerForm
+            projectId={projectId}
+            takenNames={[...team.data.map((member) => member.fullName), ...newcomers.map((member) => member.fullName)]}
+            onAdd={(member) => {
+              setNewcomers((previous) => [...previous, member])
+              setAdding(false)
+            }}
+            onCancel={() => setAdding(false)}
+          />
+        ) : (
+          <button className="btn sm sec mt8" id="chg-add-person" type="button" disabled={newcomers.length >= MAX_NEWCOMERS} onClick={() => setAdding(true)}>
+            + Add person
+          </button>
+        )}
+      </div>
       <div className="row end mt">
-        {invalid && <span className="gate bad">Check the numbers above.</span>}
+        {invalid && <span className="gate bad">{nobodyLeft ? 'A plan needs at least one person.' : 'Check the numbers above.'}</span>}
         <button className="btn" data-find="edits" type="button" disabled={busy || invalid || Object.keys(edits).length === 0} onClick={() => onSubmit(edits)}>
           Preview impact
         </button>

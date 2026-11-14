@@ -5,13 +5,13 @@
  * Data comes from GET /changes/{id}/compare (rows per work package, both plans' cost,
  * finish date and budget). "Approve" applies the proposed run (it becomes the next
  * version and the change's values become the project's inputs); "Keep" rejects the
- * change and Plan vN stays in force.
+ * change and Plan vN stays in force. Who joins or leaves the team comes from the change.
  */
-import type { ChangeComparison, CompareRow } from '@/lib/changes'
+import type { AddedMember, ChangeComparison, CompareRow } from '@/lib/changes'
 import { errorMessage } from '@/lib/api'
 import { formatDate, formatMoney } from '@/lib/format'
 import { PlanGantt } from './PlanGantt'
-import { Chip, DAY_MS, day, range, signedWeeks } from './ui'
+import { Chip, DAY_MS, day, memberSummary, range, signedWeeks } from './ui'
 
 interface CompareQuery {
   data?: ChangeComparison
@@ -27,9 +27,16 @@ function isChanged(row: CompareRow): boolean {
   return row.before.start !== row.after.start || row.before.end !== row.after.end
 }
 
+/** People the change brings onto the project and names of those who leave it. */
+export interface TeamMoves {
+  joining: AddedMember[]
+  leaving: string[]
+}
+
 /** The comparison card stack plus Approve / Keep. Loading and error states retry the comparison only. */
 export function PlanComparison({
   query,
+  team,
   baseVersion,
   nextVersion,
   approved,
@@ -39,6 +46,7 @@ export function PlanComparison({
   onKeep,
 }: {
   query: CompareQuery
+  team: TeamMoves
   baseVersion: number
   nextVersion: number
   approved: boolean
@@ -110,6 +118,12 @@ export function PlanComparison({
           />
           <Kpi label="What changed" value={`${moved} moved`} detail={`${owners} owner${owners === 1 ? '' : 's'} changed · ${added} added · ${gone} done or dropped`} />
         </div>
+        {(team.joining.length > 0 || team.leaving.length > 0) && (
+          <p className="small mt" id="cmp-team" style={{ marginBottom: 0 }}>
+            <b>Team in Plan v{nextVersion}:</b>{' '}
+            {[...team.joining.map((member) => `${memberSummary(member)} joins`), ...team.leaving.map((name) => `${name} leaves`)].join(' · ')}
+          </p>
+        )}
       </div>
       <div className="card">
         <h3>
