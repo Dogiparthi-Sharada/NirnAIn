@@ -1,13 +1,16 @@
 /**
- * `/auth/callback`: where OAuth, email-confirmation, magic-link and password-recovery redirects
- * land. The Supabase client (`detectSessionInUrl` + PKCE) exchanges the `?code=` on start-up; this
- * screen waits for that, then sends the user on to `?next=` (or the `next` remembered before an
- * OAuth round trip), validated by `safeNext`.
+ * `/auth/callback`: where OAuth, email-confirmation, magic-link and password-recovery redirects land.
  *
- * A code that can't be exchanged here was opened in another browser than the one that started the
- * flow: for sign-up that still means the email is confirmed (the user just signs in); for a
- * password reset the link must be requested again from this device.
+ * Purpose: The Supabase client exchanges the `?code=` on start-up; this screen waits for that and
+ * sends the user on to `?next=` (or the `next` remembered before an OAuth round trip), validated
+ * by `safeNext`. A code opened in another browser can't be exchanged: for sign-up the email is
+ * still confirmed (the user just signs in); a password reset must be requested again from this
+ * device.
+ * How it fits: Route in `App.tsx`; reads the session from `useAuth` and the redirect rules from
+ * `lib/redirect.ts`; framed by `auth/AuthLayout.tsx`; layer: screen.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { supabase } from '@/lib/supabase'

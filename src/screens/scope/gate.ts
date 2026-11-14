@@ -1,13 +1,15 @@
 /**
- * Scope Review's gate to the WBS (step 3 → step 4): what still stops "Continue to WBS Builder".
+ * Scope Review's gate to the WBS: what still stops "Continue to WBS Builder".
  *
- * Business rules: the WBS is built from the accepted scope, so every item must be decided
- * (accepted or removed) before the PM moves on (product owner, round 2: pending items block,
- * not only flagged ones). An item that says more than the notes (evidence 'flagged') must
- * also be resolved: use the quoted version, remove it, or accept it as the PM's own statement.
- * Used by `ScopeReview.tsx`: the gate text next to Continue and the red banner a blocked click
- * opens, whose links focus each pending item and offer the screen's "accept all quoted".
+ * Purpose: The WBS is built from the accepted scope, so every item must be accepted or removed
+ * before the PM moves on (pending items block, not only flagged ones), and an item that says more
+ * than the notes must be resolved first: use the quoted version, remove it or accept it as the
+ * PM's own.
+ * How it fits: Used by `screens/ScopeReview.tsx` for the gate text next to Continue and the banner
+ * a blocked click opens, whose links focus each pending item; layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import type { GateItem } from '@/components/InputsKit'
 import type { EvidenceScopeItem } from '@/lib/inputs'
 
@@ -26,6 +28,7 @@ export interface ScopeGate {
   links: GateItem[]
 }
 
+/** Picks the singular or plural wording for a count. */
 function plural(count: number, one: string, many: string): string {
   return count === 1 ? one : many
 }

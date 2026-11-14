@@ -33,7 +33,7 @@ import {
   type PlanRun,
   type RunRequest,
 } from '@/lib/optimize'
-import { useConstraints, useLatestRun } from '@/lib/queries'
+import { isRunning, useConstraints, useLatestRun } from '@/lib/queries'
 import { useToast } from '@/components/InputsKit'
 import { ConfirmSheet } from './optimization/ConfirmSheet'
 import { PlanView } from './optimization/PlanView'
@@ -70,7 +70,7 @@ export default function OptimizationResults() {
 
   const run: PlanRun | null = latest.data ?? null
   const status = run?.status ?? null
-  const solving = startRun.isPending || status === 'queued' || status === 'running'
+  const solving = startRun.isPending || isRunning(status)
   const constraints = constraintsQuery.data as ConstraintAnswers | undefined
   // Wait for the skill list so the skill-gap warning doesn't pop in late; if it fails, skip that check.
   const policy = constraints && !skills.isPending ? policyInputsOf(constraints, skills.data, inputs.data) : null

@@ -1,14 +1,16 @@
 /**
- * Dashboard (`/dashboard`, mockup scripts/views/dashboard.js): one project at a time. The picker
- * `#d-project` lists the organization's real projects, most recently updated first; the cards
- * describe the chosen project from `GET /projects/{projectId}/overview`, and "Next step" opens its
- * first unfinished workflow step.
+ * Dashboard (`/dashboard`): one project at a time, picked from the organization's real projects.
  *
- * Which project is shown: `?project=` in the URL (the picker writes it, so the view can be
- * bookmarked), else `state.projectId` from a screen that sent the PM here, else the last project
- * opened in this browser, else the most recently updated one. The shown project is remembered so
- * the sidebar's steps follow it. A one-off `state.notice` (e.g. "Draft … saved.") shows in `#d-notice`.
+ * Purpose: The cards describe the chosen project from its overview and "Next step" opens its first
+ * unfinished step. The project shown is `?project=` (bookmarkable), else the one a screen sent the
+ * PM here with, else the last opened in this browser, else the most recently updated; a one-off
+ * notice (e.g. "Draft … saved.") shows in `#d-notice`.
+ * How it fits: Port of the mockup's scripts/views/dashboard.js; route in `App.tsx`; reads
+ * `useProjects` and `GET /projects/{projectId}/overview`; renders `components/DashboardCards.tsx`;
+ * layer: screen.
+ * Created: 2026-09-24 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useEffect, useMemo } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router'
 import { AiFindings, DashboardKpis, DeliveryHealth, OpenRisks, ProjectNotifications } from '@/components/DashboardCards'
@@ -75,6 +77,7 @@ export default function Dashboard() {
     return () => window.clearTimeout(timer)
   }, [notice, location.pathname, location.search, navigate])
 
+  /** Shows another project by writing its id to `?project=` (replacing the history entry). */
   const pickProject = (projectId: string) => setSearchParams({ [PROJECT_PARAM]: projectId }, { replace: true })
 
   return (

@@ -1,10 +1,13 @@
 /**
- * Public landing page at `/` (mockup views/landing.js): header with section links, hero with a
- * sample work breakdown, about, features, how it works, call to action and footer.
+ * The public landing page at `/`: hero, about, features, how it works, call to action and footer.
  *
- * Static marketing copy, no data. Signed-in visitors (Supabase session from `useAuth`) see
- * "Go to Dashboard" in place of Sign In / Get Started.
+ * Purpose: Explains NirnAIn to visitors with static marketing copy (no data); signed-in visitors
+ * see "Go to Dashboard" in place of Sign In / Get Started.
+ * How it fits: Port of the mockup's views/landing.js; index route in `App.tsx`; reads the session
+ * from `useAuth`; layer: screen.
+ * Created: 2026-10-04 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useEffect, type MouseEvent } from 'react'
 import { Link } from 'react-router'
 import { useAuth } from '@/auth/useAuth'

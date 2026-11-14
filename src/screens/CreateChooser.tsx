@@ -1,8 +1,14 @@
 /**
- * Step 1 entry, Create New Project (`/projects/new`, mockup create-chooser.js): choose between the
- * manual form (`/projects/new/form`) and starting from a transcript or document
- * (`/projects/new/upload`). Both paths end in a project with reviewed scope.
+ * Step 1 entry, Create New Project (`/projects/new`): the manual form or a transcript or document.
+ *
+ * Purpose: Both paths end in a project with reviewed scope; the PM picks the one that matches what
+ * they have.
+ * How it fits: Port of the mockup's create-chooser.js; links to `screens/CreateProject.tsx`
+ * (`/projects/new/form`) and `screens/CreateFromUpload.tsx` (`/projects/new/upload`);
+ * layer: screen.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useEffect } from 'react'
 import { Link, useNavigate } from 'react-router'
 

@@ -1,11 +1,14 @@
 /**
- * Choose a new password (`/reset-password`): the end of the reset flow. The emailed link signs the
- * user in through `/auth/callback` or `/auth/confirm` with a recovery session, and this screen
- * sets the new password with Supabase `auth.updateUser`.
+ * Choose a new password (`/reset-password`): the end of the password-reset flow.
  *
- * Without a session the link has expired or was used already; the screen offers a new one. The new
- * password must meet the policy in `auth/password.ts`. Styled like the approved sign-in screens.
+ * Purpose: The emailed link signs the user in with a recovery session and this screen sets the new
+ * password, which must meet the policy in `auth/password.ts`; without a session the link has
+ * expired or was used already, and the screen offers a new one.
+ * How it fits: Reached through `/auth/callback` or `/auth/confirm`; calls Supabase
+ * `auth.updateUser`; styled like the approved sign-in screens; layer: screen.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { supabase } from '@/lib/supabase'
@@ -45,6 +48,7 @@ export default function ResetPassword() {
     )
   }
 
+  /** Checks the new password against the policy and the confirmation, then saves it. */
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const errors: typeof fieldErrors = {}

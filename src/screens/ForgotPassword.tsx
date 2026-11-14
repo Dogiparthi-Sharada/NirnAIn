@@ -1,11 +1,14 @@
 /**
- * Reset your password (`/forgot-password`, mockup views/auth.js `#v-forgot`): asks Supabase to email
- * a reset link that comes back through `/auth/callback` to `/reset-password`.
+ * Reset your password (`/forgot-password`): asks Supabase to email a reset link.
  *
- * Privacy: the same "Reset link requested" confirmation shows whether or not an account exists, so
- * the form can't be used to discover registered emails; only network and rate-limit failures are
- * reported as errors.
+ * Purpose: Privacy: the same "Reset link requested" confirmation shows whether or not an account
+ * exists, so the form can't be used to discover registered emails; only network and rate-limit
+ * failures are reported as errors.
+ * How it fits: Port of the mockup's views/auth.js `#v-forgot`; the link comes back through
+ * `/auth/callback` to `screens/ResetPassword.tsx`; layer: screen.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
 import { supabase } from '@/lib/supabase'
@@ -22,6 +25,7 @@ export default function ForgotPassword() {
   const [sentTo, setSentTo] = useState<string | null>(null)
   const emailRef = useRef<HTMLInputElement>(null)
 
+  /** Checks the email and requests the reset link; only network and rate-limit failures show as errors. */
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const trimmed = email.trim()

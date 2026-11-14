@@ -1,13 +1,15 @@
 /**
- * Sign in (`/login`, mockup views/auth.js `#v-login`): Google / Microsoft OAuth or email + password
- * through Supabase Auth.
+ * Sign in (`/login`): Google / Microsoft OAuth or email and password through Supabase Auth.
  *
- * The email form is checked on the client first (the first problem shows in `#li-err` and its field
- * is focused). Supabase errors are mapped to friendly copy; "email not confirmed" offers to resend
- * the confirmation and "invalid credentials" links to the password reset. On success the auth
- * listener stores the session and `<PublicOnly>` sends the user on to `?next=` (validated by
- * `safeNext`) or the dashboard. Nothing is pre-filled.
+ * Purpose: The email form is checked on the client first (the first problem shows in `#li-err` and
+ * its field is focused); Supabase errors become friendly copy, "email not confirmed" offers to
+ * resend the confirmation and "invalid credentials" links to the password reset. Nothing is
+ * pre-filled.
+ * How it fits: Port of the mockup's views/auth.js `#v-login`; on success the auth listener stores
+ * the session and `<PublicOnly>` sends the user on to `?next=` or the dashboard; layer: screen.
+ * Created: 2026-09-24 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useRef, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { supabase } from '@/lib/supabase'
@@ -38,6 +40,7 @@ export default function Login() {
 
   const busy = submitting || oauthPending
 
+  /** Checks the form, then signs in with email and password; errors are shown in friendly words. */
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const trimmed = email.trim()
@@ -63,6 +66,7 @@ export default function Login() {
     // On success the auth listener updates the session and <PublicOnly> redirects to `next`.
   }
 
+  /** Resends the sign-up confirmation email to the address typed. */
   async function resendConfirmation() {
     setResend('sending')
     const { error: resendError } = await supabase.auth.resend({

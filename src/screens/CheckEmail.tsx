@@ -1,33 +1,29 @@
 /**
- * Check your email (`/check-email`, mockup views/auth.js `#v-checkemail`): shown after sign-up when
- * the project requires email confirmation.
+ * Check your email (`/check-email`): shown after sign-up when the project requires email confirmation.
  *
- * The address arrives in router state from Signup. "Resend confirmation email" calls Supabase
- * `auth.resend` and is held back for a 60-second cooldown (also right after sign-up) so it can't
- * hit the provider's rate limit; without an address there is nothing to resend and the button is
- * hidden.
+ * Purpose: The PM can resend the confirmation email, held back for a 60-second cooldown (also
+ * right after sign-up) so it can't hit the provider's rate limit; without an address there is
+ * nothing to resend and the button is hidden.
+ * How it fits: Port of the mockup's views/auth.js `#v-checkemail`; reached from
+ * `screens/Signup.tsx` with the address in router state; calls Supabase `auth.resend`;
+ * layer: screen.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router'
 import { supabase } from '@/lib/supabase'
 import { authRedirectUrl } from '@/lib/redirect'
+import { stateString } from '@/lib/frame'
 import AuthLayout from '@/auth/AuthLayout'
 import { friendlyAuthError } from '@/auth/errors'
 
 const RESEND_COOLDOWN_SECONDS = 60
 
-function emailFromState(state: unknown): string | null {
-  if (typeof state === 'object' && state !== null && 'email' in state) {
-    const email = (state as { email: unknown }).email
-    return typeof email === 'string' && email ? email : null
-  }
-  return null
-}
-
 /** Confirmation instructions with a rate-limited resend. */
 export default function CheckEmail() {
   const location = useLocation()
-  const email = emailFromState(location.state)
+  const email = stateString(location.state, 'email') || null
   const [cooldown, setCooldown] = useState(RESEND_COOLDOWN_SECONDS)
   const [sending, setSending] = useState(false)
   const [message, setMessage] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
@@ -38,6 +34,7 @@ export default function CheckEmail() {
     return () => window.clearTimeout(timer)
   }, [cooldown])
 
+  /** Resends the confirmation email and starts the cooldown; a failure shows a friendly message. */
   async function resend() {
     if (!email) return
     setSending(true)

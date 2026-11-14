@@ -1,11 +1,13 @@
 /**
- * One scope item on Scope Review (step 3): its text (or the editor), the evidence from the
- * notes, its provenance chip and the Accept / Edit / Remove actions (Undo once removed).
+ * One scope item on Scope Review: its text or editor, the evidence, the provenance chip and the actions.
  *
- * Business rule: an item can't be saved blank. Clearing the text and pressing Done keeps the
- * editor open with an inline message (QA S-06); Remove is the way to drop an item. Used by
- * `ScopeReview.tsx` in each category and in the "Removed" group.
+ * Purpose: An item can't be saved blank: clearing the text and pressing Done keeps the editor open
+ * with an inline message (QA S-06); Remove is the way to drop an item, and Undo brings it back.
+ * How it fits: Rendered by `screens/ScopeReview.tsx` in each category and in the "Removed" group;
+ * layer: screen.
+ * Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { Chip } from '@/components/InputsKit'
 import type { EvidenceScopeItem } from '@/lib/inputs'
 
