@@ -15,6 +15,7 @@ import { errorMessage as describeError, isApiError } from '@/lib/api'
 import { uploadSource, type ScopeItemWithEvidence } from '@/lib/create'
 import { useDeleteDocument, useDocuments, useLatestIntakeRun, useScopeItems, useStartIntakeRun, useUploadDocument } from '@/lib/queries'
 import { useStepNav } from '@/lib/steps'
+import { PlanInForceBanner } from './changes/InForceBanner'
 
 const EXTRACTS = [
   { tag: 'OBJ', label: 'Objectives', color: '#DDE7D0' },
@@ -115,6 +116,7 @@ export default function AIProjectIntake() {
         <div className="sub" style={{ marginBottom: 24 }}>
           Provide raw project notes, meeting transcripts, or documents. AI will extract structured project information.
         </div>
+        <PlanInForceBanner projectId={projectId} id="in-plan-in-force" />
         <div className="in-grid">
           <div>
             {fromUpload && (

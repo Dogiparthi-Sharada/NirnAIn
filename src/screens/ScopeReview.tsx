@@ -6,6 +6,7 @@ import type { EvidenceScopeItem } from '@/lib/inputs'
 import { useAddScopeItem, useLatestIntakeRun, useScopeItems, useUpdateScopeItem } from '@/lib/queries'
 import { useStepNav } from '@/lib/steps'
 import { SCOPE_CATEGORIES, SCOPE_CATEGORY_LABELS, type ScopeCategory, type ScopeItemPatch } from '@/lib/types'
+import { PlanInForceBanner } from './changes/InForceBanner'
 import { scopeGate } from './scope/gate'
 
 const SECTION_COLOR: Record<ScopeCategory, string> = {
@@ -141,6 +142,7 @@ export default function ScopeReview() {
       <div className="pg">
         {crumb}
         {header}
+        <PlanInForceBanner projectId={projectId} id="sc-plan-in-force" />
         {actionError && (
           <div className="cf-banner bad" role="alert">
             {errorMessage(actionError)}

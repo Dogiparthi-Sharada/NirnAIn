@@ -111,6 +111,10 @@ function ChangeFlow({ projectId, orgId, versions, onToast }: { projectId: string
 
   return (
     <div id="chg-main">
+      <div className="banner" id="chg-editable" role="status">
+        Steps 3–5 stay editable while Plan v{current.version} is in force: changes there take effect when you re-run on step 6 and apply Plan v
+        {current.version + 1}. Use this page to record why the plan changed (meeting notes, edits or progress) and compare before you approve.
+      </div>
       <div className="g2" style={{ gridTemplateColumns: '1.6fr 1fr' }}>
         <ReportChange projectId={projectId} orgId={orgId} current={current} onCreated={(change) => setActiveId(change.id)} />
         <div className="card">
