@@ -1,15 +1,16 @@
 /**
  * Review rules for "Create from a transcript or document" (step 1b).
  *
- * The server reads a draft of the project (`POST /orgs/{orgId}/project-drafts/extract`, see
- * `lib/create.ts`); the PM then checks every value before anything is saved. This module holds the
- * pure rules behind that review, so the screen (`screens/CreateFromUpload.tsx`) and the form
- * (`components/DraftReviewForm.tsx`) stay presentational:
- * - what each value's provenance is now (stated / inferred / not found / confirmed / edited),
- * - which values still need the PM before Create (missing required values, invalid values, and
- *   inferred values nobody confirmed — AI never decides those on its own),
- * - how the reviewed values map onto the create-project payload.
+ * Purpose: The PM checks every value the server read from the source before anything is saved:
+ * each value's provenance (stated, inferred, not found, confirmed, edited), what still needs the
+ * PM before Create (missing or invalid values and inferred values nobody confirmed; AI never
+ * decides those) and how the reviewed values map onto the create payload.
+ * How it fits: Pure rules behind `screens/CreateFromUpload.tsx` and
+ * `components/DraftReviewForm.tsx`, which stay presentational; reads drafts from `lib/create.ts`
+ * and budget rules from `lib/createForm.ts`; layer: hook/lib.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import type { DraftStatus, ProjectDraft } from './create'
 import { budgetProblem, formatBudgetInput, parseBudgetToCents } from './createForm'
 import { formatDate } from './format'
@@ -81,6 +82,7 @@ export interface ReviewNeed {
 /** The review form's starting values; a department the source doesn't name falls back to `defaultDepartment`. */
 export function initialReview(draft: ProjectDraft, defaultDepartment: string): ReviewState {
   const fields = draft.fields
+  /** One review value as the source gave it: unconfirmed, with its provenance and quote. */
   const entry = (origin: DraftStatus, quote: string | null, value: string): ReviewValue => ({
     value,
     original: value,
@@ -118,10 +120,15 @@ export function confirmTarget(key: ReviewKey, value: string): string | null {
   return null
 }
 
+/** The quote cut to the preview length, with an ellipsis when cut. */
 function preview(quote: string): string {
   return quote.length > QUOTE_PREVIEW ? `${quote.slice(0, QUOTE_PREVIEW - 1)}…` : quote
 }
 
+/**
+ * Why the value under `key` blocks the given intent (missing, too long, dates out of order, bad budget), or
+ * null.
+ */
 function problemWith(state: ReviewState, key: ReviewKey, intent: ReviewIntent): string | null {
   const item = state[key]
   const value = item.value.trim()
@@ -164,6 +171,7 @@ export function reviewNeeds(state: ReviewState, intent: ReviewIntent): ReviewNee
 export function reviewedFields(
   state: ReviewState,
 ): Pick<ProjectCreate, 'name' | 'description' | 'startDate' | 'targetEndDate' | 'budgetCents' | 'department' | 'sponsor'> {
+  /** The trimmed value of one review field. */
   const text = (key: ReviewKey) => state[key].value.trim()
   return {
     name: text('name'),

@@ -21,8 +21,6 @@ const TILES = [
   { key: 'audio', icon: '🎙', label: 'Audio', sub: 'MP3, WAV, M4A · transcription coming soon', accept: '.mp3,.wav,.m4a,.ogg,.webm,.aac,.flac,audio/*' },
 ] as const
 
-export type TileKey = (typeof TILES)[number]['key']
-
 const ALL_ACCEPT = TILES.map((tile) => tile.accept).join(',')
 const SUPPORTED_EXTENSIONS = /\.(pdf|docx|txt|vtt|srt|md|mp3|wav|m4a|ogg|webm|aac|flac)$/i
 const VIDEO_EXTENSIONS = /\.(mp4|mov|m4v|avi|mkv|wmv)$/i

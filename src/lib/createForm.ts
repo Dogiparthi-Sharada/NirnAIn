@@ -1,11 +1,15 @@
 /**
- * Rules of the manual Create Project form (step 1a, `screens/CreateProject.tsx`), kept apart from
- * the screen so the markup stays readable and Create from upload can share the budget rules.
+ * Rules of the manual Create Project form: defaults, validation and the create payload.
  *
- * Validation mirrors the server's `ProjectCreate` (name 1–200 chars, end on/after start, budget as
- * integer cents) so problems show up inline before a round trip: "Save Draft" needs only a name,
- * "Continue" needs the five required fields. Money is integer cents on the wire.
+ * Purpose: Validation mirrors the server's `ProjectCreate` (name 1–200 characters, end on/after
+ * start, budget as integer cents) so problems show inline before a round trip: "Save Draft" needs
+ * only a name, "Continue" needs the five required fields.
+ * How it fits: Used by `screens/CreateProject.tsx` and `components/CreateForm.tsx`; Create from
+ * upload shares the budget rules through `lib/draftReview.ts` and step 5 through
+ * `lib/constraints.ts`; layer: hook/lib.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { formatNumber, todayIsoDate } from './format'
 import type { Methodology, Priority, ProjectCreate, ProjectType, Visibility } from './types'
 

@@ -1,12 +1,15 @@
 /**
- * State of the signed-in app frame (`components/Shell.tsx`) that several screens share: which
- * project is open, whether it has an applied plan (unlocks step 7), what the assistant's context
- * is, and the last project the PM looked at (the dashboard's default and the sidebar's project
- * while on the dashboard).
+ * Shared state of the signed-in app frame: the open project, its plan versions and the last project opened.
  *
- * The last project lives in localStorage with a tiny subscription so the sidebar follows the
- * dashboard's picker immediately.
+ * Purpose: Several screens need the same frame facts: whether the open project has an applied plan
+ * (unlocks step 7), the assistant's screen context, and the last project the PM looked at (the
+ * dashboard's default). The last project lives in localStorage with a tiny subscription so the
+ * sidebar follows the dashboard's picker immediately.
+ * How it fits: Used by `components/Shell.tsx`, `components/AIChat.tsx` and the dashboard and
+ * project screens; layer: hook/lib.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useSyncExternalStore } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useLocation, useMatch } from 'react-router'
@@ -62,6 +65,7 @@ export function screenContext(pathname: string): string {
   return (segment && CONTEXT_BY_SEGMENT[segment]) || 'Dashboard'
 }
 
+/** The assistant's screen name for the current URL. */
 export function useScreenContext(): string {
   return screenContext(useLocation().pathname)
 }
@@ -71,6 +75,7 @@ export function useScreenContext(): string {
 const LAST_PROJECT_KEY = 'nirnain:last-project'
 const lastProjectListeners = new Set<() => void>()
 
+/** Reads the last opened project id from localStorage (null when unavailable). */
 export function readLastProjectId(): string | null {
   try {
     return localStorage.getItem(LAST_PROJECT_KEY)
@@ -90,6 +95,7 @@ export function rememberLastProjectId(projectId: string): void {
   lastProjectListeners.forEach((listener) => listener())
 }
 
+/** Subscribes to changes of the last opened project; returns the unsubscribe function. */
 function subscribeLastProject(listener: () => void): () => void {
   lastProjectListeners.add(listener)
   return () => {

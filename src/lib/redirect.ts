@@ -1,3 +1,13 @@
+/**
+ * Safe post-sign-in redirects: the `?next=` check and its trip through OAuth.
+ *
+ * Purpose: A `next` parameter must never send a user to another site (open redirect), and it has
+ * to survive the OAuth round trip without changing the provider's exact redirect URL.
+ * How it fits: Used by the auth screens, `auth/guards.tsx`, `auth/OAuthButtons.tsx` and
+ * `screens/AuthCallback.tsx`; layer: auth.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+ */
+
 const AUTH_PATHS = ['/login', '/signup', '/check-email', '/forgot-password', '/auth/callback']
 
 /**
@@ -19,6 +29,7 @@ export function safeNext(raw: string | null | undefined, fallback = '/dashboard'
 /** `next` survives the OAuth round-trip here, so the provider redirect URL stays exact. */
 const NEXT_STORAGE_KEY = 'projectai:auth-next'
 
+/** Keeps `next` in session storage for the OAuth round trip (the dashboard default is not stored). */
 export function rememberNext(next: string): void {
   try {
     if (next && next !== '/dashboard') sessionStorage.setItem(NEXT_STORAGE_KEY, next)
@@ -28,6 +39,7 @@ export function rememberNext(next: string): void {
   }
 }
 
+/** Reads and clears the `next` kept for the OAuth round trip. */
 export function takeRememberedNext(): string | null {
   try {
     const value = sessionStorage.getItem(NEXT_STORAGE_KEY)
@@ -38,6 +50,7 @@ export function takeRememberedNext(): string | null {
   }
 }
 
+/** The `/auth/callback` URL Supabase sends the user back to, carrying `next` when given. */
 export function authRedirectUrl(next?: string): string {
   const base = `${window.location.origin}/auth/callback`
   return next ? `${base}?next=${encodeURIComponent(next)}` : base

@@ -1,18 +1,17 @@
 /**
- * WBS Builder data rules (step 4): estimate provenance, the Continue gate and the confirm hook.
+ * WBS Builder data rules (step 4): estimate provenance, the Continue gate, skills and the confirm hook.
  *
- * Business rule ("never invent"): an AI effort estimate is only a suggestion until the PM confirms
- * it; the optimizer may use a work package's duration only when it is confirmed (an estimate the PM
- * entered counts as confirmed). Continue to Constraints is never disabled — a blocked click lists
- * what still needs the PM (see `wbsBlockers`). Server contract [B]: `GET …/wbs` nodes carry
- * `estimateConfirmed` and `estimateSource`, and `POST …/wbs/confirm-estimates {nodeIds?}` confirms
- * some or all AI estimates. Used by `screens/WBSBuilder.tsx` and `components/WbsTable.tsx`.
- *
- * Skills (D6): a work package names the skills it needs, picked from the project's skill list
- * (step 5), with `PATCH /wbs/nodes/{nodeId} {skills}`; the optimizer links Required skills to the
- * packages that carry them. Servers without that field answer 422, and the builder then hides the
- * picker and says why (see `useWbsSkills`).
+ * Purpose: Never invent: an AI effort estimate is only a suggestion until the PM confirms it, and
+ * the optimizer may use a duration only when it is confirmed. Continue is never disabled; a
+ * blocked click lists what still needs the PM. Work packages name the skills they need from the
+ * project's skill list; servers without that field answer 422 and the picker is hidden with a
+ * reason.
+ * How it fits: Server contract [B] (`estimateConfirmed`, `estimateSource`,
+ * `POST …/wbs/confirm-estimates`, `PATCH /wbs/nodes/{id} {skills}`); used by
+ * `screens/WBSBuilder.tsx` and the `components/Wbs*` table parts; layer: hook/lib.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch, errorMessage, isApiError } from './api'
@@ -152,7 +151,6 @@ function useSaveWbsSkills(projectId: string) {
     onSuccess: (saved) => {
       queryClient.setQueryData<WbsTreeNode[]>(queryKeys.wbs(projectId), (previous) => previous?.map((node) => (node.id === saved.id ? saved : node)))
       void queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'optimization'] })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.skillsCoverage(projectId) })
       void queryClient.invalidateQueries({ queryKey: queryKeys.wbsChecks(projectId) })
     },
     onError: (error) => {
@@ -191,6 +189,7 @@ export function skillChoices(projectSkills: ProjectSkill[] | undefined, current:
 export function useSkillPicks(current: WbsSkill[]) {
   const [picked, setPicked] = useState<Set<string>>(() => new Set(current.map((skill) => skillNameKey(skill.name))))
 
+  /** Picks or unpicks a skill (names compare case-insensitively). */
   function toggle(name: string) {
     setPicked((previous) => {
       const next = new Set(previous)

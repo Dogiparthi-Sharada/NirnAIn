@@ -1,12 +1,19 @@
 /**
- * Planning inputs for steps 3–5 (Scope Review, WBS Builder, Constraints): types and hooks for
- * the team, the project's skill list, confirmed effort estimates, the answers to the questions
- * that change the plan, and the applied plan versions.
+ * Planning inputs for steps 3–5: the team, the project's skill list, the constraint answers and plan versions.
+ *
+ * Purpose: Scope Review, WBS Builder and Constraints share the same solver inputs and the rules on
+ * them (utilization, worker types and cost rates, skill gaps); any change to them must refresh the
+ * step 6 confirmation sheet and the coverage views.
+ * How it fits: Types and hooks used by `screens/Constraints.tsx`, `screens/constraints/*`,
+ * `screens/ScopeReview.tsx` and `lib/constraints.ts`; layer: hook/lib.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { apiFetch, isApiError } from './api'
 import { queryKeys } from './queries'
-import type { ConstraintSet, ScopeItem, WbsNode } from './types'
+import { projectPath } from './queries/paths'
+import type { ConstraintSet, ScopeItem } from './types'
 
 /* ───────────────────────────── Types ───────────────────────────── */
 
@@ -18,13 +25,6 @@ export interface EvidenceScopeItem extends ScopeItem {
   evidence?: Evidence | null
   evidenceNote?: string | null
   suggestedText?: string | null
-}
-
-export type EstimateSource = 'ai' | 'yours'
-
-export interface EstimatedWbsNode extends WbsNode {
-  estimateConfirmed?: boolean
-  estimateSource?: EstimateSource | null
 }
 
 export type SpecialistAnswer = 'yes' | 'no' | 'unknown'
@@ -116,27 +116,12 @@ export const ROLES = [
 
 /* ───────────────────────────── Rules shared by the screens ───────────────────────────── */
 
-/** 1 week = 5 working days on the wire. */
-export const DAYS_PER_WEEK = 5
-
-export function weeksLabel(days: number | null | undefined): string {
-  if (days == null) return '—'
-  const w = days / DAYS_PER_WEEK
-  return `${Number.isInteger(w) ? w : w.toFixed(1)}w`
-}
-
-/** True when an AI estimate still waits for a person (older servers: AI durations count as open). */
-export function estimateOpen(node: EstimatedWbsNode): boolean {
-  if (node.level !== 3 || node.durationDays == null) return false
-  const source = node.estimateSource ?? (node.origin === 'ai' ? 'ai' : 'yours')
-  return source === 'ai' && !node.estimateConfirmed
-}
-
 /** Booked hours as a % of the hours a member can give this project. */
-export function utilization(m: ProjectTeamMember): number {
-  return m.hoursPerWeek ? Math.round((m.bookedHours / m.hoursPerWeek) * 100) : 0
+export function utilization(member: ProjectTeamMember): number {
+  return member.hoursPerWeek ? Math.round((member.bookedHours / member.hoursPerWeek) * 100) : 0
 }
 
+/** True for whole hours per week from 1 to 80 (what the API accepts). */
 export function isWholeHours(value: number): boolean {
   return Number.isInteger(value) && value >= 1 && value <= 80
 }
@@ -187,18 +172,11 @@ export const inputKeys = {
   planVersions: (projectId: string) => ['projects', projectId, 'plan-versions'] as const,
 }
 
-function projectPath(projectId: string, suffix: string): string {
-  return `/api/v1/projects/${encodeURIComponent(projectId)}${suffix}`
-}
-
-type QueryClient = ReturnType<typeof useQueryClient>
-
 /** Solver inputs changed: the confirmation sheet on step 6 and coverage views must refresh. */
 function inputsChanged(queryClient: QueryClient, projectId: string) {
   void queryClient.invalidateQueries({ queryKey: inputKeys.team(projectId) })
   void queryClient.invalidateQueries({ queryKey: inputKeys.skills(projectId) })
   void queryClient.invalidateQueries({ queryKey: queryKeys.capacity(projectId) })
-  void queryClient.invalidateQueries({ queryKey: queryKeys.skillsCoverage(projectId) })
   void queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'optimization'] })
 }
 
@@ -218,21 +196,7 @@ export function usePlanVersions(projectId: string) {
   })
 }
 
-export function useConfirmEstimates(projectId: string) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (nodeIds?: string[]) =>
-      apiFetch<EstimatedWbsNode[]>(projectPath(projectId, '/wbs/confirm-estimates'), {
-        method: 'POST',
-        json: nodeIds ? { nodeIds } : {},
-      }),
-    onSuccess: (tree) => {
-      queryClient.setQueryData(queryKeys.wbs(projectId), tree)
-      void queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'optimization'] })
-    },
-  })
-}
-
+/** Fetches the constraint set including the step 5 answers. */
 export function useConstraintInputs(projectId: string) {
   return useQuery({
     queryKey: queryKeys.constraints(projectId),
@@ -241,18 +205,7 @@ export function useConstraintInputs(projectId: string) {
   })
 }
 
-export function useSaveConstraintInputs(projectId: string) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (constraints: ConstraintInputs) =>
-      apiFetch<ConstraintInputs>(projectPath(projectId, '/constraints'), { method: 'PUT', json: constraints }),
-    onSuccess: (saved) => {
-      queryClient.setQueryData(queryKeys.constraints(projectId), saved)
-      inputsChanged(queryClient, projectId)
-    },
-  })
-}
-
+/** Fetches the project's team with each person's hours, booked hours and skills. */
 export function useTeam(projectId: string) {
   return useQuery({
     queryKey: inputKeys.team(projectId),
@@ -261,6 +214,7 @@ export function useTeam(projectId: string) {
   })
 }
 
+/** Adds a person to the team and refreshes every solver input that depends on the team. */
 export function useAddTeamMember(projectId: string) {
   const queryClient = useQueryClient()
   return useMutation({
@@ -270,6 +224,7 @@ export function useAddTeamMember(projectId: string) {
   })
 }
 
+/** Saves a change to a team member, swaps it into the cached team and refreshes the solver inputs. */
 export function useUpdateTeamMember(projectId: string) {
   const queryClient = useQueryClient()
   return useMutation({
@@ -279,22 +234,23 @@ export function useUpdateTeamMember(projectId: string) {
         json: patch,
       }),
     onSuccess: (member) => {
-      queryClient.setQueryData<ProjectTeamMember[]>(inputKeys.team(projectId), (prev) =>
-        prev?.map((m) => (m.employeeId === member.employeeId ? member : m)),
+      queryClient.setQueryData<ProjectTeamMember[]>(inputKeys.team(projectId), (previous) =>
+        previous?.map((existing) => (existing.employeeId === member.employeeId ? member : existing)),
       )
       inputsChanged(queryClient, projectId)
     },
   })
 }
 
+/** Removes a person from the team, drops them from the cache and refreshes the solver inputs. */
 export function useRemoveTeamMember(projectId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (employeeId: string) =>
       apiFetch<void>(projectPath(projectId, `/team/${encodeURIComponent(employeeId)}`), { method: 'DELETE' }),
     onSuccess: (_, employeeId) => {
-      queryClient.setQueryData<ProjectTeamMember[]>(inputKeys.team(projectId), (prev) =>
-        prev?.filter((m) => m.employeeId !== employeeId),
+      queryClient.setQueryData<ProjectTeamMember[]>(inputKeys.team(projectId), (previous) =>
+        previous?.filter((existing) => existing.employeeId !== employeeId),
       )
       inputsChanged(queryClient, projectId)
     },

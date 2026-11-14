@@ -1,4 +1,12 @@
-/** Backend contract types (camelCase JSON from `/api/v1`). */
+/**
+ * Backend contract types: the camelCase JSON of `/api/v1`.
+ *
+ * Purpose: The frontend and the FastAPI backend must agree on every payload; keeping the shared
+ * types in one file makes a contract change one reviewed edit.
+ * How it fits: Imported by `lib/api` callers, query hooks, screens and components; keep in sync
+ * with the backend's Pydantic models; layer: hook/lib.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+ */
 
 export const PROJECT_TYPES = [
   'technology',
@@ -132,19 +140,9 @@ export interface ProjectCreate {
   currentStep: ProjectStep
 }
 
-export type ProjectUpdate = Partial<ProjectCreate> & { progressPct?: number }
-
-export interface Page<T> {
-  items: T[]
+export interface Page<TItem> {
+  items: TItem[]
   nextCursor: string | null
-}
-
-export interface DashboardSummary {
-  totalProjects: number
-  onTrack: number
-  atRiskOrDelayed: number
-  totalBudgetCents: number
-  createdThisMonth: number
 }
 
 export interface Member {
@@ -196,9 +194,6 @@ export interface OptimizationRun {
   finishedAt: string | null
   appliedAt?: string | null
 }
-
-/** What the optimizer needs before it can run (from the 422 problem's `missing` extension). */
-export type OptimizerInput = 'workPackages' | 'team'
 
 /* ───────────────────────────── AI Intake / Scope ───────────────────────────── */
 
@@ -378,13 +373,6 @@ export interface TeamMember {
   hourlyRateCents: number | null
   isContractor: boolean
   skills: { skillId: string; name: string; proficiency: number }[]
-}
-
-export interface SkillCoverage {
-  skillId: string
-  name: string
-  required: boolean
-  available: boolean
 }
 
 export type DependencyType = 'FS' | 'SS' | 'FF' | 'SF'

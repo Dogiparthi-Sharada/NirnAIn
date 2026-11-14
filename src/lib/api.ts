@@ -1,3 +1,15 @@
+/**
+ * Authenticated fetch helpers for the NirnAIn API and the typed RFC 7807 error they throw.
+ *
+ * Purpose: Every backend call needs the caller's Supabase token, one silent token refresh on 401
+ * and problem+json errors turned into readable messages and per-field errors, so screens never
+ * parse responses themselves.
+ * How it fits: Used by every query hook in `lib/` (`apiFetch`, `apiFetchOrNull`), by plan exports
+ * (`apiDownload`) and by screens for messages (`errorMessage`); calls `supabase.auth` and `fetch`;
+ * layer: hook/lib.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+ */
+
 import { getEnv } from './env'
 import { supabase } from './supabase'
 
@@ -11,6 +23,7 @@ export class ApiError extends Error {
   /** Problem-detail extension members (anything beyond type/title/status/detail/instance/errors). */
   readonly extensions: Record<string, unknown>
 
+  /** Builds the error from the problem's status, title, detail, field errors and extension members. */
   constructor(
     status: number,
     title: string,
@@ -28,6 +41,7 @@ export class ApiError extends Error {
   }
 }
 
+/** True when `error` is an `ApiError` (narrows the type). */
 export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError
 }
@@ -53,6 +67,7 @@ const DEFAULT_TITLES: Record<number, string> = {
 
 const PROBLEM_KEYS = new Set(['type', 'title', 'status', 'detail', 'instance', 'errors'])
 
+/** True for a plain JSON object (not null, not an array). */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -62,8 +77,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * (`[{ field | loc, message | msg }]`) or FastAPI's default `detail: [{ loc, msg }]`.
  */
 function extractFieldErrors(list: unknown): Record<string, string> {
-  const out: Record<string, string> = {}
-  if (!Array.isArray(list)) return out
+  const fieldErrors: Record<string, string> = {}
+  if (!Array.isArray(list)) return fieldErrors
   for (const entry of list) {
     if (!isRecord(entry)) continue
     const message = typeof entry.message === 'string' ? entry.message : typeof entry.msg === 'string' ? entry.msg : null
@@ -72,11 +87,12 @@ function extractFieldErrors(list: unknown): Record<string, string> {
       const last = entry.loc[entry.loc.length - 1]
       if (typeof last === 'string' && last !== 'body') field = last
     }
-    if (field && message && !out[field]) out[field] = message
+    if (field && message && !fieldErrors[field]) fieldErrors[field] = message
   }
-  return out
+  return fieldErrors
 }
 
+/** Reads a failed response's problem+json body into an `ApiError`, falling back to a title per status. */
 async function toApiError(response: Response): Promise<ApiError> {
   const fallbackTitle = DEFAULT_TITLES[response.status] ?? `Request failed (${response.status})`
   let payload: unknown = null
@@ -101,11 +117,13 @@ async function toApiError(response: Response): Promise<ApiError> {
   return new ApiError(response.status, title, detail, fieldErrors, extensions)
 }
 
+/** The current Supabase access token, or null when signed out. */
 async function accessToken(): Promise<string | null> {
   const { data } = await supabase.auth.getSession()
   return data.session?.access_token ?? null
 }
 
+/** Sends one request with the auth and JSON headers; a transport failure becomes a status-0 `ApiError`. */
 async function send(path: string, init: ApiRequestInit, token: string | null): Promise<Response> {
   const { json, headers: initHeaders, body, ...rest } = init
   const headers = new Headers(initHeaders)
@@ -130,7 +148,7 @@ async function send(path: string, init: ApiRequestInit, token: string | null): P
  * On 401 it refreshes the Supabase session once and retries; if that fails the
  * user is signed out locally (the route guard then sends them to /login).
  */
-export async function apiFetch<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
+export async function apiFetch<TResponse>(path: string, init: ApiRequestInit = {}): Promise<TResponse> {
   let response = await send(path, init, await accessToken())
 
   if (response.status === 401) {
@@ -144,9 +162,19 @@ export async function apiFetch<T>(path: string, init: ApiRequestInit = {}): Prom
   }
 
   if (!response.ok) throw await toApiError(response)
-  if (response.status === 204) return undefined as T
+  if (response.status === 204) return undefined as TResponse
   const text = await response.text()
-  return (text ? JSON.parse(text) : undefined) as T
+  return (text ? JSON.parse(text) : undefined) as TResponse
+}
+
+/** `apiFetch` for a resource that may not exist yet (e.g. a project's latest run): 404 resolves to `null`. */
+export async function apiFetchOrNull<TResponse>(path: string, init: ApiRequestInit = {}): Promise<TResponse | null> {
+  try {
+    return await apiFetch<TResponse>(path, init)
+  } catch (error) {
+    if (isApiError(error) && error.status === 404) return null
+    throw error
+  }
 }
 
 /** Authenticated file download: saves the response body under the server's filename (or `fallbackName`). */

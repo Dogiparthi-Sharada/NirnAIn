@@ -1,18 +1,16 @@
 /**
- * Step 5, Constraints: the rules behind the screen (`screens/Constraints.tsx` and
- * `screens/constraints/*`), kept out of the components so they stay about layout.
+ * Step 5, Constraints: the rules behind the screen, kept out of the components so they stay about layout.
  *
- * - Saving: the constraint set is replaced as a whole by `PUT …/constraints`, so
- *   `useConstraintEditor` merges each small change into the cached set first (an optimistic
- *   update), letting quick clicks build on each other instead of overwriting one another.
- * - The two questions that change the plan: the deadline answer IS the deadline's Must hold /
- *   Can flex setting, and the specialist answer decides whether outside contractors may be used.
- * - The Run Optimization gate: `gateBlockers` merges what this screen knows (answers, team, WBS)
- *   with the server's readiness check (`GET …/optimization/inputs`, which also sees work-package
- *   skill gaps), so the button is never disabled but a blocked click can name every missing input.
- * - Inputs stay editable after a plan version is applied: changes take effect when the PM re-runs
- *   step 6 and applies the result as the next version (step 7 records why a plan changed).
+ * Purpose: The constraint set is replaced as a whole, so each small change is merged into the
+ * cached set first (an optimistic update) and quick clicks build on each other. The deadline and
+ * specialist answers are plan settings, and the Run Optimization gate merges this screen's facts
+ * with the server's readiness check so a blocked click can name every missing input. Inputs stay
+ * editable after a plan is applied; they take effect on the next run.
+ * How it fits: Used by `screens/Constraints.tsx` and `screens/constraints/*`; builds on
+ * `lib/inputs.ts` (types, team keys) and `lib/constraintPolicy.ts`; layer: hook/lib.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useCallback } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch, errorMessage } from './api'
@@ -196,6 +194,7 @@ export const ADD_MEMBER_ID = 'btn-add-member'
  */
 export function gateBlockers(facts: GateFacts): GateBlocker[] {
   const blockers: GateBlocker[] = []
+  /** True when the server's readiness check lists `key` as missing. */
   const serverSays = (key: string) => facts.serverMissing.includes(key)
   const toWbs = { step: 'wbs' } as const
 

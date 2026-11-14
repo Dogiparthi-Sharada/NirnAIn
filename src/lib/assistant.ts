@@ -1,12 +1,15 @@
 /**
- * NirnAIn AI assistant: starter prompts and the general-guidance fallback (mockup
- * scripts/views/chat.js), used by `components/AIChat.tsx`.
+ * AI assistant rules: starter prompts, history limits and the general-guidance fallback reply.
  *
- * Replies normally come from `POST /api/v1/assistant/messages` (Claude, contract [BE2]). When the
- * assistant is not configured (503), not deployed (404) or unreachable, the panel answers with
- * general guidance about where things live in NirnAIn instead — it never invents project facts,
- * and the panel labels such replies.
+ * Purpose: The assistant must never invent project facts: when it is not configured, not deployed
+ * or unreachable, the panel answers with general guidance about where things live in NirnAIn
+ * instead of an error (port of the mockup's scripts/views/chat.js).
+ * How it fits: Used by `components/AIChat.tsx`, which sends questions through `useAssistant`
+ * (`POST /api/v1/assistant/messages`, contract [BE2]) and falls back to `guidanceReply`;
+ * layer: hook/lib.
+ * Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { isApiError } from './api'
 
 /** Starter prompts shown before the first question. */

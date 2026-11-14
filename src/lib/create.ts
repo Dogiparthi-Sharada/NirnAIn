@@ -1,20 +1,22 @@
 /**
  * Data hooks and API types for step 1 (Create Project) and step 2 (AI Project Intake).
  *
- * - `usePmOptions`: project-manager choices for both create paths.
- * - Project drafts: `POST /orgs/{orgId}/project-drafts/extract` reads a file or pasted notes and
- *   returns each project value with its quote and status; nothing is saved (`useExtractDraft`).
- * - `useCreateFromDraft`: creates the project from a reviewed draft, keeps the file as a project
- *   document and starts the AI intake, degrading gracefully when either can't happen.
- * - `useIntakeRuns`: the "Previous Intakes" history; `creationSource` reads from it whether the
- *   intake already ran when the project was created.
- * Screens: `CreateProject`, `CreateFromUpload`, `AIProjectIntake` (and their components).
+ * Purpose: Creating a project must never lose the PM's source: project drafts read a file or
+ * pasted notes without saving anything, and creating from a reviewed draft keeps the file as a
+ * project document and starts the AI intake, degrading gracefully when either can't happen.
+ * How it fits: Used by `screens/CreateProject.tsx`, `screens/CreateFromUpload.tsx` and
+ * `screens/AIProjectIntake.tsx` (and their components); provides the PM choices, pending uploads,
+ * draft extraction, create-from-draft, the intake history and where a project started;
+ * layer: hook/lib.
+ * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
+
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { checkFile, type UploadEntry } from '@/components/DocumentUpload'
 import { apiFetch, errorMessage, isApiError } from './api'
-import { queryKeys, uploadDocument, useMembers } from './queries'
+import { queryKeys, uploadDocument, useInvalidateOrgProjects, useMembers } from './queries'
+import { intakeRunPath } from './queries/paths'
 import { useOrg } from '@/org/useOrg'
 import type { IntakeRun, Project, ProjectCreate, ScopeItem, SourceDocument } from './types'
 
@@ -43,6 +45,10 @@ export function usePendingUploads() {
   const [error, setError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
 
+  /**
+   * Checks newly picked files and queues the accepted ones (each file once); a rejected file shows its
+   * problem.
+   */
   function add(picked: File[]) {
     setError(null)
     const accepted: { key: string; file: File }[] = []
@@ -78,6 +84,7 @@ export function usePendingUploads() {
     detail: uploading ? null : 'uploads when you continue',
   }))
 
+  /** Drops a queued file before it is uploaded. */
   function remove(key: string) {
     setFiles((previous) => previous.filter((entry) => entry.key !== key))
   }
@@ -90,8 +97,8 @@ export function usePendingUploads() {
 /** Where a value read from the source came from. */
 export type DraftStatus = 'stated' | 'inferred' | 'missing'
 
-export interface DraftField<T> {
-  value: T | null
+export interface DraftField<TValue> {
+  value: TValue | null
   /** The sentence it came from, word for word (null when missing or not quotable). */
   quote: string | null
   status: DraftStatus
@@ -139,11 +146,9 @@ export function useExtractDraft(orgId: string) {
   })
 }
 
+/** Starts an AI intake run on `text` for the project. */
 function startIntakeRun(projectId: string, text: string): Promise<IntakeRun> {
-  return apiFetch<IntakeRun>(`/api/v1/projects/${encodeURIComponent(projectId)}/intake/runs`, {
-    method: 'POST',
-    json: { text },
-  })
+  return apiFetch<IntakeRun>(intakeRunPath(projectId), { method: 'POST', json: { text } })
 }
 
 export interface CreateFromDraftInput {
@@ -169,6 +174,7 @@ export interface CreateFromDraftResult {
  */
 export function useCreateFromDraft() {
   const queryClient = useQueryClient()
+  const invalidateOrgProjects = useInvalidateOrgProjects()
   return useMutation({
     mutationFn: async ({ orgId, project: body, draft, file, notes }: CreateFromDraftInput): Promise<CreateFromDraftResult> => {
       const project = await apiFetch<Project>(`/api/v1/orgs/${encodeURIComponent(orgId)}/projects`, { method: 'POST', json: body })
@@ -198,11 +204,7 @@ export function useCreateFromDraft() {
       }
       return { project, problem: problems.length > 0 ? problems.join(' ') : null }
     },
-    onSettled: (_data, _error, { orgId }) =>
-      Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.projects(orgId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(orgId) }),
-      ]),
+    onSettled: (_data, _error, { orgId }) => invalidateOrgProjects(orgId),
   })
 }
 
@@ -223,6 +225,7 @@ export function creationSource(projectCreatedAt: string, runs: IntakeRun[], docu
   if (runs.length === 0 || runs.length >= RUN_HISTORY_LIMIT) return null
   const first = runs.reduce((oldest, run) => (Date.parse(run.createdAt) < Date.parse(oldest.createdAt) ? run : oldest))
   const queued = Date.parse(first.createdAt)
+  /** True when `iso` lies within the creation window just before the first intake run was queued. */
   const justBefore = (iso: string) => {
     const gap = queued - Date.parse(iso)
     return gap >= 0 && gap <= CREATION_INTAKE_MS
@@ -239,7 +242,7 @@ export function useIntakeRuns(projectId: string, refreshKey?: string) {
   return useQuery({
     // `refreshKey` (latest run id + status) refetches the list when a run starts or finishes.
     queryKey: ['projects', projectId, 'intake', 'runs', refreshKey ?? null] as const,
-    queryFn: ({ signal }) => apiFetch<IntakeRun[]>(`/api/v1/projects/${encodeURIComponent(projectId)}/intake/runs`, { signal }),
+    queryFn: ({ signal }) => apiFetch<IntakeRun[]>(intakeRunPath(projectId), { signal }),
     enabled: Boolean(projectId),
     placeholderData: (previous) => previous,
   })
