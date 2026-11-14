@@ -7,11 +7,18 @@
  * what still needs the PM (see `wbsBlockers`). Server contract [B]: `GET …/wbs` nodes carry
  * `estimateConfirmed` and `estimateSource`, and `POST …/wbs/confirm-estimates {nodeIds?}` confirms
  * some or all AI estimates. Used by `screens/WBSBuilder.tsx` and `components/WbsTable.tsx`.
+ *
+ * Skills (D6): a work package names the skills it needs, picked from the project's skill list
+ * (step 5), with `PATCH /wbs/nodes/{nodeId} {skills}`; the optimizer links Required skills to the
+ * packages that carry them. Servers without that field answer 422, and the builder then hides the
+ * picker and says why (see `useWbsSkills`).
  */
+import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { apiFetch } from './api'
+import { apiFetch, errorMessage, isApiError } from './api'
+import { useProjectSkills, type ProjectSkill } from './inputs'
 import { queryKeys } from './queries'
-import type { WbsNode } from './types'
+import type { WbsNode, WbsSkill } from './types'
 
 /** Durations are stored in working days; the builder shows weeks. */
 export const DAYS_PER_WEEK = 5
@@ -120,4 +127,98 @@ export function useConfirmEstimates(projectId: string) {
       }),
     onSuccess: (tree) => queryClient.setQueryData(queryKeys.wbs(projectId), tree),
   })
+}
+
+/** True for the 422 a server without the `skills` field gives ("Extra inputs are not permitted"). */
+export function isSkillsFieldUnknown(error: unknown): boolean {
+  return isApiError(error) && error.status === 422 && /extra inputs/i.test(error.fieldErrors.skills ?? '')
+}
+
+/**
+ * Saves the skills a work package needs and stores the returned node. The step 6 inputs sheet and
+ * the skills coverage depend on them, so both refresh. `unsupported` turns true (for this visit)
+ * once the server refuses the field, so the builder can stop offering the picker.
+ */
+function useSaveWbsSkills(projectId: string) {
+  const queryClient = useQueryClient()
+  const [unsupported, setUnsupported] = useState(false)
+  const mutation = useMutation({
+    mutationFn: ({ nodeId, skills }: { nodeId: string; skills: string[] }) =>
+      apiFetch<WbsTreeNode>(`/api/v1/wbs/nodes/${encodeURIComponent(nodeId)}`, { method: 'PATCH', json: { skills } }),
+    onSuccess: (saved) => {
+      queryClient.setQueryData<WbsTreeNode[]>(queryKeys.wbs(projectId), (previous) => previous?.map((node) => (node.id === saved.id ? saved : node)))
+      void queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'optimization'] })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.skillsCoverage(projectId) })
+    },
+    onError: (error) => {
+      if (isSkillsFieldUnknown(error)) setUnsupported(true)
+    },
+  })
+  return { mutation, unsupported }
+}
+
+/** What an edit row needs to know about the project's skill list and the server. */
+export interface SkillOptions {
+  projectId: string
+  /** The project's skill list; undefined while loading or after an error. */
+  skills: ProjectSkill[] | undefined
+  loading: boolean
+  /** Why the list couldn't load, else null. */
+  error: string | null
+  retry: () => void
+  /** The server refused the `skills` field (D6 not deployed yet): the picker is hidden. */
+  unsupported: boolean
+}
+
+/** Names compare without case, as the server does. */
+export function skillNameKey(name: string): string {
+  return name.toLowerCase()
+}
+
+/** The names a package can carry: the project's list, then the package's own skills not on it. */
+export function skillChoices(projectSkills: ProjectSkill[] | undefined, current: WbsSkill[]): string[] {
+  const listed = (projectSkills ?? []).map((skill) => skill.name)
+  const listedKeys = new Set(listed.map(skillNameKey))
+  return [...listed, ...current.map((skill) => skill.name).filter((name) => !listedKeys.has(skillNameKey(name)))]
+}
+
+/** The picker's state: the picked names (case-insensitive) and the names to save, in list order. */
+export function useSkillPicks(current: WbsSkill[]) {
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(current.map((skill) => skillNameKey(skill.name))))
+
+  function toggle(name: string) {
+    setPicked((previous) => {
+      const next = new Set(previous)
+      if (next.has(skillNameKey(name))) next.delete(skillNameKey(name))
+      else next.add(skillNameKey(name))
+      return next
+    })
+  }
+
+  /** The names to save, or null when the PM changed nothing. */
+  function changedNames(choices: string[]): string[] | null {
+    const names = choices.filter((name) => picked.has(skillNameKey(name)))
+    const before = current.map((skill) => skillNameKey(skill.name)).sort().join('\n')
+    return names.map(skillNameKey).sort().join('\n') === before ? null : names
+  }
+
+  return { toggle, changedNames, isPicked: (name: string) => picked.has(skillNameKey(name)) }
+}
+
+/**
+ * The builder's work-package skills: the options for the chips and pickers (the project's skill
+ * list and whether the server takes skills), the save, and its error unless it is the refusal.
+ */
+export function useWbsSkills(projectId: string) {
+  const skillList = useProjectSkills(projectId)
+  const { mutation, unsupported } = useSaveWbsSkills(projectId)
+  const options: SkillOptions = {
+    projectId,
+    skills: skillList.data,
+    loading: skillList.isPending,
+    error: skillList.isError ? errorMessage(skillList.error) : null,
+    retry: () => void skillList.refetch(),
+    unsupported,
+  }
+  return { options, save: mutation.mutate, error: unsupported ? null : mutation.error }
 }

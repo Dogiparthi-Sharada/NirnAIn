@@ -4,14 +4,15 @@
  *
  * Each work package shows its weeks and an estimate chip — "AI estimate" with a Confirm button
  * until the PM confirms it, "✓ Confirmed", or "Yours" for estimates the PM entered (see
- * `lib/wbs.ts`). Rows can be edited inline (name, weeks, owner; see `WbsEditCells`, which checks
- * the values first) and reordered within their parent by dragging or Alt+↑/↓; the screen performs
- * the API calls.
+ * `lib/wbs.ts`), and the skills it needs as chips under its name (`WbsSkillChips`). Rows can be
+ * edited inline (name, weeks, owner, skills; see `WbsEditCells`, which checks the values first) and
+ * reordered within their parent by dragging or Alt+↑/↓; the screen performs the API calls.
  */
 import { useState, type DragEvent, type KeyboardEvent } from 'react'
-import { displayCode, estimateState, formatWeeks, type EstimateState, type WbsTreeNode } from '@/lib/wbs'
+import { displayCode, estimateState, formatWeeks, type EstimateState, type SkillOptions, type WbsTreeNode } from '@/lib/wbs'
 import type { WbsNodePatch } from '@/lib/types'
 import WbsEditCells from './WbsEditCells'
+import { WbsSkillChips } from './WbsSkillPicks'
 
 const CHIPS: Record<EstimateState, [className: string, label: string]> = {
   ai: ['st-inferred', 'AI estimate'],
@@ -32,6 +33,7 @@ export default function WbsTable({
   collapsed,
   onToggle,
   owners,
+  skillOptions,
   confirming,
   onConfirm,
   onSave,
@@ -47,6 +49,8 @@ export default function WbsTable({
   collapsed: ReadonlySet<string>
   onToggle: (deliverableId: string) => void
   owners: { id: string; name: string }[]
+  /** The project's skill list for the chips and the edit row's picker. */
+  skillOptions: SkillOptions
   /** Ids whose confirmation is in flight. */
   confirming: ReadonlySet<string>
   onConfirm: (nodeId: string) => void
@@ -158,6 +162,7 @@ export default function WbsTable({
                 <WbsEditCells
                   node={node}
                   owners={owners}
+                  skillOptions={skillOptions}
                   onSave={(patch) => {
                     onSave(node, patch)
                     setEditingId(null)
@@ -166,7 +171,10 @@ export default function WbsTable({
                 />
               ) : (
                 <>
-                  <td>{node.name}</td>
+                  <td>
+                    {node.name}
+                    {node.level === 3 && <WbsSkillChips skills={node.skills} projectSkills={skillOptions.skills} />}
+                  </td>
                   <td>
                     {node.level === 3 && (
                       <span className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>

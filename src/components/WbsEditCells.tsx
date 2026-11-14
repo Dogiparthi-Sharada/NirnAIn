@@ -6,11 +6,13 @@
  * says why inline instead of silently dropping or changing a value (QA W-07, W-08). A name can't be
  * blank. Weeks must be a plain number of zero or more (blank = no estimate yet), at most what the
  * server accepts; a fraction is rounded to whole working days and the editor shows the result
- * ("1.5 w = 8 days") before saving. Enter saves, Escape cancels.
+ * ("1.5 w = 8 days") before saving. Enter saves, Escape cancels. A work package also picks the
+ * skills it needs from the project's list (`WbsSkillPicks`); they are sent only when changed.
  */
 import { useRef, useState, type KeyboardEvent } from 'react'
-import { DAYS_PER_WEEK, parseWeeks, type WbsTreeNode } from '@/lib/wbs'
+import { DAYS_PER_WEEK, parseWeeks, skillChoices, useSkillPicks, type SkillOptions, type WbsTreeNode } from '@/lib/wbs'
 import type { WbsNodePatch } from '@/lib/types'
+import { WbsSkillPicks } from './WbsSkillPicks'
 
 interface Problems {
   name?: string
@@ -18,9 +20,10 @@ interface Problems {
 }
 
 /** The Name, Duration, Owner and action cells of a row being edited; `onSave` gets only valid values. */
-export default function WbsEditCells({ node, owners, onSave, onCancel }: {
+export default function WbsEditCells({ node, owners, skillOptions, onSave, onCancel }: {
   node: WbsTreeNode
   owners: { id: string; name: string }[]
+  skillOptions: SkillOptions
   onSave: (patch: WbsNodePatch) => void
   onCancel: () => void
 }) {
@@ -28,12 +31,14 @@ export default function WbsEditCells({ node, owners, onSave, onCancel }: {
   const [weeks, setWeeks] = useState(node.durationDays == null ? '' : String(node.durationDays / DAYS_PER_WEEK))
   const [ownerId, setOwnerId] = useState(node.ownerEmployeeId ?? '')
   const [problems, setProblems] = useState<Problems>({})
+  const skillPicks = useSkillPicks(node.skills)
   const nameRef = useRef<HTMLInputElement>(null)
   const weeksRef = useRef<HTMLInputElement>(null)
 
   const workPackage = node.level === 3
   const typedWeeks = parseWeeks(weeks)
   const nameErrorId = `wbs-name-err-${node.id}`
+  const choices = skillChoices(skillOptions.skills, node.skills)
   const weeksNoteId = `wbs-weeks-note-${node.id}`
 
   function save() {
@@ -54,6 +59,8 @@ export default function WbsEditCells({ node, owners, onSave, onCancel }: {
     if (workPackage) {
       patch.durationDays = typedWeeks.days
       patch.ownerEmployeeId = ownerId || null
+      const skills = skillOptions.unsupported || skillOptions.loading ? null : skillPicks.changedNames(choices)
+      if (skills) patch.skills = skills
     }
     onSave(patch)
   }
@@ -91,6 +98,16 @@ export default function WbsEditCells({ node, owners, onSave, onCancel }: {
           <p className="err" id={nameErrorId} role="alert">
             {problems.name}
           </p>
+        )}
+        {workPackage && (
+          <WbsSkillPicks
+            nodeId={node.id}
+            options={skillOptions}
+            choices={choices}
+            isPicked={skillPicks.isPicked}
+            onToggle={skillPicks.toggle}
+            onKeyDown={editKeys}
+          />
         )}
       </td>
       <td>
