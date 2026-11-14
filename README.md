@@ -33,6 +33,11 @@ cp .env.example .env              # DATABASE_URL, SUPABASE_URL, CORS_ORIGINS
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
+## Tests
+
+[tests/README.md](tests/README.md) lists every test suite (backend pytest, database pgTAP, API end-to-end
+scenarios) and the demo-data seed, each with the one command that runs it.
+
 ## Host the demo for free
 
 [docs/DEPLOY_DEMO.md](docs/DEPLOY_DEMO.md) walks through hosting the demo step by step on free tiers: a new Supabase
