@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -43,8 +44,7 @@ DANA: dict[str, Any] = {
     "fullName": "Dana Lee",
     "roleTitle": "Security Specialist",
     "hoursPerWeek": 24,
-    "skills": ["Security & Compliance Review"],
-    "isContractor": True,
+    "workerType": "contractor",
     "hourlyRateCents": 17_500,
 }
 
@@ -126,6 +126,15 @@ def test_bring_in_a_specialist_then_remove_someone(
         ({"removeMembers": [str(MARK), str(SARA)]}, "at least one person"),
         ({"addMembers": [{**DANA, "hoursPerWeek": 0}]}, None),
         ({"addMembers": [{**DANA, "hoursPerWeek": 81}]}, None),
+        (
+            {"addMembers": [{**DANA, "workerType": "employee"}]},
+            "Employee rates come from the company record.",
+        ),
+        (
+            {"addMembers": [{**DANA, "hourlyRateCents": None}]},
+            "Enter the contractor's hourly rate for Dana Lee.",
+        ),
+        ({"addMembers": [{**DANA, "skills": ["Security"]}]}, None),  # no skills any more
         ({"addMembers": [{**DANA, "fullName": f"Person {index}"} for index in range(11)]}, None),
     ],
 )
@@ -148,6 +157,27 @@ def test_team_edits_that_cannot_apply_are_refused(
     if message:
         assert message in response.json()["detail"]
     assert change_store.employees == {}  # nothing reserved for a refused change
+
+
+def test_contractor_rate_defaults_to_the_projects_and_employees_have_none(
+    team_client: TestClient, store: Store, change_store: ChangeStore, auth: Auth
+) -> None:
+    user, _, project_id = new_project(team_client, store, auth)
+    add_run(change_store, project_id, applied=True, version=1)
+    change_store.context = replace(project_context(), contractor_rate_cents=15_000)
+    contractor = {**DANA, "hourlyRateCents": None}
+    employee = {**DANA, "fullName": "Ana Souza", "workerType": "employee", "hourlyRateCents": None}
+    response = team_client.post(
+        f"/api/v1/projects/{project_id}/changes",
+        json={"source": "edits", "edits": {"addMembers": [contractor, employee]}},
+        headers=auth(user),
+    )
+    assert response.status_code == 202, response.text
+    added = response.json()["overrides"]["addMembers"]
+    assert [(member["workerType"], member["hourlyRateCents"]) for member in added] == [
+        ("contractor", 15_000),
+        ("employee", None),
+    ]
 
 
 def test_replacing_the_whole_team_is_allowed() -> None:
@@ -179,7 +209,13 @@ def test_notes_newcomer_released_when_rejected_or_declined(
 
     second = team_client.post(url, json={"source": "notes", "text": QA_NOTES}, headers=headers)
     change_id = second.json()["id"]
-    answers = {"team:c1": "keep", "capacity:c2": "new", "budget": "keep", "deadline": "keep"}
+    answers = {
+        "team:c1": "keep",
+        "rate:c1": "keep",
+        "capacity:c2": "new",
+        "budget": "keep",
+        "deadline": "keep",
+    }
     answered = team_client.patch(
         f"/api/v1/changes/{change_id}", json={"answers": answers}, headers=headers
     )

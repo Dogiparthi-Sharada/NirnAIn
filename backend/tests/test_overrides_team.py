@@ -116,7 +116,11 @@ def test_a_changes_overrides_are_a_valid_run_body() -> None:
     """Step 7 posts `change.overrides` to the run endpoint as is; it must validate and
     reach the solver input exactly as stored in the run's options."""
     member = {
-        key: value for key, value in _dana(hourlyRateCents=None).items() if key != "employeeId"
+        "fullName": "Dana Lee",
+        "roleTitle": "Security Specialist",
+        "hoursPerWeek": 24,
+        "workerType": "contractor",
+        "hourlyRateCents": 17_500,
     }
     overrides = PlanOverrides(
         add_members=[AddedMember.model_validate({**member, "employeeId": NEWCOMER_ID})],

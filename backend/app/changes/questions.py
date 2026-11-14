@@ -4,7 +4,9 @@ Business rule ("never invent"): a value from meeting notes that conflicts with o
 confirmed (budget, deadline, an effort estimate, someone's hours) is asked, never
 overwritten. A change whose work package or person the notes don't name exactly asks
 which one it means. Someone the notes bring in without saying their hours is asked about
-(16, 24 or 40 h a week, or not at all). Your own edits and progress updates need no questions.
+(16, 24 or 40 h a week, or not at all); a contractor the notes bring in when the project has
+no contractor rate is asked for their hourly rate. Your own edits and progress updates need
+no questions.
 
 Questions are always built here by rules, also when Claude read the notes, so that each
 answer maps to an override deterministically (see `app.changes.derive`).
@@ -26,6 +28,8 @@ NEW = "new"
 NONE = "none"
 # Hours a week offered for a newcomer from the notes who comes without hours.
 HOURS_CHOICES = (16, 24, 40)
+# Hourly rates (cents) offered for a contractor from the notes when the project has none.
+RATE_CHOICES = (12_500, 15_000, 17_500, 20_000)
 
 
 def build_questions(
@@ -71,6 +75,9 @@ def build_questions(
     for change in changes:
         if change.kind == "team" and change.action == "add" and change.to is None:
             questions.append(_team_question(change, context))
+        member = change.member
+        if member and member.worker_type == "contractor" and member.hourly_rate_cents is None:
+            questions.append(_rate_question(change))
         if change.target is None:
             continue
         if change.kind == "duration" and change.to != 0:
@@ -212,6 +219,25 @@ def _team_question(change: DetectedChange, context: ChangeContext) -> ChangeQues
         options=[
             QuestionOption(value=str(hours), label=f"{parsing.format_hours(hours)} a week")
             for hours in HOURS_CHOICES
+        ]
+        + [QuestionOption(value=KEEP, label="Don't bring them in")],
+    )
+
+
+def _rate_question(change: DetectedChange) -> ChangeQuestion:
+    """The hourly rate of a contractor the notes bring in (the project has no contractor rate)."""
+    name = change.member.full_name if change.member else "the contractor"
+    return ChangeQuestion(
+        id=f"rate:{change.id}",
+        kind="rate",
+        change_id=change.id,
+        tier="blocking",
+        text=f"Hourly rate for {name}",
+        why="Contractors count toward the budget at their own rate, and the project has no "
+        "contractor rate yet.",
+        options=[
+            QuestionOption(value=str(cents), label=f"{parsing.format_money(cents)}/h")
+            for cents in RATE_CHOICES
         ]
         + [QuestionOption(value=KEEP, label="Don't bring them in")],
     )

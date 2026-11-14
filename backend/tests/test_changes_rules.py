@@ -9,6 +9,7 @@ context) live in tests/changes_fixtures.py.
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import date
 from typing import Any
 
@@ -40,8 +41,7 @@ SPECIALIST = NewMember(
     full_name="Security Specialist",
     role_title="Security Specialist",
     hours_per_week=40,
-    skills=["Security & Compliance Review"],
-    is_contractor=True,
+    worker_type="contractor",
 )
 
 
@@ -87,8 +87,9 @@ def test_rules_read_qa_meeting_specialist_hours_deadline_and_budget() -> None:
         ("budget", None, None, 50_000_000),
         ("deadline", None, None, "2027-07-31"),
     ]
-    assert (found[0].member, found[0].speaker, found[1].speaker) == (
-        SPECIALIST,
+    assert found[0].member is not None
+    assert (found[0].member.model_dump(), found[0].speaker, found[1].speaker) == (
+        SPECIALIST.model_dump(),
         "Jane Doe",
         "Raj Patel",
     )
@@ -98,12 +99,20 @@ def test_rules_read_qa_meeting_specialist_hours_deadline_and_budget() -> None:
     found[0] = found[0].model_copy(update={"target": reserved})
     impact = build_impact(found, "notes", context, "rules")
     by_id = {question.id: question for question in impact.questions}
-    assert set(by_id) == {"team:c1", "capacity:c2", "budget", "deadline"}
+    # No contractor rate on the project: the specialist's rate is asked too.
+    assert set(by_id) == {"team:c1", "rate:c1", "capacity:c2", "budget", "deadline"}
     assert [option.value for option in by_id["team:c1"].options] == ["16", "24", "40", "keep"]
+    assert [option.value for option in by_id["rate:c1"].options] == [
+        "12500",
+        "15000",
+        "17500",
+        "20000",
+        "keep",
+    ]
     assert "Security Specialist" in [person.name for person in impact.affects.people]
     answers = {"capacity:c2": "new", "budget": "50000000", "deadline": "2027-07-31"}
-    assert derive_overrides(impact, answers) is None  # the specialist's hours are open
-    overrides = derive_overrides(impact, {**answers, "team:c1": "24"})
+    assert derive_overrides(impact, {**answers, "team:c1": "24"}) is None  # the rate is open
+    overrides = derive_overrides(impact, {**answers, "team:c1": "24", "rate:c1": "17500"})
     assert overrides == PlanOverrides(
         budget_total_cents=50_000_000,
         must_finish_by=date(2027, 7, 31),
@@ -111,13 +120,27 @@ def test_rules_read_qa_meeting_specialist_hours_deadline_and_budget() -> None:
         add_members=[
             AddedMember(
                 employee_id=reserved,
-                **SPECIALIST.model_copy(update={"hours_per_week": 24}).model_dump(by_alias=False),
+                **SPECIALIST.model_copy(
+                    update={"hours_per_week": 24, "hourly_rate_cents": 17_500}
+                ).model_dump(by_alias=False),
             )
         ],
     )
-    declined = derive_overrides(impact, {**answers, "team:c1": "keep"})
+    declined = derive_overrides(impact, {**answers, "team:c1": "keep", "rate:c1": "17500"})
     assert declined is not None
     assert declined.add_members is None
+
+
+def test_notes_contractor_takes_the_projects_contractor_rate() -> None:
+    context = replace(qa_context(), contractor_rate_cents=18_500)
+    [specialist, *_] = detect(QA_NOTES, context)
+    assert specialist.member is not None
+    assert (specialist.member.worker_type, specialist.member.hourly_rate_cents) == (
+        "contractor",
+        18_500,
+    )
+    impact = build_impact(detect(QA_NOTES, context), "notes", context, "rules")
+    assert not any(question.id.startswith("rate:") for question in impact.questions)
 
 
 @pytest.mark.parametrize(
@@ -127,15 +150,20 @@ def test_rules_read_qa_meeting_specialist_hours_deadline_and_budget() -> None:
         ("Leo Martins can only give 16 hours a week.", ("capacity", LEO, 16, None)),
         (
             "We need to hire a contractor for the data migration.",
-            ("team", None, None, ("Data Migration Contractor", "Data Migration Contractor", True)),
+            (
+                "team",
+                None,
+                None,
+                ("Data Migration Contractor", "Data Migration Contractor", "contractor"),
+            ),
         ),
         (
             "Bring in Dana Lee as a security specialist at 24 hours a week.",
-            ("team", None, 24, ("Dana Lee", "Security Specialist", True)),
+            ("team", None, 24, ("Dana Lee", "Security Specialist", "contractor")),
         ),
         (
             "We will hire a data engineer.",
-            ("team", None, None, ("Data Engineer", "Data Engineer", False)),
+            ("team", None, None, ("Data Engineer", "Data Engineer", "employee")),
         ),
         ("We will hire Ana Souza, a data engineer.", None),  # already on the team
     ],
@@ -147,7 +175,7 @@ def test_rules_read_people_phrases(sentence: str, expected: tuple[Any, ...] | No
         return
     [change] = found
     member = change.member
-    newcomer = (member.full_name, member.role_title, member.is_contractor) if member else None
+    newcomer = (member.full_name, member.role_title, member.worker_type) if member else None
     assert (change.kind, change.target, change.to, newcomer) == expected
 
 
@@ -264,7 +292,6 @@ async def test_claude_may_report_a_newcomer_and_hours() -> None:
                     kind="team",
                     role="Security Specialist",
                     contractor=True,
-                    skills=["security & compliance review", "Knitting"],
                     quote=quote,
                     confidence=0.8,
                 ),
@@ -285,11 +312,14 @@ async def test_claude_may_report_a_newcomer_and_hours() -> None:
     )
     found, model = await ChangeDetector(llm).detect(QA_NOTES, qa_context())
     assert model == "claude-sonnet-5-5"
-    assert [(change.kind, change.action, change.to, change.member) for change in found] == [
-        ("team", "add", None, SPECIALIST),
+    assert [
+        (change.kind, change.action, change.to, change.member and change.member.model_dump())
+        for change in found
+    ] == [
+        ("team", "add", None, SPECIALIST.model_dump()),
         ("capacity", None, 16, None),
     ]
-    assert "- Security & Compliance Review" in llm.prompts[0]
+    assert "- Leo Martins | 40" in llm.prompts[0]
 
 
 class _BrokenLLM(LLM):

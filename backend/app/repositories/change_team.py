@@ -1,12 +1,13 @@
 """Step 7 team writes: people joining or leaving the project through an approved change.
 
 What: reserves an organization employee for each newcomer when the change is recorded,
-releases the reservations nobody uses, and on approval writes who joins (team row, skills,
-rate) and who leaves (team row, work package ownership), plus the change's new requirements.
-Why: after Plan v1 the team is locked (409 on the Team screen); mid-project hires, specialists,
-contractors and departures go through step 7 instead, and only approval changes the inputs.
+releases the reservations nobody uses, and on approval writes who joins (team row, rate)
+and who leaves (team row, work package ownership), plus the change's new requirements.
+Why: step 7 records why a plan changed; a mid-project hire, contractor or departure is a
+change that is re-planned and approved, and only approval changes the team.
 How it fits: `ChangeRepository` (app/repositories/changes.py) extends this class; everything
-runs on the caller's RLS session and reuses the Team screen's helpers (`TeamRepository`).
+runs on the caller's RLS session (adding people needs the organization role that may add
+employees: owner, admin, pm).
 """
 
 from __future__ import annotations
@@ -29,7 +30,6 @@ from app.repositories.tables import (
     project_team_members,
     wbs_nodes,
 )
-from app.repositories.team import TeamRepository
 
 
 class ChangeTeamWrites(ChangePlanReads):
@@ -52,26 +52,43 @@ class ChangeTeamWrites(ChangePlanReads):
         and every team until the change is approved (`_add_member` activates them), and
         deleted again when they don't join (`release_members`).
         """
-        team = TeamRepository(self._connection)
         reserved: list[DetectedChange] = []
         for change in found:
             member = change.member
             if not is_addition(change) or member is None or change.target is not None:
                 reserved.append(change)
                 continue
-            employee_id = await team.find_employee(project.org_id, member.full_name)
+            employee_id = await self._active_employee(project.org_id, member.full_name)
             if employee_id is None:
-                employee_id = await team.create_employee(
-                    project.org_id,
-                    member.full_name,
-                    member.role_title,
-                    member.hours_per_week,
-                    active=False,
-                    is_contractor=member.is_contractor,
-                    hourly_rate_cents=member.hourly_rate_cents,
+                employee_id = uuid.uuid4()
+                await self._connection.execute(
+                    sa.insert(employees).values(
+                        id=employee_id,
+                        org_id=project.org_id,
+                        full_name=member.full_name,
+                        role_title=member.role_title,
+                        weekly_capacity_hours=member.hours_per_week,
+                        active=False,
+                        is_contractor=member.worker_type == "contractor",
+                        hourly_rate_cents=member.hourly_rate_cents,
+                    )
                 )
             reserved.append(change.model_copy(update={"target": employee_id}))
         return reserved
+
+    async def _active_employee(self, org_id: uuid.UUID, full_name: str) -> uuid.UUID | None:
+        """An active employee of the organization with this name (case-insensitive)."""
+        statement = (
+            sa.select(employees.c.id)
+            .where(
+                employees.c.org_id == org_id,
+                employees.c.active.is_(True),
+                sa.func.lower(employees.c.full_name) == full_name.lower(),
+            )
+            .order_by(employees.c.full_name, employees.c.id)
+            .limit(1)
+        )
+        return (await self._connection.execute(statement)).scalar()
 
     async def release_members(self, project: ProjectRef, employee_ids: list[uuid.UUID]) -> None:
         """Delete the candidates reserved for newcomers who don't join (rejected or declined).
@@ -150,7 +167,7 @@ class ChangeTeamWrites(ChangePlanReads):
 
     async def _add_member(self, project: ProjectRef, member: AddedMember) -> None:
         """Put a newcomer on the team: activate their employee (a candidate becomes a real
-        one; a reused one stays as is), set the rate if given, and add their skills."""
+        one; a reused one stays as is) and set a contractor's rate."""
         activate: dict[str, Any] = {"active": True}
         if member.hourly_rate_cents is not None:
             activate["hourly_rate_cents"] = member.hourly_rate_cents
@@ -170,8 +187,4 @@ class ChangeTeamWrites(ChangePlanReads):
                 ],
                 set_=joining,
             )
-        )
-        team = TeamRepository(self._connection)
-        await team.add_employee_skills(
-            member.employee_id, await team.ensure_skills(project.org_id, member.skills)
         )

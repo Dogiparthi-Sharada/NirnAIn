@@ -12,18 +12,20 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, field_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.domain.common import CamelModel, InputModel, SolverStatus
-from app.domain.team import HoursPerWeek, PersonName, RoleTitle, SkillNames, clean_skill_names
+from app.domain.team import HoursPerWeek, PersonName, RoleTitle
 
 ChangeSource = Literal["notes", "edits", "progress"]
 ChangeKind = Literal["budget", "deadline", "duration", "capacity", "scope", "team"]
-QuestionKind = Literal["budget", "deadline", "duration", "capacity", "target", "team"]
+QuestionKind = Literal["budget", "deadline", "duration", "capacity", "target", "team", "rate"]
 # team: someone joins / leaves the project; scope: a requirement is added / removed.
 ChangeAction = Literal["add", "remove"]
+# Employees are people already in the company; contractors are hired in at their own rate.
+WorkerType = Literal["employee", "contractor"]
 
 MAX_TEXT = 50_000
 MAX_EDITS = 500
@@ -62,27 +64,38 @@ class TargetOption(CamelModel):
 
 
 class NewMember(InputModel):
-    """Someone who joins the project mid-way: a new hire, a specialist or a contractor.
+    """Someone who joins the project mid-way: an employee or a contractor.
 
-    A missing hourly rate stays null: the optimizer prices them like the team average.
+    Rates follow the team rule (`app.changes.team.team_edits` enforces it): an employee
+    costs their company record's rate, so none is given here; a contractor's hourly rate is
+    required, and the project's contractor rate is the default when one is set.
     """
 
     full_name: PersonName
     role_title: RoleTitle
     hours_per_week: HoursPerWeek
-    skills: SkillNames = Field(default_factory=list)
+    worker_type: WorkerType = "employee"
     hourly_rate_cents: int | None = Field(default=None, ge=0, le=MAX_HOURLY_RATE_CENTS)
-    is_contractor: bool = False
 
     @field_validator("full_name", "role_title")
     @classmethod
     def _squash(cls, value: str) -> str:
         return " ".join(value.split())
 
-    @field_validator("skills")
+
+class StoredMember(NewMember):
+    """A newcomer as stored in a change's impact. Changes recorded before worker types and
+    the removal of skills carry `isContractor` and `skills`: read as the worker type and
+    ignored, so those changes still load."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
     @classmethod
-    def _clean(cls, value: list[str]) -> list[str]:
-        return clean_skill_names(value)
+    def _legacy_contractor(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "workerType" not in data and data.get("isContractor"):
+            return {**data, "workerType": "contractor"}
+        return data
 
 
 class AddedMember(NewMember):
@@ -101,7 +114,7 @@ class DetectedChange(CamelModel):
     id: str
     kind: ChangeKind
     action: ChangeAction | None = None
-    member: NewMember | None = None
+    member: StoredMember | None = None
     target: uuid.UUID | None = None
     target_label: str | None = None
     from_: int | float | str | None = Field(default=None, alias="from")
