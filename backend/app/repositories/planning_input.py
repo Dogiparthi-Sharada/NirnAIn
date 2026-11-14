@@ -20,6 +20,9 @@ applied while reading (approved NirnAIn workflow, step 5):
   $85/h default (`model.DEFAULT_HOURLY_RATE_CENTS`) and the confirmation
   sheet says so.
 * Budget, capacity and skill policies are used as stored.
+* Done work stays done (round 3, R2): a 0-day package an applied plan scheduled is
+  finished work, loaded as done at its applied dates and needing no skills
+  (`finished_work.py`).
 
 `input_facts.py` gathers what the confirmation sheet needs beyond the input.
 """
@@ -48,6 +51,7 @@ from app.optimization.model import (
 )
 from app.optimization.remedies import DEFAULT_SPECIALIST_RATE_CENTS
 from app.optimization.skill_links import PackageText, ProjectSkill, link_skills
+from app.repositories.finished_work import finished_work
 from app.repositories.tables import (
     allocations,
     constraint_sets,
@@ -138,8 +142,9 @@ class PlanningInputReader:
         """Read the planning data the caller can see and freeze it into a model input.
 
         Work packages are level-3 nodes and level-2 nodes without children,
-        with a positive duration. Dependencies and milestones on summary
-        nodes are expanded to the work packages underneath them.
+        with a positive duration, plus finished work (0 days left, scheduled by an
+        applied plan). Dependencies and milestones on summary nodes are expanded to
+        the work packages underneath them.
         """
         project_id = project.id
         view = wbs_nodes_with_code
@@ -164,12 +169,15 @@ class PlanningInputReader:
         for node in nodes:
             if node.parent_id is not None:
                 children[node.parent_id].append(node.id)
-        work = [
+        packages = [
             node
             for node in nodes
-            if (node.level == 3 or (node.level == DELIVERABLE_LEVEL and not children.get(node.id)))
-            and (node.duration_days or 0) > 0
+            if node.level == 3 or (node.level == DELIVERABLE_LEVEL and not children.get(node.id))
         ]
+        finished = await finished_work(
+            self._conn, project_id, [node.id for node in packages if node.duration_days == 0]
+        )
+        work = [node for node in packages if (node.duration_days or 0) > 0 or node.id in finished]
         work_ids = {node.id for node in work}
 
         def leaves(node_id: uuid.UUID) -> list[uuid.UUID]:
@@ -177,7 +185,9 @@ class PlanningInputReader:
                 return [node_id]
             return [leaf for child in children.get(node_id, []) for leaf in leaves(child)]
 
-        requirements = await self._requirements(project_id, work)
+        requirements = await self._requirements(
+            project_id, [node for node in work if node.id not in finished]
+        )
         team, proficiencies = await self._team(project)
 
         dependency_rows = (
@@ -254,6 +264,9 @@ class PlanningInputReader:
                         None if node.owner_employee_id is None else str(node.owner_employee_id)
                     ),
                     skills=tuple(requirements.get(str(node.id), ())),
+                    done=node.id in finished,
+                    applied_start=finished[node.id][0] if node.id in finished else None,
+                    applied_end=finished[node.id][1] if node.id in finished else None,
                 )
                 for node in work
             ),
