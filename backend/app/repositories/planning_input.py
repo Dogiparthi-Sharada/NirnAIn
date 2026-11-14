@@ -10,7 +10,10 @@ applied while reading (approved NirnAIn workflow, step 5):
 * Deadline policy follows the PM's answer: 'soft' -> can move, anything else
   (hard, Don't know, not answered) -> hard.
 * Outside specialists only when the PM answered 'yes', at the contractor
-  rate or the $175/h estimate.
+  rate or the $175/h estimate: they take the work packages needing skills
+  nobody on the team has.
+* Skills: the project's Required skills reach the work packages they are
+  linked to, by WBS tag or else by keyword (`optimization/skill_links.py`).
 * Planning starts today: unfinished work never starts before `today` (the
   caller's date, injectable for tests), even when the start date has passed.
 * Hourly rates are read as stored; people without one are planned at the
@@ -44,6 +47,7 @@ from app.optimization.model import (
     Task,
 )
 from app.optimization.remedies import DEFAULT_SPECIALIST_RATE_CENTS
+from app.optimization.skill_links import PackageText, ProjectSkill, link_skills
 from app.repositories.tables import (
     allocations,
     constraint_sets,
@@ -51,6 +55,7 @@ from app.repositories.tables import (
     employee_skills,
     employees,
     milestones,
+    project_skills,
     project_team_members,
     skills,
     task_skill_requirements,
@@ -145,6 +150,7 @@ class PlanningInputReader:
                     view.c.parent_id,
                     view.c.level,
                     view.c.name,
+                    view.c.description,
                     view.c.duration_days,
                     view.c.effort_hours,
                     view.c.owner_employee_id,
@@ -171,7 +177,7 @@ class PlanningInputReader:
                 return [node_id]
             return [leaf for child in children.get(node_id, []) for leaf in leaves(child)]
 
-        requirements = await self._requirements(work_ids)
+        requirements = await self._requirements(project_id, work)
         team, proficiencies = await self._team(project)
 
         dependency_rows = (
@@ -247,7 +253,7 @@ class PlanningInputReader:
                     owner_id=(
                         None if node.owner_employee_id is None else str(node.owner_employee_id)
                     ),
-                    skills=tuple(requirements.get(node.id, ())),
+                    skills=tuple(requirements.get(str(node.id), ())),
                 )
                 for node in work
             ),
@@ -273,11 +279,12 @@ class PlanningInputReader:
         )
 
     async def _requirements(
-        self, work_ids: set[uuid.UUID]
-    ) -> dict[uuid.UUID, list[SkillRequirement]]:
-        requirements: dict[uuid.UUID, list[SkillRequirement]] = defaultdict(list)
-        if not work_ids:
-            return requirements
+        self, project_id: uuid.UUID, work: Sequence[sa.Row[Any]]
+    ) -> dict[str, list[SkillRequirement]]:
+        """Work package id -> the skills it needs: tagged on step 4, plus the project's
+        Required skills linked by keyword (`skill_links.link_skills`)."""
+        if not work:
+            return {}
         required = task_skill_requirements
         rows = (
             await self._conn.execute(
@@ -288,15 +295,28 @@ class PlanningInputReader:
                     required.c.min_proficiency,
                 )
                 .select_from(required.join(skills, skills.c.id == required.c.skill_id))
-                .where(required.c.wbs_node_id.in_(work_ids))
+                .where(required.c.wbs_node_id.in_([node.id for node in work]))
                 .order_by(required.c.wbs_node_id, skills.c.name)
             )
         ).all()
+        tagged: dict[str, list[SkillRequirement]] = defaultdict(list)
         for row in rows:
-            requirements[row.wbs_node_id].append(
+            tagged[str(row.wbs_node_id)].append(
                 SkillRequirement(str(row.skill_id), str(row.name), int(row.min_proficiency))
             )
-        return requirements
+        listed = (
+            await self._conn.execute(
+                sa.select(project_skills.c.skill_id, skills.c.name, project_skills.c.required)
+                .select_from(project_skills.join(skills, skills.c.id == project_skills.c.skill_id))
+                .where(project_skills.c.project_id == project_id)
+                .order_by(skills.c.name)
+            )
+        ).all()
+        return link_skills(
+            [PackageText(str(node.id), node.name, node.description) for node in work],
+            [ProjectSkill(str(row.skill_id), str(row.name), bool(row.required)) for row in listed],
+            tagged,
+        )
 
     async def _team(
         self, project: ProjectContext

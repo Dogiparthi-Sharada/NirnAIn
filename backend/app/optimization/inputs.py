@@ -72,6 +72,8 @@ class InputFacts:
     capacity_mode: str = "soft"
     skills: Sequence[SkillFact] = ()
     task_skill_gaps: Sequence[str] = ()
+    # Names (casefolded) of the skills some work package needs (`skill_links.py`).
+    linked_skills: frozenset[str] = frozenset()
     skill_mode: str = "hard"
     contingency_pct: float = 0.0
     working_days_per_week: int = 5
@@ -82,6 +84,15 @@ class InputFacts:
         """Required skills nobody on the team has (project list first, then work packages)."""
         gaps = [skill.name for skill in self.skills if skill.required and not skill.covered]
         return gaps + [name for name in self.task_skill_gaps if name not in gaps]
+
+    @property
+    def unlinked_skills(self) -> list[str]:
+        """Required skills on the project's list that no work package uses (D6)."""
+        return [
+            skill.name
+            for skill in self.skills
+            if skill.required and skill.name.casefold() not in self.linked_skills
+        ]
 
 
 def _task_skill_gaps(inp: PlanningInput) -> list[str]:
@@ -117,6 +128,9 @@ def facts_from_input(inp: PlanningInput, **database_facts: Any) -> InputFacts:
         ],
         capacity_mode=constraints.capacity_mode,
         task_skill_gaps=_task_skill_gaps(inp),
+        linked_skills=frozenset(
+            requirement.skill_name.casefold() for task in inp.tasks for requirement in task.skills
+        ),
         skill_mode=constraints.skill_mode,
         working_days_per_week=constraints.working_days_per_week,
         milestones=[

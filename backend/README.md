@@ -130,8 +130,13 @@ capacity never exceeds 125% of contracted hours.
 Inputs (`app/repositories/planning_input.py`): capacity comes from the project team at
 the hours they give this project (all active org employees when the project has no
 team); the deadline is soft only when the PM answered "soft"; outside specialists only
-when the PM answered "yes" (contractor rate, else $175/h). Unconfirmed AI estimates and
-unanswered questions that matter block the run (422).
+when the PM answered "yes" (contractor rate, else $175/h), for the work packages needing
+skills nobody on the team has. The project's Required skills reach the work packages
+tagged with them (`PATCH /wbs/nodes/{nodeId}` `{skills: [name]}`, needed at level 3),
+else those whose name or description mention every word of the skill
+(`skill_links.py`); a Required skill no package uses is a `needs_you` warning on the
+inputs sheet. Unconfirmed AI estimates and unanswered questions that matter block the
+run (422).
 
 `POST .../optimization/runs` loads the plan under the caller's RLS session, freezes it
 into `input_snapshot` and commits. A background task then solves it in-process

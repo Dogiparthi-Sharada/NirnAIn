@@ -3,9 +3,10 @@
 Pure: `build_sheet(facts)` returns one row per input in the order the
 screen shows them, each with its source, plus the blockers that keep the
 run from starting. Sources: stated (the notes say it), confirmed (a person
-confirmed it), needs_you (missing: blocks the run), default, assumed (the
-PM answered "Don't know") and yours (entered by a person). Inferred values
-are never used.
+confirmed it), needs_you (missing: blocks the run, or a warning such as a
+Required skill no work package uses), default, assumed (the PM answered
+"Don't know") and yours (entered by a person). Inferred values are never
+used.
 """
 
 from __future__ import annotations
@@ -203,6 +204,20 @@ def _skills(facts: InputFacts) -> Line:
     return Row("skills", "Required skills", value, "confirmed", "Step 5"), None
 
 
+def _unlinked_skills(facts: InputFacts) -> list[Row]:
+    """A warning per Required skill no work package uses: the solver can't plan for it."""
+    return [
+        Row(
+            f"skillUnlinked:{name}",
+            name,
+            f"{name} is required but no work package uses it. Tag the packages on step 4.",
+            "needs_you",
+            "Step 4",
+        )
+        for name in facts.unlinked_skills
+    ]
+
+
 def _contingency(facts: InputFacts) -> Line:
     if facts.contingency_pct > 0:
         value = f"{facts.contingency_pct:g}%"
@@ -251,6 +266,8 @@ def build_sheet(facts: InputFacts) -> Sheet:
         rows.append(row)
         if blocker is not None:
             blockers.append(blocker)
+        if section is _skills:
+            rows += _unlinked_skills(facts)
     return Sheet(rows=rows, blockers=blockers)
 
 

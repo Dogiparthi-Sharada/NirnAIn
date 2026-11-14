@@ -33,6 +33,7 @@ def _ready_facts(**changes: Any) -> InputFacts:
         team=["Mark Chen", "Lisa Park"],
         team_from_project=True,
         skills=[SkillFact("SAP Integration", True, False), SkillFact("Python", False, True)],
+        linked_skills=frozenset({"sap integration"}),
         milestones=[
             MilestoneFact("Phase 1", date(2025, 4, 15), "soft"),
             MilestoneFact("Phase 2", date(2025, 7, 31), "soft"),
@@ -81,6 +82,30 @@ def test_ready_sheet_rows_and_sources() -> None:
     assert rows["skills"][0] == "1 · nobody has SAP Integration yet · must hold"
     assert rows["contingency"][:2] == ("0%", "default")
     assert rows["milestones"] == ("Apr 15 and Jul 31 · soft", "yours", "Step 5")
+
+
+def test_a_required_skill_no_package_uses_is_a_warning_not_a_blocker() -> None:
+    inp = make_input(tasks=(Task("a", "1.1.1", "SAP setup", 5, skills=(SAP,)),))
+    okta = SkillFact("Okta SSO", True, False)
+    facts = facts_from_input(
+        inp, skills=[SkillFact("sap", True, True), okta, SkillFact("Figma", False, False)]
+    )
+    assert facts.unlinked_skills == ["Okta SSO"]  # SAP is used; Figma is optional
+    sheet = build_sheet(dataclasses.replace(_ready_facts(), **_skills_of(facts)))
+    assert sheet.ready
+    rows = {row.key: row for row in sheet.rows}
+    warning = rows["skillUnlinked:Okta SSO"]
+    assert (warning.label, warning.value, warning.source, warning.from_) == (
+        "Okta SSO",
+        "Okta SSO is required but no work package uses it. Tag the packages on step 4.",
+        "needs_you",
+        "Step 4",
+    )
+    assert list(rows).index("skillUnlinked:Okta SSO") == list(rows).index("skills") + 1
+
+
+def _skills_of(facts: InputFacts) -> dict[str, Any]:
+    return {"skills": facts.skills, "linked_skills": facts.linked_skills}
 
 
 def test_unconfirmed_estimates_block_the_run() -> None:
