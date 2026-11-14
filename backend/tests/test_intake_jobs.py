@@ -6,15 +6,17 @@ import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any
 
 import anthropic
 import pytest
+from pydantic import ValidationError
 
 from app.ai.evidence import NO_QUOTE_NOTE, ScopeSuggestion
 from app.ai.intake import Source
 from app.ai.intake_llm import ExtractedItem, ExtractionOutput
-from app.ai.llm import Usage
+from app.ai.llm import LLM, Usage
 from app.core.config import Settings
 from app.domain.common import Evidence, ScopeCategory
 from app.jobs.intake import (
@@ -169,18 +171,61 @@ async def test_without_api_key_the_rules_extractor_runs(monkeypatch: pytest.Monk
     assert store.failed == []
 
 
-async def test_llm_error_fails_without_leaking(monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom(self: IntakeRunner, notes: str) -> tuple[ExtractionOutput, Usage]:
-        raise anthropic.APIConnectionError(message="secret internals", request=object())  # type: ignore[arg-type]
+class FailingClient:
+    """A fake Anthropic client whose structured call fails like the real one can."""
 
-    monkeypatch.setattr(IntakeRunner, "_extract", boom)
-    store = FakeJobStore()
+    def __init__(self, error: Exception | None, parsed_output: object = None) -> None:
+        self.messages = self
+        self.error, self.parsed_output = error, parsed_output
+
+    def parse(self, **_: object) -> object:
+        if self.error is not None:
+            raise self.error
+        return SimpleNamespace(parsed_output=self.parsed_output)
+
+
+@pytest.mark.parametrize(
+    "client",
+    [
+        FailingClient(anthropic.APIConnectionError(message="down", request=object())),  # type: ignore[arg-type]
+        FailingClient(None, parsed_output=None),  # refusal / truncated answer
+        FailingClient(ValidationError.from_exception_data("ExtractionOutput", [])),
+    ],
+    ids=["api-error", "no-structured-output", "invalid-answer"],
+)
+async def test_claude_failure_falls_back_to_the_rules(client: FailingClient) -> None:
+    store = FakeJobStore(text="RISKS:\n- Vendor delay")
     runner = IntakeRunner(store, settings())  # type: ignore[arg-type]
-    run_id = uuid.uuid4()
-    await runner.submit(run_id)
+    runner._llm = LLM(client, "claude-opus-5-5")  # type: ignore[arg-type]
+    await runner.submit(uuid.uuid4())
     await _drain(runner)
-    assert store.failed == [(run_id, FAILED_ERROR)]
-    assert "secret" not in FAILED_ERROR
+    ((_run_id, _project_id, model, suggestions, input_tokens, output_tokens),) = store.finished
+    assert (model, input_tokens, output_tokens) == ("rules", 0, 0)
+    assert [(item.category, item.text) for item in suggestions] == [
+        (ScopeCategory.RISK, "Vendor delay")
+    ]
+    assert store.failed == []
+
+
+async def test_caption_lines_reach_claude_as_speaker_turns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[str] = []
+
+    def extract(self: IntakeRunner, notes: str) -> tuple[ExtractionOutput, Usage]:
+        seen.append(notes)
+        quote = "replace the old billing system by Q3."
+        return ExtractionOutput(items=[_item("objective", "Replace billing", quote)]), Usage(1, 1)
+
+    monkeypatch.setattr(IntakeRunner, "_extract", extract)
+    stored = "Jane Doe: The goal is to\nJane Doe: replace the old billing system by Q3.\nBob: Yes."
+    store = FakeJobStore(text=" ", uploads=(Source(uuid.uuid4(), "call.vtt", stored),))
+    runner = IntakeRunner(store, settings())  # type: ignore[arg-type]
+    await runner.submit(uuid.uuid4())
+    await _drain(runner)
+    assert "Jane Doe: The goal is to replace the old billing system by Q3.\nBob: Yes." in seen[0]
+    ((*_, suggestions, _input_tokens, _output_tokens),) = store.finished
+    assert suggestions[0].evidence == Evidence.STATED
 
 
 async def test_unexpected_crash_fails_without_leaking(monkeypatch: pytest.MonkeyPatch) -> None:

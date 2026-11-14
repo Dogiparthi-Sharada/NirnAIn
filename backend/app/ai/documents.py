@@ -7,6 +7,7 @@ is no object storage yet, so the original file is discarded after this step.
 Business rules:
 - the kind comes from the file extension, falling back to the MIME type;
 - audio is accepted but not transcribed yet (stored as a failed extraction);
+- WebVTT / SRT captions keep only the spoken words (`app.ai.transcripts`);
 - at most `MAX_CHARS` characters of text are kept per document;
 - failures are recorded with a fixed, user-facing message. Exception text never
   reaches the user: a parser error can contain file internals.
@@ -19,6 +20,7 @@ import logging
 import re
 from dataclasses import dataclass
 
+from app.ai.transcripts import clean_transcript
 from app.domain.common import DocumentKind, JobStatus
 
 logger = logging.getLogger("app.ai.documents")
@@ -58,11 +60,6 @@ KIND_BY_MIME_TYPE: dict[str, DocumentKind] = {
     "application/x-subrip": DocumentKind.TRANSCRIPT,
 }
 
-_TIMESTAMP = r"(?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{1,3}"
-CUE_TIMING_LINE = re.compile(rf"^\s*{_TIMESTAMP}\s*-->\s*{_TIMESTAMP}.*$")
-VOICE_TAG = re.compile(r"<v(?:\.[^\s>]*)?\s+([^>]+)>")
-CAPTION_MARKUP_TAG = re.compile(r"</?[a-z][^>]*>", re.IGNORECASE)
-
 
 @dataclass(frozen=True, slots=True)
 class Extraction:
@@ -94,46 +91,6 @@ def detect_kind(filename: str | None, content_type: str | None) -> DocumentKind 
     if mime_type.startswith("audio/"):
         return DocumentKind.AUDIO
     return KIND_BY_MIME_TYPE.get(mime_type)
-
-
-def _skip_webvtt_header(lines: list[str]) -> list[str]:
-    """Drop the `WEBVTT` line and the header block that follows it (up to the first blank)."""
-    if not lines or not lines[0].startswith("WEBVTT"):
-        return lines
-    header_end = 0
-    while header_end < len(lines) and lines[header_end].strip():
-        header_end += 1
-    return lines[header_end:]
-
-
-def clean_transcript(text: str) -> str:
-    """Keep the spoken words of a WebVTT / SRT file.
-
-    Removes the WEBVTT header, NOTE blocks, cue numbers / identifiers and timing
-    lines, and turns `<v Speaker>` voice tags into "Speaker: ". Plain text (no
-    timing lines) is returned unchanged so quotes from it stay verbatim.
-    """
-    lines = _skip_webvtt_header(text.lstrip("\ufeff").splitlines())
-    if not any(CUE_TIMING_LINE.match(line) for line in lines):
-        return "\n".join(lines)
-    spoken_lines: list[str] = []
-    in_note_block = False
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-        if in_note_block:
-            in_note_block = bool(stripped)  # a NOTE block ends at the next blank line
-            continue
-        if stripped == "NOTE" or stripped.startswith(("NOTE ", "NOTE\t")):
-            in_note_block = True
-            continue
-        if CUE_TIMING_LINE.match(line):
-            continue
-        next_line = lines[index + 1] if index + 1 < len(lines) else ""
-        if stripped and CUE_TIMING_LINE.match(next_line):
-            continue  # a cue number (SRT) or cue identifier (WebVTT)
-        with_speakers = VOICE_TAG.sub(lambda match: f"{match.group(1).strip()}: ", line)
-        spoken_lines.append(CAPTION_MARKUP_TAG.sub("", with_speakers))
-    return "\n".join(spoken_lines)
 
 
 def normalize(text: str) -> str:

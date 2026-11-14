@@ -1,8 +1,9 @@
 """AI intake: the project notes the extractor reads.
 
 A run analyzes its own pasted notes (if any) plus every uploaded document whose
-text was read. Each source becomes a `<document title="…">` inside one
-`<project_notes>` block. Pure functions; `app.jobs.intake` does the I/O.
+text was read. Transcripts are first reduced to one line per speaker turn
+(`with_spoken_text`), then each source becomes a `<document title="…">` inside
+one `<project_notes>` block. Pure functions; `app.jobs.intake` does the I/O.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 from app.ai.prompting import as_data
+from app.ai.transcripts import spoken_text
 
 # Upper bound for all notes sent in one request (Claude's context is far larger,
 # but long inputs are slow and costly). Over it, the longest documents are cut first.
@@ -43,6 +45,15 @@ def _per_source_cap(lengths: Sequence[int], budget: int) -> int:
         remaining_budget -= length
         remaining_sources -= 1
     return max(lengths, default=0)
+
+
+def with_spoken_text(sources: Sequence[Source]) -> list[Source]:
+    """Sources with caption transcripts merged into speaker turns (`spoken_text`).
+
+    Both extractors read these texts and quotes are checked against them, so a
+    sentence split over two captions can be quoted in one piece.
+    """
+    return [replace(source, text=spoken_text(source.title, source.text)) for source in sources]
 
 
 def fit_sources(sources: Sequence[Source], budget: int = MAX_TOTAL_CHARS) -> list[Source]:
