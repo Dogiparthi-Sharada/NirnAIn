@@ -4,7 +4,7 @@ Plan projects intelligently: AI turns raw meeting notes and documents into struc
 
 **Flow:** Create Project → AI Intake → Scope Review → WBS Builder → Constraints → Optimization Results
 
-**Live:** https://web-production-e916f.up.railway.app (landing page) · app at `/dashboard` · API https://api-production-c6141.up.railway.app/health
+**Live:** the hosted demo (website and API on Render, database on Supabase) is set up with [docs/DEPLOY_DEMO.md](docs/DEPLOY_DEMO.md). Its URLs are the ones you choose there. The old Railway URLs are retired.
 
 ## Architecture
 
@@ -36,7 +36,7 @@ uv run uvicorn app.main:app --reload --port 8000
 ## Host the demo for free
 
 [docs/DEPLOY_DEMO.md](docs/DEPLOY_DEMO.md) walks through hosting the demo step by step on free tiers: a new Supabase
-project (database and sign-in), the API on Render's free tier (Docker), and the website as a Hugging Face static Space.
+project (database and sign-in), the API as a Render free web service (Docker), and the website as a Render static site.
 
 ## Contributing
 
