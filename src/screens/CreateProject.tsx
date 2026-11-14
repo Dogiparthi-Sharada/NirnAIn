@@ -1,9 +1,10 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { useOrg } from '@/org/useOrg'
 import { uploadDocument, useCreateProject, useMembers } from '@/lib/queries'
 import { errorMessage, isApiError } from '@/lib/api'
-import { formatNumber, todayIsoDate } from '@/lib/format'
+import { todayIsoDate } from '@/lib/format'
+import { budgetProblem, DEPARTMENTS, formatBudgetInput, parseBudgetToCents } from '@/lib/create'
 import {
   METHODOLOGIES,
   METHODOLOGY_LABELS,
@@ -19,12 +20,10 @@ import {
   type ProjectType,
   type Visibility,
 } from '@/lib/types'
-import { Alert, Button } from '@/components/ui'
 import DocumentUpload, { checkFile, type UploadEntry } from '@/components/DocumentUpload'
+import { Field, SectionHead, SectionHeadBody } from '@/components/CreateForm'
 
-const DEPARTMENTS = ['Engineering', 'Operations', 'Finance', 'Product'] as const
 const CURRENCY = 'USD'
-const MAX_BUDGET_CENTS = 100_000_000_000_00 // $100B — guards against typos like an extra "000000".
 
 interface FormState {
   name: string
@@ -45,25 +44,56 @@ type FieldName = keyof FormState
 type FieldErrors = Partial<Record<FieldName, string>>
 type Intent = 'draft' | 'continue'
 
-/** Order used to focus the first invalid field. */
-const FIELD_ORDER: FieldName[] = ['name', 'type', 'description', 'startDate', 'targetEndDate', 'budget', 'pmUserId', 'department', 'sponsor']
-
-/** Parses "375,000", "$375,000.50" or "375000" into integer cents; `null` if invalid. */
-function parseBudgetToCents(input: string): number | null {
-  const cleaned = input.replace(/[\s,$]/g, '')
-  const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(cleaned)
-  if (!match) return null
-  const whole = Number(match[1])
-  const fraction = Number((match[2] ?? '').padEnd(2, '0'))
-  const cents = whole * 100 + fraction
-  return Number.isSafeInteger(cents) ? cents : null
+/** Element ids (as in the approved design); banner and checklist links jump to them. */
+const FIELD_IDS: Record<FieldName, string> = {
+  name: 'cf-name',
+  description: 'cf-desc',
+  type: 'cf-type',
+  startDate: 'cf-start',
+  targetEndDate: 'cf-end',
+  budget: 'cf-budget',
+  pmUserId: 'cf-pm',
+  department: 'cf-dept',
+  sponsor: 'cf-sponsor',
+  priority: 'cf-prio',
+  methodology: 'cf-meth',
+  visibility: 'cf-vis',
 }
 
-function formatBudgetInput(cents: number): string {
-  const whole = Math.floor(cents / 100)
-  const fraction = cents % 100
-  return fraction ? `${formatNumber(whole)}.${String(fraction).padStart(2, '0')}` : formatNumber(whole)
+const FIELD_LABELS: Record<FieldName, string> = {
+  name: 'Project name',
+  description: 'Description',
+  type: 'Project type',
+  startDate: 'Start date',
+  targetEndDate: 'Target end date',
+  budget: 'Total budget',
+  pmUserId: 'Project manager',
+  department: 'Department',
+  sponsor: 'Sponsor',
+  priority: 'Priority',
+  methodology: 'Methodology',
+  visibility: 'Visibility',
 }
+
+/** Display order of the banner. */
+const FIELD_ORDER: FieldName[] = [
+  'name',
+  'description',
+  'type',
+  'startDate',
+  'targetEndDate',
+  'budget',
+  'pmUserId',
+  'department',
+  'sponsor',
+  'priority',
+  'methodology',
+  'visibility',
+]
+
+/** What the "Required to continue" checklist counts. */
+const REQUIRED: FieldName[] = ['name', 'description', 'startDate', 'targetEndDate', 'budget']
+const IN_MORE_DETAILS: FieldName[] = ['priority', 'methodology', 'visibility']
 
 /** A draft only needs a name; anything else filled in must still be valid. */
 function validate(form: FormState, intent: Intent): FieldErrors {
@@ -82,10 +112,8 @@ function validate(form: FormState, intent: Intent): FieldErrors {
   if (!form.budget.trim()) {
     if (required) errors.budget = 'Enter the total budget.'
   } else {
-    const cents = parseBudgetToCents(form.budget)
-    if (cents === null) errors.budget = 'Enter an amount like 375,000 or 375000.50.'
-    else if (cents <= 0) errors.budget = 'Budget must be greater than zero.'
-    else if (cents > MAX_BUDGET_CENTS) errors.budget = 'That budget looks too large — check for extra zeros.'
+    const problem = budgetProblem(form.budget)
+    if (problem) errors.budget = problem
   }
   return errors
 }
@@ -95,26 +123,12 @@ function serverFieldErrors(fieldErrors: Record<string, string>): FieldErrors {
   const out: FieldErrors = {}
   for (const [field, message] of Object.entries(fieldErrors)) {
     const key = field === 'budgetCents' ? 'budget' : field
-    if (key in FORM_FIELDS) out[key as FieldName] = message
+    if (key in FIELD_IDS) out[key as FieldName] = message
   }
   return out
 }
 
-const FORM_FIELDS: Record<FieldName, true> = {
-  name: true,
-  type: true,
-  description: true,
-  startDate: true,
-  targetEndDate: true,
-  budget: true,
-  pmUserId: true,
-  department: true,
-  sponsor: true,
-  priority: true,
-  methodology: true,
-  visibility: true,
-}
-
+/** Step 1a, Create Project by hand (mockup create-form.js): four short sections, a checklist and a gap banner. */
 export default function CreateProject() {
   const navigate = useNavigate()
   const { me, org } = useOrg()
@@ -138,8 +152,11 @@ export default function CreateProject() {
   const [errors, setErrors] = useState<FieldErrors>({})
   const [submitted, setSubmitted] = useState<Intent | null>(null)
   const [pendingIntent, setPendingIntent] = useState<Intent | null>(null)
+  const busy = useRef(false)
   const [serverError, setServerError] = useState<{ title: string; detail: string } | null>(null)
-  const fieldRefs = useRef<Partial<Record<FieldName, HTMLElement | null>>>({})
+  const [moreOpen, setMoreOpen] = useState(false)
+  const bannerRef = useRef<HTMLDivElement>(null)
+  const [bannerFocus, setBannerFocus] = useState(0)
   // Files picked before the project exists; uploaded right after it is created.
   const [files, setFiles] = useState<{ key: string; file: File }[]>([])
   const [fileError, setFileError] = useState<string | null>(null)
@@ -149,29 +166,56 @@ export default function CreateProject() {
     document.title = 'Create Project · NirnAIn'
   }, [])
 
+  // Focus moves to the banner after it has rendered, so screen readers announce it.
+  useEffect(() => {
+    if (bannerFocus === 0) return
+    bannerRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    bannerRef.current?.focus({ preventScroll: true })
+  }, [bannerFocus])
+
   // PM candidates: org members, always including the current user as the default.
   const pmOptions = (() => {
-    const list = (members.data ?? []).map((m) => ({ id: m.userId, label: m.fullName?.trim() || m.email }))
-    if (!list.some((m) => m.id === me.id)) list.unshift({ id: me.id, label: me.fullName?.trim() || me.email })
+    const list = (members.data ?? []).map((m) => ({ id: m.userId, label: m.fullName?.trim() || m.email || 'Unnamed member' }))
+    if (!list.some((m) => m.id === me.id)) list.unshift({ id: me.id, label: me.fullName?.trim() || me.email || 'You' })
     return list.map((m) => (m.id === me.id ? { ...m, label: `${m.label} (you)` } : m))
   })()
 
   function update<K extends FieldName>(key: K, value: FormState[K]) {
     const next = { ...form, [key]: value }
     setForm(next)
-    // After the first submit attempt, re-validate live so errors clear as they're fixed.
+    // After the first click, re-validate live so the banner shrinks as gaps are fixed.
     if (submitted) setErrors(validate(next, submitted))
   }
 
-  function bind(name: FieldName) {
+  function jump(name: FieldName) {
+    if (IN_MORE_DETAILS.includes(name)) setMoreOpen(true)
+    // After a possible re-render that opens "More details".
+    window.setTimeout(() => {
+      const el = document.getElementById(FIELD_IDS[name])
+      el?.scrollIntoView({ block: 'center' })
+      el?.focus()
+    })
+  }
+
+  function jumpLink(name: FieldName) {
     return {
-      id: `cp-${name}`,
-      name,
-      ref: (el: HTMLElement | null) => {
-        fieldRefs.current[name] = el
+      href: `#${FIELD_IDS[name]}`,
+      'data-jump': FIELD_IDS[name].slice(3),
+      onClick: (event: MouseEvent<HTMLAnchorElement>) => {
+        event.preventDefault()
+        jump(name)
       },
+    }
+  }
+
+  function bind(name: FieldName) {
+    const id = FIELD_IDS[name]
+    return {
+      id,
+      name,
+      className: errors[name] ? 'in invalid' : 'in',
       'aria-invalid': errors[name] ? true : undefined,
-      'aria-describedby': errors[name] ? `cp-${name}-error` : undefined,
+      'aria-describedby': errors[name] ? `${id}-err` : undefined,
     }
   }
 
@@ -203,14 +247,13 @@ export default function CreateProject() {
   }
 
   async function submit(intent: Intent) {
-    if (createProject.isPending) return
+    if (busy.current) return
     setSubmitted(intent)
     setServerError(null)
     const found = validate(form, intent)
     setErrors(found)
-    const firstInvalid = FIELD_ORDER.find((f) => found[f])
-    if (firstInvalid) {
-      fieldRefs.current[firstInvalid]?.focus()
+    if (Object.keys(found).length > 0) {
+      setBannerFocus((n) => n + 1)
       return
     }
 
@@ -232,6 +275,7 @@ export default function CreateProject() {
       currentStep: intent === 'draft' ? 'create' : 'intake',
     }
 
+    busy.current = true
     setPendingIntent(intent)
     try {
       const project = await createProject.mutateAsync(payload)
@@ -242,14 +286,11 @@ export default function CreateProject() {
         navigate(`/projects/${encodeURIComponent(project.id)}/intake`, { state: { uploadError } })
       }
     } catch (error) {
+      busy.current = false
       setPendingIntent(null)
       if (isApiError(error)) {
         const fieldErrors = serverFieldErrors(error.fieldErrors)
-        if (Object.keys(fieldErrors).length > 0) {
-          setErrors((prev) => ({ ...prev, ...fieldErrors }))
-          const first = FIELD_ORDER.find((f) => fieldErrors[f])
-          if (first) fieldRefs.current[first]?.focus()
-        }
+        if (Object.keys(fieldErrors).length > 0) setErrors((prev) => ({ ...prev, ...fieldErrors }))
         setServerError({
           title: error.status === 0 ? 'Connection problem' : "We couldn't create the project",
           detail: error.detail || error.title,
@@ -257,6 +298,7 @@ export default function CreateProject() {
       } else {
         setServerError({ title: "We couldn't create the project", detail: errorMessage(error) })
       }
+      setBannerFocus((n) => n + 1)
     }
   }
 
@@ -265,293 +307,274 @@ export default function CreateProject() {
     void submit('continue')
   }
 
-  const busy = pendingIntent !== null
-  const errorCount = Object.keys(errors).length
+  const checklist = validate(form, 'continue')
+  const done = REQUIRED.filter((k) => !checklist[k]).length
+  const left = REQUIRED.length - done
+  const problems = submitted ? FIELD_ORDER.filter((k) => errors[k]) : []
+  const noun = problems.every((k) => REQUIRED.includes(k)) ? 'required field' : 'field'
 
   return (
-    <div style={{ padding: '32px 36px', maxWidth: 800 }}>
-      <Breadcrumb />
-
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Create New Project</h1>
-        <div style={{ fontSize: 13, color: '#7A6063', marginTop: 2 }}>
-          Define the basic parameters for your project. AI will use this context during intake.
+    <section className="view on" id="v-create-form">
+      <div className="pg">
+        <div className="crumb">
+          <Link to="/dashboard">Dashboard</Link> &rsaquo; <Link to="/projects/new">Create Project</Link> &rsaquo; Enter the details
         </div>
-      </div>
-
-      <form onSubmit={onSubmit} noValidate aria-describedby="cp-form-status">
-        <div style={cardStyle}>
-          <SectionLabel>Project Identity</SectionLabel>
-
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-            <Field label="Project Name" htmlFor="cp-name" required error={errors.name}>
-              <input
-                {...bind('name')}
-                className={fieldClass}
-                value={form.name}
-                onChange={(e) => update('name', e.target.value)}
-                placeholder="e.g. Enterprise Data Platform"
-                maxLength={200}
-                autoComplete="off"
-                required
-              />
-            </Field>
-            <Field label="Project Type" htmlFor="cp-type" error={errors.type}>
-              <select {...bind('type')} className={fieldClass} value={form.type} onChange={(e) => update('type', e.target.value as ProjectType)}>
-                {PROJECT_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {PROJECT_TYPE_LABELS[t]}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
-
-          <Field label="Project Description" htmlFor="cp-description" required error={errors.description}>
-            <textarea
-              {...bind('description')}
-              className={fieldClass}
-              style={{ minHeight: 80, resize: 'vertical' }}
-              value={form.description}
-              onChange={(e) => update('description', e.target.value)}
-              placeholder="What is this project meant to achieve, and for whom?"
-              required
-            />
-          </Field>
-
-          <SectionLabel style={{ marginTop: 24 }}>Timeline &amp; Budget</SectionLabel>
-
-          <div className="grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 16 }}>
-            <Field label="Start Date" htmlFor="cp-startDate" required error={errors.startDate}>
-              <input {...bind('startDate')} type="date" className={fieldClass} value={form.startDate} onChange={(e) => update('startDate', e.target.value)} required />
-            </Field>
-            <Field label="Target End Date" htmlFor="cp-targetEndDate" required error={errors.targetEndDate}>
-              <input
-                {...bind('targetEndDate')}
-                type="date"
-                className={fieldClass}
-                value={form.targetEndDate}
-                min={form.startDate || undefined}
-                onChange={(e) => update('targetEndDate', e.target.value)}
-                required
-              />
-            </Field>
-            <Field label="Total Budget ($)" htmlFor="cp-budget" required error={errors.budget}>
-              <input
-                {...bind('budget')}
-                type="text"
-                inputMode="decimal"
-                className={fieldClass}
-                value={form.budget}
-                placeholder="375,000"
-                autoComplete="off"
-                onChange={(e) => update('budget', e.target.value)}
-                onBlur={() => {
-                  const cents = parseBudgetToCents(form.budget)
-                  if (cents !== null) update('budget', formatBudgetInput(cents))
-                }}
-                required
-              />
-            </Field>
-          </div>
-
-          <SectionLabel style={{ marginTop: 24 }}>Team &amp; Ownership</SectionLabel>
-
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-            <Field
-              label="Project Manager"
-              htmlFor="cp-pmUserId"
-              error={errors.pmUserId}
-              hint={members.isError ? "Couldn't load your team — you can still assign yourself." : undefined}
-            >
-              <select
-                {...bind('pmUserId')}
-                className={fieldClass}
-                value={form.pmUserId}
-                onChange={(e) => update('pmUserId', e.target.value)}
-                aria-busy={members.isPending || undefined}
-              >
-                {pmOptions.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label}
-                  </option>
-                ))}
-                {members.isPending && (
-                  <option disabled value="__loading">
-                    Loading team…
-                  </option>
-                )}
-              </select>
-            </Field>
-            <Field label="Department / Business Unit" htmlFor="cp-department" error={errors.department}>
-              <select {...bind('department')} className={fieldClass} value={form.department} onChange={(e) => update('department', e.target.value)}>
-                {DEPARTMENTS.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
-
-          <Field label="Sponsor / Executive Owner" htmlFor="cp-sponsor" error={errors.sponsor}>
-            <input
-              {...bind('sponsor')}
-              className={fieldClass}
-              value={form.sponsor}
-              onChange={(e) => update('sponsor', e.target.value)}
-              placeholder="e.g. VP of Engineering — Robert Walsh"
-              autoComplete="off"
-            />
-          </Field>
-
-          <SectionLabel style={{ marginTop: 24 }}>Classification</SectionLabel>
-
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 8 }}>
-            <Field label="Priority" htmlFor="cp-priority" error={errors.priority}>
-              <select {...bind('priority')} className={fieldClass} value={form.priority} onChange={(e) => update('priority', e.target.value as Priority)}>
-                {PRIORITIES.map((p) => (
-                  <option key={p} value={p}>
-                    {PRIORITY_LABELS[p]}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Methodology" htmlFor="cp-methodology" error={errors.methodology}>
-              <select {...bind('methodology')} className={fieldClass} value={form.methodology} onChange={(e) => update('methodology', e.target.value as Methodology)}>
-                {METHODOLOGIES.map((m) => (
-                  <option key={m} value={m}>
-                    {METHODOLOGY_LABELS[m]}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Visibility" htmlFor="cp-visibility" error={errors.visibility}>
-              <select {...bind('visibility')} className={fieldClass} value={form.visibility} onChange={(e) => update('visibility', e.target.value as Visibility)}>
-                {VISIBILITIES.map((v) => (
-                  <option key={v} value={v}>
-                    {VISIBILITY_LABELS[v]}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
-
-          <SectionLabel style={{ marginTop: 24 }}>Supporting Documents</SectionLabel>
-          <DocumentUpload
-            entries={files.map<UploadEntry>(({ key, file }) => ({
-              key,
-              name: file.name,
-              sizeBytes: file.size,
-              status: uploadingCount > 0 ? 'uploading' : 'pending',
-            }))}
-            onFiles={addFiles}
-            onRemove={(key) => setFiles((prev) => prev.filter((f) => f.key !== key))}
-            disabled={busy}
-            hint="Optional. Attach briefs, specs, meeting transcripts or recordings now; AI reads them in the AI Intake step. Max 50 MB per file."
-            error={fileError}
-          />
+        <h1>Create New Project</h1>
+        <div className="sub" style={{ marginBottom: 18 }}>
+          Four short sections. Only the first two are required. AI uses this context during intake.
         </div>
 
-        <div id="cp-form-status" aria-live="assertive" aria-atomic="true">
-          {serverError ? (
-            <div style={{ marginTop: 20 }}>
-              <Alert tone="error" title={serverError.title} onDismiss={() => setServerError(null)}>
-                {serverError.detail}
-              </Alert>
+        <div className="cf-banner bad" id="cf-banner" role="alert" tabIndex={-1} ref={bannerRef} hidden={problems.length === 0 && !serverError}>
+          {serverError && (
+            <>
+              <b>&#9888; {serverError.title}.</b> {serverError.detail}
+            </>
+          )}
+          {problems.length > 0 && (
+            <>
+              {serverError && <br />}
+              <b>
+                &#9888; {problems.length === 1 ? `1 ${noun} needs` : `${problems.length} ${noun}s need`} your attention before you can{' '}
+                {submitted === 'draft' ? 'save a draft' : 'continue'}:
+              </b>
+              <ul>
+                {problems.map((k) => (
+                  <li key={k}>
+                    <a {...jumpLink(k)}>{FIELD_LABELS[k]}</a>: {errors[k]}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+
+        <form onSubmit={onSubmit} noValidate aria-label="Create project">
+          <div className="cf-layout">
+            <div className="cf-main">
+              <section className="card cf-sec" aria-labelledby="cf-sec-1">
+                <SectionHead n={1} id="cf-sec-1" title="About the project" help="What it is and who it is for." required />
+                <Field id={FIELD_IDS.name} label="Project name" required error={errors.name}>
+                  <input
+                    {...bind('name')}
+                    value={form.name}
+                    onChange={(e) => update('name', e.target.value)}
+                    placeholder="e.g. Enterprise Data Platform"
+                    maxLength={200}
+                    autoComplete="off"
+                    aria-required="true"
+                  />
+                </Field>
+                <Field id={FIELD_IDS.description} label="Description" required error={errors.description}>
+                  <textarea
+                    {...bind('description')}
+                    rows={3}
+                    value={form.description}
+                    onChange={(e) => update('description', e.target.value)}
+                    placeholder="What is this project meant to achieve, and for whom?"
+                    aria-required="true"
+                  />
+                </Field>
+                <Field id={FIELD_IDS.type} label="Project type" error={errors.type}>
+                  <select {...bind('type')} value={form.type} onChange={(e) => update('type', e.target.value as ProjectType)}>
+                    {PROJECT_TYPES.map((t) => (
+                      <option key={t} value={t}>
+                        {PROJECT_TYPE_LABELS[t]}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </section>
+
+              <section className="card cf-sec" aria-labelledby="cf-sec-2">
+                <SectionHead
+                  n={2}
+                  id="cf-sec-2"
+                  title="Timeline & budget"
+                  help="The optimizer plans inside these limits. You can refine them on step 5."
+                  required
+                />
+                <div className="g3">
+                  <Field id={FIELD_IDS.startDate} label="Start date" required error={errors.startDate}>
+                    <input {...bind('startDate')} type="date" value={form.startDate} onChange={(e) => update('startDate', e.target.value)} aria-required="true" />
+                  </Field>
+                  <Field id={FIELD_IDS.targetEndDate} label="Target end date" required error={errors.targetEndDate}>
+                    <input
+                      {...bind('targetEndDate')}
+                      type="date"
+                      value={form.targetEndDate}
+                      min={form.startDate || undefined}
+                      onChange={(e) => update('targetEndDate', e.target.value)}
+                      aria-required="true"
+                    />
+                  </Field>
+                  <Field id={FIELD_IDS.budget} label="Total budget ($)" required error={errors.budget}>
+                    <input
+                      {...bind('budget')}
+                      inputMode="decimal"
+                      value={form.budget}
+                      placeholder="e.g. 375,000"
+                      autoComplete="off"
+                      onChange={(e) => update('budget', e.target.value)}
+                      onBlur={() => {
+                        const cents = parseBudgetToCents(form.budget)
+                        if (cents !== null && cents > 0) update('budget', formatBudgetInput(cents))
+                      }}
+                      aria-required="true"
+                    />
+                  </Field>
+                </div>
+              </section>
+
+              <section className="card cf-sec" aria-labelledby="cf-sec-3">
+                <SectionHead n={3} id="cf-sec-3" title="People" help="Who owns it. You add the delivery team on step 5." />
+                <div className="g3">
+                  <Field
+                    id={FIELD_IDS.pmUserId}
+                    label="Project manager"
+                    error={errors.pmUserId}
+                    hint={members.isError ? "Couldn't load your team — you can still assign yourself." : undefined}
+                  >
+                    <select {...bind('pmUserId')} value={form.pmUserId} onChange={(e) => update('pmUserId', e.target.value)} aria-busy={members.isPending || undefined}>
+                      {pmOptions.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label}
+                        </option>
+                      ))}
+                      {members.isPending && (
+                        <option disabled value="__loading">
+                          Loading team…
+                        </option>
+                      )}
+                    </select>
+                  </Field>
+                  <Field id={FIELD_IDS.department} label="Department" error={errors.department}>
+                    <select {...bind('department')} value={form.department} onChange={(e) => update('department', e.target.value)}>
+                      {DEPARTMENTS.map((d) => (
+                        <option key={d} value={d}>
+                          {d}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field id={FIELD_IDS.sponsor} label="Sponsor" error={errors.sponsor}>
+                    <input
+                      {...bind('sponsor')}
+                      value={form.sponsor}
+                      onChange={(e) => update('sponsor', e.target.value)}
+                      placeholder="e.g. VP of Engineering, Robert Walsh"
+                      maxLength={200}
+                      autoComplete="off"
+                    />
+                  </Field>
+                </div>
+              </section>
+
+              <details className="card cf-sec cf-more" open={moreOpen} onToggle={(e) => setMoreOpen(e.currentTarget.open)}>
+                <summary className="cf-sec-head">
+                  <SectionHeadBody n={4} title="More details" help="Priority, methodology, visibility and supporting files. Defaults are fine for most projects." />
+                </summary>
+                <div className="g3 mt">
+                  <Field id={FIELD_IDS.priority} label="Priority" error={errors.priority}>
+                    <select {...bind('priority')} value={form.priority} onChange={(e) => update('priority', e.target.value as Priority)}>
+                      {PRIORITIES.map((p) => (
+                        <option key={p} value={p}>
+                          {PRIORITY_LABELS[p]}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field id={FIELD_IDS.methodology} label="Methodology" error={errors.methodology}>
+                    <select {...bind('methodology')} value={form.methodology} onChange={(e) => update('methodology', e.target.value as Methodology)}>
+                      {METHODOLOGIES.map((m) => (
+                        <option key={m} value={m}>
+                          {METHODOLOGY_LABELS[m]}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field id={FIELD_IDS.visibility} label="Visibility" error={errors.visibility}>
+                    <select {...bind('visibility')} value={form.visibility} onChange={(e) => update('visibility', e.target.value as Visibility)}>
+                      {VISIBILITIES.map((v) => (
+                        <option key={v} value={v}>
+                          {VISIBILITY_LABELS[v]}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+                <div className="sl mt">Supporting documents</div>
+                <DocumentUpload
+                  entries={files.map<UploadEntry>(({ key, file }) => ({
+                    key,
+                    name: file.name,
+                    sizeBytes: file.size,
+                    status: uploadingCount > 0 ? 'uploading' : 'pending',
+                    detail: uploadingCount > 0 ? null : 'uploads when you continue',
+                  }))}
+                  onFiles={addFiles}
+                  onRemove={(key) => setFiles((prev) => prev.filter((f) => f.key !== key))}
+                  disabled={pendingIntent !== null}
+                  hint="Optional. Attach briefs, specs or meeting transcripts now; AI reads them in the AI Intake step. Max 50 MB per file."
+                  error={fileError}
+                  idPrefix="cf"
+                />
+              </details>
             </div>
-          ) : submitted && errorCount > 0 ? (
-            <p className="sr-only">
-              {errorCount === 1 ? '1 field needs attention.' : `${errorCount} fields need attention.`}
-            </p>
-          ) : null}
-        </div>
 
-        <div className="flex items-center justify-between" style={{ marginTop: 24 }}>
-          <Link
-            to="/dashboard"
-            className="inline-flex items-center rounded-[4px] border border-border bg-white px-4 py-[9px] text-[13px] text-secondary-foreground hover:bg-[#FAF5EB] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-          >
-            ← Back to Dashboard
-          </Link>
-          <div className="flex gap-3">
-            <Button variant="secondary" onClick={() => void submit('draft')} loading={pendingIntent === 'draft'} disabled={busy}>
-              Save Draft
-            </Button>
-            <Button type="submit" loading={pendingIntent === 'continue'} disabled={busy}>
-              Continue to AI Intake →
-            </Button>
+            <aside className="cf-rail" aria-label="Required to continue">
+              <div className="card cf-check">
+                <div className="row between">
+                  <b>Required to continue</b>
+                  <span className="cf-count" id="cf-count">
+                    {done} of {REQUIRED.length}
+                  </span>
+                </div>
+                <div className="cf-meter" aria-hidden="true">
+                  <i id="cf-meter" style={{ width: `${(done / REQUIRED.length) * 100}%` }} />
+                </div>
+                <ul className="cf-list" id="cf-list">
+                  {REQUIRED.map((k) =>
+                    checklist[k] ? (
+                      <li key={k} className="bad">
+                        <a {...jumpLink(k)}>{FIELD_LABELS[k]}</a>
+                        <small>{checklist[k]}</small>
+                      </li>
+                    ) : (
+                      <li key={k} className="ok">
+                        {FIELD_LABELS[k]}
+                      </li>
+                    ),
+                  )}
+                </ul>
+              </div>
+              <div className="card small muted">
+                Have meeting notes?{' '}
+                <button className="linkbtn" type="button" onClick={() => navigate('/projects/new/upload')}>
+                  Start from a transcript instead
+                </button>{' '}
+                and AI fills these in for you to check.
+              </div>
+            </aside>
           </div>
-        </div>
-      </form>
-    </div>
+
+          <div className="cf-actions">
+            <Link className="btn sec" to="/projects/new">
+              &larr; Back
+            </Link>
+            <div className="row">
+              <span className={`cf-status ${left ? 'todo' : 'done'}`} id="cf-status" aria-live="polite">
+                {left ? `${left} required field${left > 1 ? 's' : ''} left` : '✓ Ready to continue'}
+              </span>
+              <button className="btn sec" id="btn-cf-draft" type="button" onClick={() => void submit('draft')} aria-busy={pendingIntent === 'draft' || undefined}>
+                {pendingIntent === 'draft' ? 'Saving…' : 'Save Draft'}
+              </button>
+              <button className="btn" id="btn-cf-continue" type="submit" aria-busy={pendingIntent === 'continue' || undefined}>
+                {pendingIntent === 'continue' ? (uploadingCount > 0 ? 'Uploading files…' : 'Creating…') : 'Continue to AI Intake →'}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </section>
   )
 }
-
-function Breadcrumb() {
-  return (
-    <nav aria-label="Breadcrumb" className="flex items-center gap-2" style={{ fontSize: 12, color: '#7A6063', marginBottom: 20 }}>
-      <Link to="/dashboard" className="hover:text-foreground hover:underline">
-        Dashboard
-      </Link>
-      <span aria-hidden="true">›</span>
-      <span aria-current="page" style={{ color: '#2E1A1D' }}>
-        Create Project
-      </span>
-    </nav>
-  )
-}
-
-function SectionLabel({ children, style }: { children: ReactNode; style?: CSSProperties }) {
-  return (
-    <div style={{ fontSize: 11, fontWeight: 600, color: '#7A6063', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 12, paddingBottom: 8, borderBottom: '1px solid #EFE5D2', ...style }}>
-      {children}
-    </div>
-  )
-}
-
-function Field({
-  label,
-  htmlFor,
-  required,
-  error,
-  hint,
-  children,
-}: {
-  label: string
-  htmlFor: string
-  required?: boolean
-  error?: string
-  hint?: string
-  children: ReactNode
-}) {
-  const hintId = useId()
-  return (
-    <div>
-      <label htmlFor={htmlFor} style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: '#4A2B2F' }}>
-        {label}
-        {required && (
-          <span aria-hidden="true" style={{ color: '#999', marginLeft: 2 }}>
-            *
-          </span>
-        )}
-      </label>
-      {children}
-      {error && (
-        <p id={`${htmlFor}-error`} style={{ margin: '5px 0 0', fontSize: 12, color: '#A83A4A' }}>
-          {error}
-        </p>
-      )}
-      {hint && !error && (
-        <p id={hintId} style={{ margin: '5px 0 0', fontSize: 12, color: '#7A6063' }}>
-          {hint}
-        </p>
-      )}
-    </div>
-  )
-}
-
-const fieldClass =
-  'w-full rounded-[4px] border border-border bg-white px-2.5 py-2 text-[13px] text-foreground font-[inherit] outline-none transition-[border-color,box-shadow] placeholder:text-[#A99A8E] focus:border-primary focus:shadow-[0_0_0_3px_rgba(114,47,55,0.16)] aria-[invalid=true]:border-[#A83A4A] aria-[invalid=true]:focus:shadow-[0_0_0_3px_rgba(196,80,106,0.16)]'
-
-const cardStyle: CSSProperties = { background: '#fff', border: '1px solid #E8DCC6', borderRadius: 6, padding: '24px 24px' }
