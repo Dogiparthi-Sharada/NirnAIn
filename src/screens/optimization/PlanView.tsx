@@ -4,8 +4,8 @@
  * Shows the applied banner, the contractor-rate confirmation, the run's KPIs, the ways to keep the
  * date when the plan finishes late (`KeepDateCard`), the Constraint check, the timeline and the
  * detail tabs, then Export and Apply. Apply stays disabled while the plan books a contractor at a
- * rate nobody confirmed; confirming saves `specialistRateConfirmed: true` on the project's
- * constraint set. Applying makes the run the next plan version (v1, v2 …) and opens step 7.
+ * rate nobody confirmed; confirming saves that rate as the project's contractor rate
+ * (`contractorRateCents`, `specialistRateConfirmed: true`), the default for contractors on step 5. Applying makes the run the next plan version (v1, v2 …) and opens step 7.
  */
 import { useState } from 'react'
 import { Link } from 'react-router'
@@ -87,10 +87,10 @@ export function PlanView({
   const canApply = !applied && rateKnown && !needsRate && !applyRun.isPending
   const deadline = constraints?.mustFinishBy ?? summary?.deadline ?? null
 
-  /** Saves the current constraint set with the specialist rate marked as confirmed. */
+  /** Saves the current constraint set with the shown contractor rate as the confirmed one. */
   function confirmRate() {
     if (!constraints) return
-    const confirmed: ConstraintAnswers = { ...constraints, specialistRateConfirmed: true }
+    const confirmed: ConstraintAnswers = { ...constraints, contractorRateCents: rateCents, specialistRateConfirmed: true }
     saveConstraints.mutate(confirmed, {
       onSuccess: () => {
         refreshInputs()

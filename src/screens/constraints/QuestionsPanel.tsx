@@ -8,7 +8,8 @@
  * planned with the safer assumption (no specialist, hard deadline) and the plan says so. The
  * deadline answer is the same setting as the Deadline card's Must hold / Can flex. A specialist's
  * cost rests on a rate; until the PM confirms it (or enters the agreed rate) the plan marks the
- * cost as estimated and step 6 asks again before applying.
+ * cost as estimated and step 6 asks again before applying. The confirmed rate is stored as the
+ * project's contractor rate, which contractors on the team without a rate of their own then use.
  */
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
@@ -153,7 +154,7 @@ function SpecialistRate({ constraints, onSave }: { constraints: ConstraintInputs
         />
         {confirmed ? <Chip kind="confirmed" /> : <Chip kind="inferred">Estimated</Chip>}
         {!confirmed && (
-          <button className="btn sm" id="con-rate-confirm" type="button" onClick={() => onSave({ specialistRateConfirmed: true })}>
+          <button className="btn sm" id="con-rate-confirm" type="button" onClick={() => onSave({ contractorRateCents: rateCents, specialistRateConfirmed: true })}>
             Confirm {hourlyRate(rateCents)}
           </button>
         )}
