@@ -3,7 +3,9 @@
  *
  * One screen, four states, picked from the latest run and the inputs sheet:
  * 1. confirm — "Check the inputs the solver will use": shown when there is no run yet, when the
- *    inputs changed after the latest run, or after "Run again". Approving starts a run.
+ *    inputs changed after the latest run, or after "Run again". Approving starts a run from the
+ *    inputs the sheet shows: their hash goes along, and the server refuses (409, the sheet reloads)
+ *    when they changed since.
  * 2. solving — while the run is queued or running (`useLatestRun` polls it).
  * 3. infeasible — the conflicting constraints and priced remedies; a remedy starts a new run.
  * 4. plan — KPIs, the ways to keep the date when it slips, Constraint check, timeline, details,
@@ -29,7 +31,7 @@ import {
   useStartOptimization,
   type ConstraintAnswers,
   type PlanRun,
-  type RemedyId,
+  type RunRequest,
 } from '@/lib/optimize'
 import { useConstraints, useLatestRun } from '@/lib/queries'
 import { ConfirmSheet } from './optimization/ConfirmSheet'
@@ -79,8 +81,8 @@ export default function OptimizationResults() {
   const outdatedPlan = solvedOnOtherInputs(run, inputs.data?.hash)
 
   /** Starts a run (with a remedy when re-solving an infeasible plan); success closes the sheet. */
-  function start(remedy?: RemedyId) {
-    startRun.mutate(remedy ? { remedy } : {}, {
+  function start(request: RunRequest = {}) {
+    startRun.mutate(request, {
       onSuccess: () => {
         setSheetRequested(false)
         setStalePlanAccepted(false)
@@ -119,7 +121,7 @@ export default function OptimizationResults() {
         context={!run ? 'first-run' : sheetRequested ? 'run-again' : 'inputs-changed'}
         starting={startRun.isPending}
         startError={startRun.error}
-        onApprove={() => start()}
+        onApprove={() => start({ reviewedHash: inputs.data?.hash })}
         onCancel={run ? backToResults : undefined}
       />
     )
@@ -130,7 +132,7 @@ export default function OptimizationResults() {
         run={run}
         resolving={startRun.isPending}
         resolveError={startRun.error}
-        onResolve={(remedy) => start(remedy)}
+        onResolve={(remedy) => start({ remedy })}
       />
     )
   } else if (planShown && run) {
@@ -143,7 +145,7 @@ export default function OptimizationResults() {
         onRetryConstraints={() => void constraintsQuery.refetch()}
         policy={policy}
         showToast={showToast}
-        onUseRemedy={(remedy) => start(remedy)}
+        onUseRemedy={(remedy) => start({ remedy })}
         remedyStarting={startRun.isPending}
         remedyError={startRun.error}
         applyBlocked={outdatedPlan ? { reason: OUTDATED_PLAN_REASON, reasonId: 'opt-plan-outdated-reason' } : undefined}

@@ -9,7 +9,9 @@ sheet showed for the saved inputs, so the screen can tell when the latest
 plan is out of date (the sheet's `appliedHash` is that hash for the plan in
 force), and `solverSettings`: how the worker solves it (solver, version,
 time limit, workers, seed, objective weights). With `changeRequestId` this
-is also the re-plan of a change on step 7. Inputs stay editable after a
+is also the re-plan of a change on step 7. With `reviewedHash` (the hash the
+sheet showed when the PM approved it) the run is refused with 409 when the
+inputs changed since that review. Inputs stay editable after a
 plan is applied; a run then starts from the plan in force (its baseline)
 unless the body names another `baselineRunId`.
 """
@@ -36,6 +38,7 @@ from app.repositories.optimization import ActiveRunExistsError, ProjectContext
 router = APIRouter(tags=["optimization"])
 
 ACTIVE_RUN_DETAIL = "An optimization is already running for this project."
+STALE_REVIEW_DETAIL = "The inputs changed since you reviewed them. Review again."
 DECIDED_CHANGE_DETAIL = "This change was already decided; record a new change to re-plan."
 DECIDED_CHANGE_STATUSES = ("approved", "rejected")
 # A remedy the PM picked answers the questions it relaxes, for that run only.
@@ -176,7 +179,8 @@ async def create_run(
     optimizer: Optimizer,
     body: RunCreate | None = None,
 ) -> OptimizationRun:
-    """Freeze the inputs into a queued run; 422 with `missing` while the sheet isn't ready."""
+    """Freeze the inputs into a queued run; 422 with `missing` while the sheet isn't ready,
+    409 while another run is active or when the inputs changed since `reviewedHash`."""
     body = body or RunCreate()
     project = await _project(runs, project_id)
     if not await runs.can_write(project_id):
@@ -193,6 +197,9 @@ async def create_run(
     # Fingerprint of the saved inputs, before this run's baseline, overrides and
     # remedy: exactly the `hash` GET …/optimization/inputs returns for the same data.
     saved_inputs_hash = inputs_hash(inp)
+    # CON-019: the PM approved the sheet showing `reviewedHash`; never run other inputs.
+    if body.reviewed_hash is not None and body.reviewed_hash != saved_inputs_hash:
+        raise ConflictError(STALE_REVIEW_DETAIL)
     lifted = LIFTED_BY_REMEDY.get(body.remedy or "", ())
     blockers: list[Blocker] = [blocker for blocker in sheet.blockers if blocker.key not in lifted]
     if blockers:
