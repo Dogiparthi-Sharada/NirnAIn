@@ -22,16 +22,22 @@ RULES_MODEL = "rules"
 
 
 class DraftField(CamelModel):
+    """One value read from the source, with the sentence it came from and how sure we are."""
+
     value: str | date | int | None = None
     quote: str | None = None
     status: DraftStatus = "missing"
 
 
 class TextField(DraftField):
+    """Name, description, department or sponsor."""
+
     value: str | None = None
 
 
 class DateField(DraftField):
+    """Start or target end date (ISO on the wire)."""
+
     value: date | None = None
 
 
@@ -42,6 +48,8 @@ class MoneyField(DraftField):
 
 
 class ProjectDraftFields(CamelModel):
+    """The project details a source can supply; anything not supplied stays missing."""
+
     name: TextField = Field(default_factory=TextField)
     description: TextField = Field(default_factory=TextField)
     start_date: DateField = Field(default_factory=DateField)
@@ -52,6 +60,8 @@ class ProjectDraftFields(CamelModel):
 
 
 class ProjectDraft(CamelModel):
+    """Response of `POST /orgs/{orgId}/project-drafts/extract`."""
+
     fields: ProjectDraftFields
     # The text that was read (file text or the pasted notes).
     text: str
@@ -61,5 +71,7 @@ class ProjectDraft(CamelModel):
 
 
 class ProjectDraftTextIn(InputModel):
+    """JSON body for pasted notes (a file comes as multipart instead)."""
+
     text: str = Field(min_length=1, max_length=MAX_DRAFT_TEXT)
     source_name: str | None = Field(default=None, max_length=200)

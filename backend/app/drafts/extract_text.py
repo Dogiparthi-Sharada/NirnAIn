@@ -1,7 +1,9 @@
 """Plain text from an uploaded file: PDF, Word (.docx) or a transcript.
 
-Pure functions (bytes in, text out) so they are easy to test and can run in a
-worker thread. Audio and anything else raise `UnsupportedFileError` (415).
+Used by `POST /orgs/{orgId}/project-drafts/extract` (`app.api.v1.drafts`) before
+the draft is read. Pure functions (bytes in, text out) so they are easy to test
+and can run in a worker thread. Audio and anything else raise
+`UnsupportedFileError` (415); files are never stored here.
 """
 
 from __future__ import annotations
@@ -44,14 +46,20 @@ _TAG = re.compile(r"</?[^>]+>")
 
 
 class UnsupportedFileError(AppError):
+    """415: audio (no speech-to-text yet) or a type we can't read."""
+
     status, slug, title = 415, "unsupported-media-type", "Unsupported Media Type"
 
 
 class FileTooLargeError(AppError):
+    """413: over the 50 MB upload limit."""
+
     status, slug, title = 413, "payload-too-large", "Payload Too Large"
 
 
 class UnreadableFileError(AppError):
+    """422: a damaged, password-protected or text-less (e.g. scanned) file."""
+
     status, slug, title = 422, "unprocessable", "Unprocessable Content"
 
 
@@ -77,6 +85,7 @@ def supported_suffix(filename: str, content_type: str | None) -> str:
 
 
 def extract_text(filename: str, content_type: str | None, data: bytes) -> str:
+    """The file's text, normalized; raises the 413 / 415 / 422 errors above. CPU-bound (PDFs)."""
     suffix = supported_suffix(filename, content_type)
     if len(data) > MAX_FILE_BYTES:
         raise FileTooLargeError(TOO_LARGE_DETAIL)
@@ -95,6 +104,7 @@ def extract_text(filename: str, content_type: str | None, data: bytes) -> str:
 
 
 def decode(data: bytes) -> str:
+    """UTF-8 (with or without BOM), falling back to Windows-1252 for older exports."""
     try:
         return data.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -112,27 +122,29 @@ def normalize(text: str) -> str:
 
 
 def pdf_text(data: bytes) -> str:
+    """Text of every page; any parser failure on the untrusted file becomes a 422."""
     try:
         reader = PdfReader(io.BytesIO(data))
         encrypted = reader.is_encrypted and not reader.decrypt("")
         pages = [] if encrypted else [page.extract_text() or "" for page in reader.pages]
-    except Exception as exc:  # any parser failure on an untrusted file
-        raise UnreadableFileError(UNREADABLE_DETAIL) from exc
+    except Exception as error:  # any parser failure on an untrusted file
+        raise UnreadableFileError(UNREADABLE_DETAIL) from error
     if encrypted:
         raise UnreadableFileError(UNREADABLE_DETAIL)
     return "\n\n".join(pages)
 
 
 def docx_text(data: bytes) -> str:
+    """Paragraphs, then table rows as "cell | cell" lines (merged cells counted once)."""
     try:
-        doc = Document(io.BytesIO(data))
-        parts = [p.text for p in doc.paragraphs]
-        for table in doc.tables:
+        document = Document(io.BytesIO(data))
+        parts = [paragraph.text for paragraph in document.paragraphs]
+        for table in document.tables:
             for row in table.rows:
-                cells = [c.text.strip() for c in row.cells]
-                parts.append(" | ".join(dict.fromkeys(c for c in cells if c)))
-    except Exception as exc:  # not a zip / not a Word document / malformed XML
-        raise UnreadableFileError(UNREADABLE_DETAIL) from exc
+                cells = [cell.text.strip() for cell in row.cells]
+                parts.append(" | ".join(dict.fromkeys(text for text in cells if text)))
+    except Exception as error:  # not a zip / not a Word document / malformed XML
+        raise UnreadableFileError(UNREADABLE_DETAIL) from error
     return "\n".join(parts)
 
 

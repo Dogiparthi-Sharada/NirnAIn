@@ -1,3 +1,13 @@
+"""`POST /orgs/{orgId}/project-drafts/extract`: project details read from a source.
+
+Step 1b of the planning flow ("Create from a transcript or document"): the web app
+sends one file (multipart `file`) or pasted notes (JSON `{text}`) and gets back a
+`ProjectDraft` — each field with its verbatim quote and status — to pre-fill the
+review form. Nothing is stored; the project and its document are created later
+through the regular endpoints. Only members of the organization may call it (404
+otherwise, like other org endpoints, checked under the caller's RLS session).
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -49,6 +59,7 @@ _REQUEST_BODY: dict[str, Any] = {
 
 
 async def _file_source(request: Request) -> tuple[str, str]:
+    """(text, file name) of the multipart upload; 413 / 415 / 422 for bad files."""
     length = request.headers.get("content-length", "")
     if length.isdigit() and int(length) > MAX_FILE_BYTES + FORM_OVERHEAD_BYTES:
         raise FileTooLargeError(TOO_LARGE_DETAIL)
@@ -65,13 +76,14 @@ async def _file_source(request: Request) -> tuple[str, str]:
 
 
 async def _text_source(request: Request) -> tuple[str, str]:
+    """(text, source name) of a JSON body, validated like any other request body (422)."""
     try:
         body = ProjectDraftTextIn.model_validate_json(await request.body())
-    except ValidationError as exc:
-        errors = exc.errors(include_url=False, include_input=False)
+    except ValidationError as invalid:
+        errors = invalid.errors(include_url=False, include_input=False)
         raise RequestValidationError(
-            [{**err, "loc": ("body", *err["loc"])} for err in errors]
-        ) from exc
+            [{**error, "loc": ("body", *error["loc"])} for error in errors]
+        ) from invalid
     return normalize(body.text), body.source_name or PASTED_SOURCE
 
 
@@ -84,6 +96,7 @@ async def _text_source(request: Request) -> tuple[str, str]:
 async def extract_project_draft(
     org_id: OrgId, request: Request, orgs: Orgs, reader: DraftReaders
 ) -> ProjectDraft:
+    """Read a draft with Claude when configured, else with the labelled rules reader."""
     await ensure_org_visible(orgs, org_id)
     content_type = request.headers.get("content-type", "").lower()
     if content_type.startswith("multipart/form-data"):

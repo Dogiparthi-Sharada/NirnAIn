@@ -1,7 +1,9 @@
 """Turns source text into a `ProjectDraft`: Claude when configured, else the rules.
 
 A failed AI call falls back to the rules too, so "Read it" always answers; the
-draft's `model` says which reader filled it in ("rules" for the fallback).
+draft's `model` says which reader filled it in ("rules" for the fallback), and the
+web app labels such drafts. The endpoint `app.api.v1.drafts` gets one shared
+reader per app from `get_draft_reader`.
 """
 
 from __future__ import annotations
@@ -22,15 +24,19 @@ logger = logging.getLogger("app.drafts")
 
 
 class DraftReader:
+    """Reads drafts with `llm` when it is configured (key set), else with the rules."""
+
     def __init__(self, llm: LLM | None, timeout_s: float) -> None:
         self._llm = llm
         self._timeout_s = timeout_s
 
     @classmethod
     def from_settings(cls, settings: Settings) -> DraftReader:
+        """Claude (`AI_MODEL`) when ANTHROPIC_API_KEY is set; the assistant's request timeout."""
         return cls(LLM(make_client(settings), settings.ai_model), settings.assistant_timeout_s)
 
     async def read(self, text: str, source_name: str) -> ProjectDraft:
+        """The draft of `text`; never raises for AI failures (logged, then the rules answer)."""
         llm = self._llm
         if llm is not None and llm.configured:
             try:

@@ -44,21 +44,27 @@ RISKS & CONCERNS
 
 # --------------------------------------------------------------------------- rules reader
 def test_rules_read_the_kickoff_notes() -> None:
-    f = rules_draft(KICKOFF)
-    assert (f.name.value, f.name.status) == ("Enterprise Data Platform", "stated")
-    assert f.name.quote == "Meeting Notes — Enterprise Data Platform Kickoff"
-    assert f.description.status == "inferred"
-    assert f.description.value == "Consolidate 7 legacy BI systems into a single unified platform"
-    # The meeting date is not a start date: nothing says when the work starts.
-    assert (f.start_date.value, f.start_date.status) == (None, "missing")
-    assert (f.target_end_date.value, f.target_end_date.status) == (date(2025, 9, 30), "inferred")
+    fields = rules_draft(KICKOFF)
+    assert (fields.name.value, fields.name.status) == ("Enterprise Data Platform", "stated")
+    assert fields.name.quote == "Meeting Notes — Enterprise Data Platform Kickoff"
+    assert fields.description.status == "inferred"
     assert (
-        f.target_end_date.quote == "Enable real-time dashboards for all business units by Q3 2025"
+        fields.description.value == "Consolidate 7 legacy BI systems into a single unified platform"
     )
-    assert (f.budget_cents.value, f.budget_cents.status) == (37_500_000, "stated")
-    assert f.budget_cents.quote == "Budget approved at $375K"
-    assert f.department.status == f.sponsor.status == "missing"
-    for field in (f.name, f.description, f.target_end_date, f.budget_cents):
+    # The meeting date is not a start date: nothing says when the work starts.
+    assert (fields.start_date.value, fields.start_date.status) == (None, "missing")
+    assert (fields.target_end_date.value, fields.target_end_date.status) == (
+        date(2025, 9, 30),
+        "inferred",
+    )
+    assert (
+        fields.target_end_date.quote
+        == "Enable real-time dashboards for all business units by Q3 2025"
+    )
+    assert (fields.budget_cents.value, fields.budget_cents.status) == (37_500_000, "stated")
+    assert fields.budget_cents.quote == "Budget approved at $375K"
+    assert fields.department.status == fields.sponsor.status == "missing"
+    for field in (fields.name, fields.description, fields.target_end_date, fields.budget_cents):
         assert field.quote is not None
         assert field.quote in KICKOFF
 
@@ -82,30 +88,39 @@ def test_rules_money_without_budget_context_is_not_a_budget() -> None:
 
 
 def test_rules_dates_by_context() -> None:
-    f = rules_draft(
+    fields = rules_draft(
         "Project: Billing Revamp\n"
         "Kickoff on 2025-03-03 and go-live by Sep 30, 2025.\n"
         "Sponsor: CFO, Ann Lee\nDepartment: Finance"
     )
-    assert (f.name.value, f.name.quote) == ("Billing Revamp", "Project: Billing Revamp")
-    assert (f.start_date.value, f.start_date.status) == (date(2025, 3, 3), "stated")
-    assert (f.target_end_date.value, f.target_end_date.status) == (date(2025, 9, 30), "stated")
-    assert (f.sponsor.value, f.department.value) == ("CFO, Ann Lee", "Finance")
-    assert f.description.status == "missing"
+    assert (fields.name.value, fields.name.quote) == ("Billing Revamp", "Project: Billing Revamp")
+    assert (fields.start_date.value, fields.start_date.status) == (date(2025, 3, 3), "stated")
+    assert (fields.target_end_date.value, fields.target_end_date.status) == (
+        date(2025, 9, 30),
+        "stated",
+    )
+    assert (fields.sponsor.value, fields.department.value) == ("CFO, Ann Lee", "Finance")
+    assert fields.description.status == "missing"
 
-    f = rules_draft("Work starts January 6, 2025. The deadline is 30 June 2025.")
-    assert (f.start_date.value, f.target_end_date.value) == (date(2025, 1, 6), date(2025, 6, 30))
+    fields = rules_draft("Work starts January 6, 2025. The deadline is 30 June 2025.")
+    assert (fields.start_date.value, fields.target_end_date.value) == (
+        date(2025, 1, 6),
+        date(2025, 6, 30),
+    )
 
     # An exact date beats a quarter; an approved-by name is not a deadline.
-    f = rules_draft("Live by Q4 2025.\nApproved by Ann on Mar 2, 2025.\nGo-live: 2025-11-14")
-    assert (f.target_end_date.value, f.target_end_date.status) == (date(2025, 11, 14), "stated")
+    fields = rules_draft("Live by Q4 2025.\nApproved by Ann on Mar 2, 2025.\nGo-live: 2025-11-14")
+    assert (fields.target_end_date.value, fields.target_end_date.status) == (
+        date(2025, 11, 14),
+        "stated",
+    )
 
 
 def test_rules_leave_unclear_text_missing() -> None:
-    f = rules_draft("Robert: okay, let's get started.\nSara: we need to talk about SAP.")
+    fields = rules_draft("Robert: okay, let's get started.\nSara: we need to talk about SAP.")
     assert all(
-        getattr(f, k).status == "missing"
-        for k in ("name", "start_date", "target_end_date", "budget_cents")
+        getattr(fields, key).status == "missing"
+        for key in ("name", "start_date", "target_end_date", "budget_cents")
     )
 
 
@@ -120,20 +135,20 @@ def test_caption_text_keeps_speakers_and_drops_timing() -> None:
 
 
 def test_extract_text_from_docx_and_pdf() -> None:
-    doc = Document()
-    doc.add_paragraph("Project: Billing Revamp")
-    doc.add_paragraph("Budget approved at $90K")
-    buf = io.BytesIO()
-    doc.save(buf)
-    text = extract_text("charter.docx", None, buf.getvalue())
+    document = Document()
+    document.add_paragraph("Project: Billing Revamp")
+    document.add_paragraph("Budget approved at $90K")
+    docx_bytes = io.BytesIO()
+    document.save(docx_bytes)
+    text = extract_text("charter.docx", None, docx_bytes.getvalue())
     assert text == "Project: Billing Revamp\nBudget approved at $90K"
 
     pdf = PdfWriter()
     pdf.add_blank_page(width=200, height=200)
-    out = io.BytesIO()
-    pdf.write(out)
+    pdf_bytes = io.BytesIO()
+    pdf.write(pdf_bytes)
     with pytest.raises(UnreadableFileError):  # a scan / blank page has no text
-        extract_text("brief.pdf", "application/pdf", out.getvalue())
+        extract_text("brief.pdf", "application/pdf", pdf_bytes.getvalue())
     with pytest.raises(UnreadableFileError):
         extract_text("broken.docx", None, b"not a zip")
 
@@ -148,7 +163,8 @@ def test_extract_text_rejects_audio_and_unknown_types() -> None:
 
 
 # --------------------------------------------------------------------------- AI answer checks
-def _ai(**overrides: dict[str, object]) -> draft_ai.AiDraft:
+def _ai_answer(**overrides: dict[str, object]) -> draft_ai.AiDraft:
+    """A Claude answer with every field missing except `overrides`."""
     missing = {"value": None, "quote": None, "status": "missing"}
     keys = ("name", "description", "start_date", "target_end_date", "budget", "department")
     data: dict[str, object] = dict.fromkeys((*keys, "sponsor"), missing)
@@ -157,7 +173,7 @@ def _ai(**overrides: dict[str, object]) -> draft_ai.AiDraft:
 
 
 def test_ai_quotes_are_checked_against_the_text() -> None:
-    out = _ai(
+    answer = _ai_answer(
         name={
             "value": "Enterprise Data Platform",
             "quote": "Enterprise  Data Platform kickoff",
@@ -173,19 +189,22 @@ def test_ai_quotes_are_checked_against_the_text() -> None:
         budget={"value": 375000, "quote": "Budget approved at $375K", "status": "stated"},
         department={"value": "Engineering", "quote": None, "status": "missing"},
     )
-    f = draft_ai.to_fields(out, KICKOFF)
+    fields = draft_ai.to_fields(answer, KICKOFF)
     # Found quotes come back exactly as written in the source.
-    assert (f.name.status, f.name.quote) == ("stated", "Enterprise Data Platform Kickoff")
+    assert (fields.name.status, fields.name.quote) == ("stated", "Enterprise Data Platform Kickoff")
     # A quote that isn't in the text: the value needs confirming, the quote is dropped.
-    assert (f.sponsor.value, f.sponsor.status, f.sponsor.quote) == (
+    assert (fields.sponsor.value, fields.sponsor.status, fields.sponsor.quote) == (
         "Robert Walsh",
         "inferred",
         None,
     )
-    assert (f.target_end_date.value, f.target_end_date.status) == (date(2025, 9, 30), "inferred")
-    assert f.start_date.status == "missing"  # not an ISO date
-    assert (f.budget_cents.value, f.budget_cents.status) == (37_500_000, "stated")
-    assert (f.department.value, f.department.status) == (None, "missing")
+    assert (fields.target_end_date.value, fields.target_end_date.status) == (
+        date(2025, 9, 30),
+        "inferred",
+    )
+    assert fields.start_date.status == "missing"  # not an ISO date
+    assert (fields.budget_cents.value, fields.budget_cents.status) == (37_500_000, "stated")
+    assert (fields.department.value, fields.department.status) == (None, "missing")
 
 
 def test_ai_prompt_keeps_notes_as_data() -> None:
@@ -218,8 +237,8 @@ def reader_box() -> dict[str, DraftReader]:
 @pytest.fixture
 def draft_client(app: FastAPI, reader_box: dict[str, DraftReader]) -> Iterator[TestClient]:
     app.dependency_overrides[get_draft_reader] = lambda: reader_box["reader"]
-    with TestClient(app, raise_server_exceptions=False) as c:
-        yield c
+    with TestClient(app, raise_server_exceptions=False) as test_client:
+        yield test_client
 
 
 def _url(org: uuid.UUID) -> str:
@@ -229,9 +248,9 @@ def _url(org: uuid.UUID) -> str:
 def test_extract_from_pasted_text(draft_client: TestClient, store: Store, auth: Auth) -> None:
     user = store.add_user()
     org = store.add_org(user)
-    r = draft_client.post(_url(org), json={"text": KICKOFF}, headers=auth(user))
-    assert r.status_code == 200, r.text
-    body = r.json()
+    response = draft_client.post(_url(org), json={"text": KICKOFF}, headers=auth(user))
+    assert response.status_code == 200, response.text
+    body = response.json()
     assert (body["model"], body["sourceName"]) == ("rules", "Pasted notes")
     assert body["text"].startswith("Meeting Notes")
     assert body["fields"]["budgetCents"] == {
@@ -244,8 +263,8 @@ def test_extract_from_pasted_text(draft_client: TestClient, store: Store, auth: 
 
     assert draft_client.post(_url(org), json={"text": "  "}, headers=auth(user)).status_code == 422
     stranger = store.add_user("Eve")
-    r = draft_client.post(_url(org), json={"text": KICKOFF}, headers=auth(stranger))
-    assert r.status_code == 404
+    response = draft_client.post(_url(org), json={"text": KICKOFF}, headers=auth(stranger))
+    assert response.status_code == 404
 
 
 def test_extract_from_files(draft_client: TestClient, store: Store, auth: Auth) -> None:
@@ -253,27 +272,30 @@ def test_extract_from_files(draft_client: TestClient, store: Store, auth: Auth) 
     org = store.add_org(user)
     store.members[(org, user)] = OrgRole.MEMBER
     vtt = "WEBVTT\n\n00:00.000 --> 00:02.000\n<v Ann>Total budget is $90,000.</v>\n"
-    r = draft_client.post(
+    response = draft_client.post(
         _url(org), files={"file": ("kickoff.vtt", vtt, "text/vtt")}, headers=auth(user)
     )
-    assert r.status_code == 200, r.text
-    assert r.json()["sourceName"] == "kickoff.vtt"
-    assert r.json()["fields"]["budgetCents"]["value"] == 9_000_000
+    assert response.status_code == 200, response.text
+    assert response.json()["sourceName"] == "kickoff.vtt"
+    assert response.json()["fields"]["budgetCents"]["value"] == 9_000_000
 
-    r = draft_client.post(
+    response = draft_client.post(
         _url(org), files={"file": ("call.mp3", b"ID3", "audio/mpeg")}, headers=auth(user)
     )
-    assert (r.status_code, r.json()["detail"]) == (415, "Audio transcription is not available yet.")
-    r = draft_client.post(
+    assert (response.status_code, response.json()["detail"]) == (
+        415,
+        "Audio transcription is not available yet.",
+    )
+    response = draft_client.post(
         _url(org), files={"file": ("a.png", b"x", "image/png")}, headers=auth(user)
     )
-    assert r.status_code == 415
-    r = draft_client.post(_url(org), files={"other": ("a.txt", b"x")}, headers=auth(user))
-    assert r.status_code == 422
-    r = draft_client.post(
+    assert response.status_code == 415
+    response = draft_client.post(_url(org), files={"other": ("a.txt", b"x")}, headers=auth(user))
+    assert response.status_code == 422
+    response = draft_client.post(
         _url(org), content=b"x", headers={**auth(user), "content-type": "text/plain"}
     )
-    assert r.status_code == 415
+    assert response.status_code == 415
 
 
 def test_extract_uses_ai_and_falls_back_to_rules(
@@ -281,14 +303,16 @@ def test_extract_uses_ai_and_falls_back_to_rules(
 ) -> None:
     user = store.add_user()
     org = store.add_org(user)
-    answer = _ai(name={"value": "EDP", "quote": "Enterprise Data Platform", "status": "stated"})
+    answer = _ai_answer(
+        name={"value": "EDP", "quote": "Enterprise Data Platform", "status": "stated"}
+    )
     reader_box["reader"] = DraftReader(FakeLLM(answer), 5)
-    r = draft_client.post(_url(org), json={"text": KICKOFF}, headers=auth(user))
-    assert r.json()["model"] == "claude-test"
-    assert r.json()["fields"]["name"]["value"] == "EDP"
-    assert r.json()["fields"]["budgetCents"]["status"] == "missing"
+    response = draft_client.post(_url(org), json={"text": KICKOFF}, headers=auth(user))
+    assert response.json()["model"] == "claude-test"
+    assert response.json()["fields"]["name"]["value"] == "EDP"
+    assert response.json()["fields"]["budgetCents"]["status"] == "missing"
 
     reader_box["reader"] = DraftReader(FakeLLM(ValueError("no structured output")), 5)
-    r = draft_client.post(_url(org), json={"text": KICKOFF}, headers=auth(user))
-    assert r.json()["model"] == "rules"
-    assert r.json()["fields"]["name"]["value"] == "Enterprise Data Platform"
+    response = draft_client.post(_url(org), json={"text": KICKOFF}, headers=auth(user))
+    assert response.json()["model"] == "rules"
+    assert response.json()["fields"]["name"]["value"] == "Enterprise Data Platform"

@@ -2,7 +2,11 @@
 
 The model must quote the notes word for word. Every quote is looked up in the
 source text: a "stated" value whose quote isn't there is downgraded to
-"inferred" (the PM has to confirm it), and values that don't parse are dropped.
+"inferred" (the PM has to confirm it), and values that don't parse are dropped,
+so a model mistake can never put an unchecked value into a project.
+
+Called by `app.drafts.reader.DraftReader` (on a worker thread) only when
+ANTHROPIC_API_KEY is set; the call goes through `app.ai.llm.LLM`.
 """
 
 from __future__ import annotations
@@ -66,6 +70,8 @@ class _AiAmount(BaseModel):
 
 
 class AiDraft(BaseModel):
+    """The structured answer Claude must return (validated by the SDK)."""
+
     name: _AiText
     description: _AiText
     start_date: _AiText = Field(description="value: YYYY-MM-DD")
@@ -76,6 +82,7 @@ class AiDraft(BaseModel):
 
 
 def build_prompt(text: str) -> str:
+    """The source as escaped data (prompt-injection guard), cut to the prompt budget."""
     return (
         data_block(as_data(text[:PROMPT_TEXT_LIMIT]))
         + "\n\nFill in the project details from the text above."
@@ -89,12 +96,13 @@ def find_quote(quote: str | None, text: str) -> str | None:
     words = quote.replace("&lt;", "<").replace("&gt;", ">").split()
     if not words:
         return None
-    pattern = r"\s+".join(re.escape(w) for w in words)
-    m = re.search(pattern, text, re.IGNORECASE)
-    return m.group(0)[:QUOTE_LIMIT] if m else None
+    pattern = r"\s+".join(re.escape(word) for word in words)
+    match = re.search(pattern, text, re.IGNORECASE)
+    return match.group(0)[:QUOTE_LIMIT] if match else None
 
 
 def _checked(status: DraftStatus, quote: str | None, text: str) -> tuple[DraftStatus, str | None]:
+    """A "stated" value needs a quote found in the source; otherwise the PM must confirm it."""
     found = find_quote(quote, text)
     if status == "stated" and found is None:
         return "inferred", None
@@ -133,25 +141,26 @@ def _money(raw: _AiAmount, text: str) -> MoneyField:
     return MoneyField(value=cents, quote=quote, status=status)
 
 
-def to_fields(out: AiDraft, text: str) -> ProjectDraftFields:
+def to_fields(answer: AiDraft, text: str) -> ProjectDraftFields:
+    """Claude's answer as draft fields, after the quote, date and money checks."""
     return ProjectDraftFields(
-        name=_text(out.name, text, NAME_LIMIT),
-        description=_text(out.description, text, DESCRIPTION_LIMIT),
-        start_date=_date(out.start_date, text),
-        target_end_date=_date(out.target_end_date, text),
-        budget_cents=_money(out.budget, text),
-        department=_text(out.department, text, DEPARTMENT_LIMIT),
-        sponsor=_text(out.sponsor, text, SPONSOR_LIMIT),
+        name=_text(answer.name, text, NAME_LIMIT),
+        description=_text(answer.description, text, DESCRIPTION_LIMIT),
+        start_date=_date(answer.start_date, text),
+        target_end_date=_date(answer.target_end_date, text),
+        budget_cents=_money(answer.budget, text),
+        department=_text(answer.department, text, DEPARTMENT_LIMIT),
+        sponsor=_text(answer.sponsor, text, SPONSOR_LIMIT),
     )
 
 
 def ai_draft(llm: LLM, text: str, timeout_s: float) -> ProjectDraftFields:
     """One structured Claude call (blocking: run it with `asyncio.to_thread`)."""
-    out, _usage = llm.parse(
+    answer, _usage = llm.parse(
         system=SYSTEM_PROMPT,
         prompt=build_prompt(text),
         output=AiDraft,
         max_tokens=MAX_TOKENS,
         timeout_s=timeout_s,
     )
-    return to_fields(out, text)
+    return to_fields(answer, text)
