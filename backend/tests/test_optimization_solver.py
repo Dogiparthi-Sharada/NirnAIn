@@ -141,6 +141,7 @@ def test_snapshot_round_trip() -> None:
         milestones=(Milestone("m", "Go-live", date(2026, 11, 2), "soft", ("a",)),),
         allocations=(Allocation("e1", date(2026, 10, 12), 8),),
         constraints=Constraints(must_finish_by=date(2026, 12, 1), contractor_rate_cents=9000),
+        deliverables={"1": "Discovery"},
     )
     assert PlanningInput.from_snapshot(inp.to_snapshot()) == inp
 

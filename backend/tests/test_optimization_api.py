@@ -166,6 +166,9 @@ RUN_KEYS = {
     "createdAt",
     "startedAt",
     "finishedAt",
+    "version",
+    "appliedAt",
+    "options",
 }
 
 
@@ -346,7 +349,15 @@ def test_finished_run_result_is_camel_case(
         },
     )
     body = opt_client.get(_url(pid, f"/{run_id}"), headers=auth(user)).json()
-    assert set(body["result"]) == {"kpis", "reassignments", "scheduleChanges", "utilization"}
+    assert set(body["result"]) == {
+        "kpis",
+        "reassignments",
+        "scheduleChanges",
+        "utilization",
+        "schedule",
+        "summary",
+        "remedies",
+    }
     assert body["result"]["kpis"][1] == {"label": "Solve", "value": "x"}  # no null `sub`
     assert body["result"]["scheduleChanges"][0]["delta"] == "—"
 

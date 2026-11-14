@@ -126,6 +126,8 @@ class PlanningInput:
     constraints: Constraints = field(default_factory=Constraints)
     milestones: tuple[Milestone, ...] = ()
     allocations: tuple[Allocation, ...] = ()
+    # Deliverable (level-2 WBS node) names by code, for grouping the timeline.
+    deliverables: Mapping[str, str] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ snapshot
     def to_snapshot(self) -> dict[str, Any]:
@@ -207,6 +209,7 @@ class PlanningInput:
                 }
                 for a in self.allocations
             ],
+            "deliverables": dict(self.deliverables),
         }
 
     @classmethod
@@ -333,6 +336,9 @@ def _parse_snapshot(data: Mapping[str, Any]) -> PlanningInput:
         constraints=constraints,
         milestones=milestones,
         allocations=allocations,
+        deliverables={
+            str(code): str(name) for code, name in (data.get("deliverables") or {}).items()
+        },
     )
 
 

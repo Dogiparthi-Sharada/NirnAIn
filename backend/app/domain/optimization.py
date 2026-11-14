@@ -1,11 +1,24 @@
+"""Optimization run schemas: the stored result, the run request and the inputs sheet.
+
+`RunResult` mirrors `optimization_runs.result` as written by
+`app/optimization/explain.py` (and, for infeasible runs, the priced
+remedies). `RunCreate` is the optional body of `POST …/optimization/runs`;
+it is stored as the run's `options`. `OptimizationInputs` is the
+confirmation sheet ("Check the inputs the solver will use").
+"""
+
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
-from app.domain.common import CamelModel, SolverStatus
+from app.domain.common import CamelModel, InputModel, SolverStatus
+
+RemedyId = Literal["specialist", "move_deadline"]
+InputSource = Literal["stated", "confirmed", "needs_you", "default", "assumed", "yours"]
 
 
 class RunKpi(CamelModel):
@@ -37,11 +50,70 @@ class Utilization(CamelModel):
     after: int
 
 
+class ScheduleItem(CamelModel):
+    """One work package on the timeline (dates inclusive)."""
+
+    wbs_node_id: str
+    code: str
+    name: str
+    deliverable_code: str
+    deliverable_name: str
+    start: date
+    end: date
+    baseline_start: date | None = None
+    baseline_end: date | None = None
+    assignee: str | None = None
+
+
+class Specialist(CamelModel):
+    """An outside specialist profile the plan uses, with its hours and cost."""
+
+    name: str
+    hours: float
+    rate_cents: int
+    cost_cents: int
+
+
+class PeakUtilization(CamelModel):
+    """The busiest team member in the plan."""
+
+    name: str
+    percent: int
+
+
+class RunSummary(CamelModel):
+    """Plain numbers the results headline and advice are built from."""
+
+    start_date: date
+    completion_date: date
+    deadline: date | None
+    deadline_mode: str
+    days_late: int
+    cost_cents: int
+    budget_cents: int | None
+    peak_utilization: PeakUtilization | None
+    specialists: list[Specialist]
+    soft_violations: list[str]
+
+
+class Remedy(CamelModel):
+    """A priced way out of an infeasible run ("What it would take")."""
+
+    id: RemedyId
+    title: str
+    detail: str
+    cost_cents: int | None
+    completion_date: date | None
+
+
 class RunResult(CamelModel):
-    kpis: list[RunKpi]
-    reassignments: list[Reassignment]
-    schedule_changes: list[ScheduleChange]
-    utilization: list[Utilization]
+    kpis: list[RunKpi] = Field(default_factory=list)
+    reassignments: list[Reassignment] = Field(default_factory=list)
+    schedule_changes: list[ScheduleChange] = Field(default_factory=list)
+    utilization: list[Utilization] = Field(default_factory=list)
+    schedule: list[ScheduleItem] = Field(default_factory=list)
+    summary: RunSummary | None = None
+    remedies: list[Remedy] = Field(default_factory=list)
 
 
 class Conflict(CamelModel):
@@ -61,3 +133,50 @@ class OptimizationRun(CamelModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    version: int | None = None
+    applied_at: datetime | None = None
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
+# --------------------------------------------------------------------------- requests
+Days = Annotated[int, Field(ge=1, le=3650)]
+Hours = Annotated[float, Field(ge=0, le=80)]
+
+
+class RunOverrides(InputModel):
+    """What-if changes for one run; the project's saved inputs stay as they are."""
+
+    budget_total_cents: int | None = Field(default=None, ge=0, le=10**13)
+    must_finish_by: date | None = None
+    duration_days: dict[uuid.UUID, Days] | None = Field(default=None, max_length=2000)
+    hours_per_week: dict[uuid.UUID, Hours] | None = Field(default=None, max_length=500)
+
+
+class RunCreate(InputModel):
+    """Body of `POST …/optimization/runs` (every field optional), stored as `options`."""
+
+    remedy: RemedyId | None = None
+    overrides: RunOverrides | None = None
+    change_request_id: uuid.UUID | None = None
+    baseline_run_id: uuid.UUID | None = None
+
+
+# --------------------------------------------------------------------------- inputs sheet
+class InputRow(CamelModel):
+    """One line of the confirmation sheet; `from` says where the value came from."""
+
+    key: str
+    label: str
+    value: str
+    source: InputSource
+    from_: str = Field(alias="from")
+
+
+class OptimizationInputs(CamelModel):
+    """The confirmation sheet: every input the solver will use and where it came from."""
+
+    rows: list[InputRow]
+    ready: bool
+    blocking: list[str]
+    missing: list[str]
+    hash: str

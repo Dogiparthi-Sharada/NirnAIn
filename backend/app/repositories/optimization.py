@@ -80,6 +80,9 @@ def _run_select() -> sa.Select[Any]:
         r.c.created_at,
         r.c.started_at,
         r.c.finished_at,
+        r.c.version,
+        r.c.applied_at,
+        r.c.options,
     )
 
 
@@ -98,6 +101,9 @@ def _to_run(row: sa.Row[Any]) -> OptimizationRun:
             "created_at": m["created_at"],
             "started_at": m["started_at"],
             "finished_at": m["finished_at"],
+            "version": m.get("version"),
+            "applied_at": m.get("applied_at"),
+            "options": m.get("options") or {},
         }
     )
 
@@ -145,13 +151,23 @@ class OptimizationRepository:
             .values(status=SolverStatus.FAILED, error=error, finished_at=sa.func.now())
         )
 
-    async def create(self, project_id: uuid.UUID, snapshot: dict[str, Any]) -> uuid.UUID:
+    async def create(
+        self,
+        project_id: uuid.UUID,
+        snapshot: dict[str, Any],
+        options: dict[str, Any] | None = None,
+    ) -> uuid.UUID:
         # Id generated here and the row re-selected, as for projects (RETURNING
         # visibility depends on SELECT policies).
         run_id = uuid.uuid4()
         try:
             await self._conn.execute(
-                sa.insert(r).values(id=run_id, project_id=project_id, input_snapshot=snapshot)
+                sa.insert(r).values(
+                    id=run_id,
+                    project_id=project_id,
+                    input_snapshot=snapshot,
+                    options=options or {},
+                )
             )
         except IntegrityError as exc:
             if pg_error_info(exc).sqlstate == "23505":

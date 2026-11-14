@@ -97,7 +97,13 @@ async def test_active_run_and_fail() -> None:
 
 
 async def test_get_and_latest_map_columns() -> None:
-    row = run_row(infeasibility=[{"name": "n", "explanation": "e"}], status="infeasible")
+    row = run_row(
+        infeasibility=[{"name": "n", "explanation": "e"}],
+        status="infeasible",
+        version=2,
+        applied_at=NOW,
+        options={"remedy": "specialist"},
+    )
     conn = Conn(Rows([row]), Rows([run_row(runtime_ms=None, status="queued")]), Rows([]))
     repo = OptimizationRepository(conn)  # type: ignore[arg-type]
     run = await repo.get(row["project_id"], row["id"])
@@ -106,9 +112,11 @@ async def test_get_and_latest_map_columns() -> None:
     assert run.status == SolverStatus.INFEASIBLE
     assert run.iis is not None
     assert run.iis[0].name == "n"
+    assert (run.version, run.applied_at, run.options) == (2, NOW, {"remedy": "specialist"})
     latest = await repo.latest(uuid.uuid4())
     assert latest is not None
     assert latest.solve_seconds is None
+    assert (latest.version, latest.options) == (None, {})
     assert "ORDER BY public.optimization_runs.created_at DESC" in conn.sql[1]
     assert await repo.latest(uuid.uuid4()) is None
 
