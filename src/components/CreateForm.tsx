@@ -85,7 +85,10 @@ export function Field({
 export interface GapItem {
   key: string
   label: string
-  message: string
+  /** Shown after the label ("Label: message"); omitted for a bare line. */
+  message?: string
+  /** False for a plain line with nothing to jump to (e.g. "and 3 more"). */
+  link?: boolean
 }
 
 /**
@@ -100,6 +103,7 @@ export function GapBanner({
   error,
   onJump,
   ref,
+  className,
 }: {
   id: string
   tone: 'warn' | 'bad'
@@ -108,9 +112,11 @@ export function GapBanner({
   error?: { title: string; detail: string } | null
   onJump: (key: string) => void
   ref?: Ref<HTMLDivElement>
+  /** Extra classes, e.g. `mt` when the banner sits below a card. */
+  className?: string
 }) {
   return (
-    <div className={`cf-banner ${tone}`} id={id} role="alert" tabIndex={-1} ref={ref} hidden={items.length === 0 && !error}>
+    <div className={['cf-banner', tone, className].filter(Boolean).join(' ')} id={id} role="alert" tabIndex={-1} ref={ref} hidden={items.length === 0 && !error}>
       {error && (
         <>
           <b>&#9888; {error.title}.</b> {error.detail}
@@ -123,17 +129,21 @@ export function GapBanner({
           <ul>
             {items.map((item) => (
               <li key={item.key}>
-                <a
-                  href="#"
-                  data-jump={item.key}
-                  onClick={(event) => {
-                    event.preventDefault()
-                    onJump(item.key)
-                  }}
-                >
-                  {item.label}
-                </a>
-                : {item.message}
+                {item.link === false ? (
+                  item.label
+                ) : (
+                  <a
+                    href="#"
+                    data-jump={item.key}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      onJump(item.key)
+                    }}
+                  >
+                    {item.label}
+                  </a>
+                )}
+                {item.message && `: ${item.message}`}
               </li>
             ))}
           </ul>
