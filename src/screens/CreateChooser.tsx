@@ -1,7 +1,12 @@
+/**
+ * Step 1 entry, Create New Project (`/projects/new`, mockup create-chooser.js): choose between the
+ * manual form (`/projects/new/form`) and starting from a transcript or document
+ * (`/projects/new/upload`). Both paths end in a project with reviewed scope.
+ */
 import { useEffect } from 'react'
 import { Link, useNavigate } from 'react-router'
 
-/** Step 1 entry: enter the details by hand, or start from a transcript or document (mockup create-chooser.js). */
+/** The two start options as cards; each button navigates to its path. */
 export default function CreateChooser() {
   const navigate = useNavigate()
 

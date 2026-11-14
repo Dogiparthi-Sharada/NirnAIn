@@ -1,40 +1,88 @@
+/**
+ * Data hooks and API types for step 1 (Create Project) and step 2 (AI Project Intake).
+ *
+ * - `usePmOptions`: project-manager choices for both create paths.
+ * - Project drafts: `POST /orgs/{orgId}/project-drafts/extract` reads a file or pasted notes and
+ *   returns each project value with its quote and status; nothing is saved (`useExtractDraft`).
+ * - `useCreateFromDraft`: creates the project from a reviewed draft, keeps the file as a project
+ *   document and starts the AI intake, degrading gracefully when either can't happen.
+ * - `useIntakeRuns`: the "Previous Intakes" history.
+ * Screens: `CreateProject`, `CreateFromUpload`, `AIProjectIntake` (and their components).
+ */
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { apiFetch, isApiError } from './api'
-import { queryKeys, uploadDocument } from './queries'
-import { formatNumber } from './format'
+import { checkFile, type UploadEntry } from '@/components/DocumentUpload'
+import { apiFetch, errorMessage, isApiError } from './api'
+import { queryKeys, uploadDocument, useMembers } from './queries'
+import { useOrg } from '@/org/useOrg'
 import type { IntakeRun, Project, ProjectCreate, ScopeItem } from './types'
 
-/* ───────────────────────────── Create Project form rules ───────────────────────────── */
-
-export const DEPARTMENTS = ['Engineering', 'Operations', 'Finance', 'Product'] as const
-const MAX_BUDGET_CENTS = 100_000_000_000_00 // $100B — guards against typos like an extra "000000".
-
-/** Parses "375,000", "$375,000.50" or "375000" into integer cents; `null` if invalid. */
-export function parseBudgetToCents(input: string): number | null {
-  const cleaned = input.replace(/[\s,$]/g, '')
-  const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(cleaned)
-  if (!match) return null
-  const whole = Number(match[1])
-  const fraction = Number((match[2] ?? '').padEnd(2, '0'))
-  const cents = whole * 100 + fraction
-  return Number.isSafeInteger(cents) ? cents : null
+/** Project manager choices: org members, always including the current user (the default). */
+export function usePmOptions() {
+  const { me, org } = useOrg()
+  const members = useMembers(org.id)
+  const list = (members.data ?? []).map((member) => ({
+    id: member.userId,
+    label: member.fullName?.trim() || member.email || 'Unnamed member',
+  }))
+  if (!list.some((option) => option.id === me.id)) list.unshift({ id: me.id, label: me.fullName?.trim() || me.email || 'You' })
+  return {
+    options: list.map((option) => (option.id === me.id ? { ...option, label: `${option.label} (you)` } : option)),
+    loading: members.isPending,
+    failed: members.isError,
+  }
 }
 
-export function formatBudgetInput(cents: number): string {
-  const whole = Math.floor(cents / 100)
-  const fraction = cents % 100
-  return fraction ? `${formatNumber(whole)}.${String(fraction).padStart(2, '0')}` : formatNumber(whole)
-}
+/**
+ * Files picked on the manual form before the project exists. They are checked on pick (type, 50 MB)
+ * and uploaded as project documents right after the project is created (`uploadTo`).
+ */
+export function usePendingUploads() {
+  const [files, setFiles] = useState<{ key: string; file: File }[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
 
-/** Budget format rules shared with Create from upload; `null` when the amount is fine. */
-export function budgetProblem(input: string): string | null {
-  const cents = parseBudgetToCents(input)
-  if (cents === null) return 'Enter an amount like 375,000 or 375000.50.'
-  if (cents <= 0) return 'Budget must be greater than zero.'
-  if (cents > MAX_BUDGET_CENTS) return 'That budget looks too large — check for extra zeros.'
-  return null
-}
+  function add(picked: File[]) {
+    setError(null)
+    const accepted: { key: string; file: File }[] = []
+    for (const file of picked) {
+      const problem = checkFile(file)
+      if (problem) setError(`${file.name}: ${problem}`)
+      else accepted.push({ key: `${file.name}-${file.size}-${file.lastModified}`, file })
+    }
+    setFiles((previous) => [...previous, ...accepted.filter((candidate) => !previous.some((existing) => existing.key === candidate.key))])
+  }
 
+  /** Uploads every file to the new project; returns a message naming the ones that failed (never throws). */
+  async function uploadTo(projectId: string): Promise<string | null> {
+    if (files.length === 0) return null
+    setUploading(true)
+    const failed: string[] = []
+    for (const { file } of files) {
+      try {
+        await uploadDocument(projectId, file)
+      } catch (failure) {
+        failed.push(`${file.name} (${errorMessage(failure)})`)
+      }
+    }
+    setUploading(false)
+    return failed.length > 0 ? `Some files couldn't be uploaded: ${failed.join('; ')}. Add them again below.` : null
+  }
+
+  const entries: UploadEntry[] = files.map(({ key, file }) => ({
+    key,
+    name: file.name,
+    sizeBytes: file.size,
+    status: uploading ? 'uploading' : 'pending',
+    detail: uploading ? null : 'uploads when you continue',
+  }))
+
+  function remove(key: string) {
+    setFiles((previous) => previous.filter((entry) => entry.key !== key))
+  }
+
+  return { entries, error, uploading, add, remove, uploadTo }
+}
 
 /* ───────────────────────────── Project drafts (create from upload) ───────────────────────────── */
 
@@ -72,8 +120,10 @@ export interface ProjectDraft {
 
 export type DraftSource = { file: File } | { text: string }
 
+/** The server's limit on intake notes; pasted notes and fallback intake text are cut to it. */
 export const MAX_NOTES_CHARS = 50_000
 
+/** Reads a draft from one file or pasted notes; errors are RFC 7807 (413 / 415 audio / 422). */
 export function useExtractDraft(orgId: string) {
   return useMutation({
     mutationFn: (source: DraftSource) => {
@@ -101,8 +151,8 @@ export interface CreateFromDraftInput {
   draft: ProjectDraft
   /** The uploaded file, kept with the project as a source document. */
   file: File | null
-  /** Drafts are saved without running the intake. */
-  runIntake: boolean
+  /** Notes pasted next to a file (empty when the pasted notes are the source); the intake reads them too. */
+  notes: string
 }
 
 export interface CreateFromDraftResult {
@@ -119,32 +169,31 @@ export interface CreateFromDraftResult {
 export function useCreateFromDraft() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async ({ orgId, project: body, draft, file, runIntake }: CreateFromDraftInput): Promise<CreateFromDraftResult> => {
+    mutationFn: async ({ orgId, project: body, draft, file, notes }: CreateFromDraftInput): Promise<CreateFromDraftResult> => {
       const project = await apiFetch<Project>(`/api/v1/orgs/${encodeURIComponent(orgId)}/projects`, { method: 'POST', json: body })
       queryClient.setQueryData(queryKeys.project(project.id), project)
       const problems: string[] = []
       let stored = false
       if (file) {
         try {
-          const doc = await uploadDocument(project.id, file)
-          stored = doc.extractionStatus === 'succeeded'
-          if (!stored) problems.push(`${file.name} was saved, but its text couldn't be read${doc.extractionError ? ` (${doc.extractionError})` : ''}.`)
+          const sourceDocument = await uploadDocument(project.id, file)
+          stored = sourceDocument.extractionStatus === 'succeeded'
+          if (!stored) problems.push(`${file.name} was saved, but its text couldn't be read${sourceDocument.extractionError ? ` (${sourceDocument.extractionError})` : ''}.`)
         } catch (error) {
           problems.push(`${file.name} couldn't be attached to the project (${isApiError(error) ? error.detail || error.title : 'upload failed'}).`)
         }
       }
-      if (runIntake) {
-        const notes = draft.text.slice(0, MAX_NOTES_CHARS)
-        try {
-          const run = await startIntakeRun(project.id, stored ? '' : notes).catch((error: unknown) => {
-            // Servers that still require notes alongside a document: send the text we read.
-            if (stored && isApiError(error) && error.status === 422) return startIntakeRun(project.id, notes)
-            throw error
-          })
-          queryClient.setQueryData(queryKeys.latestIntakeRun(project.id), run)
-        } catch (error) {
-          problems.push(`AI intake couldn't start (${isApiError(error) ? error.detail || error.title : 'request failed'}). Run it again from AI Project Intake.`)
-        }
+      const pasted = notes.trim()
+      const everything = [draft.text, pasted].filter(Boolean).join('\n\n').slice(0, MAX_NOTES_CHARS)
+      try {
+        const run = await startIntakeRun(project.id, stored ? pasted.slice(0, MAX_NOTES_CHARS) : everything).catch((error: unknown) => {
+          // Servers that still require notes alongside a document: send the text we read.
+          if (stored && isApiError(error) && error.status === 422) return startIntakeRun(project.id, everything)
+          throw error
+        })
+        queryClient.setQueryData(queryKeys.latestIntakeRun(project.id), run)
+      } catch (error) {
+        problems.push(`AI intake couldn't start (${isApiError(error) ? error.detail || error.title : 'request failed'}). Run it again from AI Project Intake.`)
       }
       return { project, problem: problems.length > 0 ? problems.join(' ') : null }
     },
@@ -169,6 +218,7 @@ export function rememberUploadSource(projectId: string, sourceName: string): voi
   }
 }
 
+/** The source a project was created from in this browser, if any. */
 export function uploadSource(projectId: string): string | null {
   try {
     return window.localStorage.getItem(SOURCE_KEY + projectId)

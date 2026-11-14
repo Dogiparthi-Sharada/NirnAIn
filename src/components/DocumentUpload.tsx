@@ -1,6 +1,13 @@
+/**
+ * Upload tiles, drop zone and attached-file list from the approved design (mockup views/files.js).
+ *
+ * Shared by the manual Create Project form (files upload after the project exists), Create from
+ * upload (one source file to read) and AI Project Intake (uploads straight to the project). It only
+ * picks files and shows their state; callers do the uploading. `checkFile` is the client-side
+ * pre-check (type, 50 MB) — the server checks again.
+ */
 import { useId, useRef, useState, type DragEvent } from 'react'
 
-/** Upload tiles from the approved design (mockup views/files.js), shared by Create Project and AI Intake. */
 const TILES = [
   { key: 'pdf', icon: '📄', label: 'PDF', sub: 'Reports, specs', accept: '.pdf,application/pdf' },
   {
@@ -16,7 +23,7 @@ const TILES = [
 
 export type TileKey = (typeof TILES)[number]['key']
 
-const ALL_ACCEPT = TILES.map((t) => t.accept).join(',')
+const ALL_ACCEPT = TILES.map((tile) => tile.accept).join(',')
 const SUPPORTED_EXTENSIONS = /\.(pdf|docx|txt|vtt|srt|md|mp3|wav|m4a|ogg|webm|aac|flac)$/i
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
@@ -38,6 +45,7 @@ export function checkFile(file: File): string | null {
   return null
 }
 
+/** "18 KB", "1.2 MB"; empty when unknown. */
 export function formatSize(bytes: number | null): string {
   if (bytes == null) return ''
   if (bytes < 1024) return `${bytes} B`
@@ -46,7 +54,7 @@ export function formatSize(bytes: number | null): string {
 }
 
 const STATUS_TEXT: Record<UploadEntryStatus, string> = {
-  pending: 'ready to upload',
+  pending: 'attached',
   uploading: 'uploading…',
   ready: 'text extracted',
   failed: 'not usable',
@@ -117,20 +125,20 @@ export default function DocumentUpload({
         }}
       />
       <div className="tiles">
-        {TILES.map((t) => (
+        {TILES.map((tile) => (
           <button
-            key={t.key}
+            key={tile.key}
             className="tile"
-            id={idPrefix ? `${idPrefix}-tile-${t.key}` : undefined}
+            id={idPrefix ? `${idPrefix}-tile-${tile.key}` : undefined}
             type="button"
-            onClick={() => browse(t.accept)}
+            onClick={() => browse(tile.accept)}
             disabled={disabled}
             aria-describedby={hintId}
-            aria-label={`Upload ${t.label} (${t.sub})`}
+            aria-label={`Upload ${tile.label} (${tile.sub})`}
           >
-            <span aria-hidden="true">{t.icon}</span>
-            <b>{t.label}</b>
-            <span>{t.sub}</span>
+            <span aria-hidden="true">{tile.icon}</span>
+            <b>{tile.label}</b>
+            <span>{tile.sub}</span>
           </button>
         ))}
       </div>
