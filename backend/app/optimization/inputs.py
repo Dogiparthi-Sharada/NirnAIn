@@ -162,6 +162,12 @@ def inputs_hash(inp: PlanningInput) -> str:
     snapshot.pop("allocations", None)
     # The day it is computed isn't an input: the hash must not change overnight.
     snapshot.pop("today", None)
+    # Applying a plan writes its assignees as the packages' owners and keeps finished work at
+    # the plan's dates. Those are the plan's own output (owners are only a "don't reassign"
+    # preference to the solver), so applying a plan must not make that same plan look stale.
+    for task in snapshot["tasks"]:
+        for plan_written_field in ("owner_id", "applied_start", "applied_end"):
+            task.pop(plan_written_field, None)
     # No reserve changes nothing the solver does: such inputs keep the hash they had
     # before the reserve reached the solver.
     if not inp.constraints.contingency_pct:

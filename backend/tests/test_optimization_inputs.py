@@ -217,3 +217,30 @@ def test_inputs_hash_ignores_other_projects_bookings() -> None:
     )
     assert inputs_hash(inp) != inputs_hash(repriced)  # editing a rate invalidates the sheet
     assert len(inputs_hash(inp)) == 64
+
+
+def test_applying_a_plan_does_not_change_the_inputs_hash() -> None:
+    """Apply writes the plan's assignees as owners and done work's dates; the plan stays current."""
+    inp = make_input()
+    first_task, *other_tasks = inp.tasks
+    after_apply = dataclasses.replace(
+        inp,
+        tasks=(
+            dataclasses.replace(
+                first_task,
+                owner_id=inp.employees[-1].id,
+                applied_start=date(2026, 10, 12),
+                applied_end=date(2026, 10, 16),
+            ),
+            *other_tasks,
+        ),
+    )
+    assert inputs_hash(inp) == inputs_hash(after_apply)
+    longer = dataclasses.replace(
+        inp,
+        tasks=(
+            dataclasses.replace(first_task, duration_days=first_task.duration_days + 5),
+            *other_tasks,
+        ),
+    )
+    assert inputs_hash(inp) != inputs_hash(longer)  # a real input edit still invalidates the plan
