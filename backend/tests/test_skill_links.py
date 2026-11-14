@@ -4,7 +4,8 @@ The project's skills link to work packages (WBS tags first, else a keyword
 match on the package's name and description); a Required skill no package
 uses is a warning on the confirmation sheet; with the specialist answer Yes
 and a rate, the work nobody on the team can do goes to a contractor at that
-rate. Also covers how `PATCH /wbs/nodes/{nodeId}` stores a package's skills.
+rate. An Optional skill never limits who may do a package (QA pack RES-011,
+CON-010). Also covers how `PATCH /wbs/nodes/{nodeId}` stores a package's skills.
 """
 
 from __future__ import annotations
@@ -16,13 +17,20 @@ from typing import Any
 
 from app.optimization.explain import build_report
 from app.optimization.inputs import SkillFact, facts_from_input
-from app.optimization.model import SkillRequirement
+from app.optimization.model import (
+    ConstraintMode,
+    Constraints,
+    Employee,
+    PlanningInput,
+    SkillRequirement,
+    Task,
+)
 from app.optimization.skill_links import PackageText, ProjectSkill, link_skills, mentions
 from app.optimization.solver import solve
 from app.repositories.optimization import OptimizationRepository
 from app.repositories.wbs import WbsRepository
 from tests.test_optimization_repo import Rows, project_ctx
-from tests.test_optimization_solver import FAST
+from tests.test_optimization_solver import FAST, make_input
 from tests.test_repositories import Conn
 
 OKTA = ProjectSkill("okta", "Okta SSO", required=True)
@@ -47,6 +55,59 @@ def test_skills_link_by_wbs_tag_else_by_every_word_of_their_name() -> None:
         "p1": [SkillRequirement("okta", "Okta SSO", 3)],
         "p2": [tagged_python],
     }
+
+
+SKILL_K = SkillRequirement("k", "Skill K", 3)
+SKILL_L = SkillRequirement("l", "Skill L", 3)
+
+
+def _pack_case(l_required: bool, skill_mode: ConstraintMode = "hard") -> PlanningInput:
+    """QA pack RES-011 / CON-010: package T tagged K and L, only K on the team, no
+    specialists; step 5 lists L as Required or Optional."""
+    task = PackageText("t", "Task needing K (and optionally L)")
+    linked = link_skills(
+        [task],
+        [ProjectSkill("k", "Skill K", required=True), ProjectSkill("l", "Skill L", l_required)],
+        {"t": [SKILL_K, SKILL_L]},
+    )
+    return make_input(
+        tasks=(Task("t", "1.1.1", task.name, 3, skills=tuple(linked["t"])),),
+        employees=(Employee("only-k", "Only K", hourly_rate_cents=10_000, skills={"k": 3}),),
+        dependencies=(),
+        constraints=Constraints(allow_contractors=False, skill_mode=skill_mode),
+    )
+
+
+def test_an_optional_skill_never_restricts_who_may_do_a_package() -> None:
+    optional = _pack_case(l_required=False)
+    assert optional.tasks[0].skills == (SKILL_K,)
+    outcome = solve(optional, FAST)
+    assert outcome.status == "optimal"
+    assert outcome.plan is not None
+    assert outcome.plan.tasks["t"].resource_id == "only-k"
+    report = build_report(optional, outcome)
+    assert report.result is not None
+    assert report.result["summary"]["softViolations"] == []
+    # Soft skill rule: still no gap penalty, no slower pace, no "without the skill".
+    soft = solve(_pack_case(l_required=False, skill_mode="soft"), FAST)
+    assert soft.plan is not None
+    assert soft.plan.tasks["t"].end - soft.plan.tasks["t"].start == 3
+
+
+def test_a_required_skill_still_limits_eligibility_by_the_skill_rule() -> None:
+    hard = solve(_pack_case(l_required=True), FAST)
+    assert hard.status == "infeasible"
+    assert [conflict.name for conflict in hard.conflicts] == [
+        "Skill: 1.1.1 Task needing K (and optionally L) requires Skill L ≥ 3"
+    ]
+    soft_case = _pack_case(l_required=True, skill_mode="soft")
+    soft = solve(soft_case, FAST)
+    assert soft.plan is not None
+    report = build_report(soft_case, soft)
+    assert report.result is not None
+    assert report.result["summary"]["softViolations"] == [
+        "1.1.1 Task needing K (and optionally L) given to Only K without the required skill"
+    ]
 
 
 def _node(

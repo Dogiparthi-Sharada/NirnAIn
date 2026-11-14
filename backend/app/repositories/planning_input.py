@@ -296,8 +296,8 @@ class PlanningInputReader:
     async def _requirements(
         self, project_id: uuid.UUID, work: Sequence[sa.Row[Any]]
     ) -> dict[str, list[SkillRequirement]]:
-        """Work package id -> the skills it needs: tagged on step 4, plus the project's
-        Required skills linked by keyword (`skill_links.link_skills`)."""
+        """Work package id -> the skills it needs: tagged on step 4 (never an Optional one),
+        plus the project's Required skills linked by keyword (`skill_links.link_skills`)."""
         if not work:
             return {}
         required = task_skill_requirements
