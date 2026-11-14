@@ -27,7 +27,7 @@ from tests.changes_fixtures import (
     new_project,
     use_fake_changes,
 )
-from tests.conftest import Store
+from tests.support.store import Store
 
 
 @pytest.fixture

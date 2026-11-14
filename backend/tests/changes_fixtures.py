@@ -9,7 +9,6 @@ consistent. How it fits: used by test_changes_rules, test_changes_api and test_c
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any
@@ -34,9 +33,8 @@ from app.domain.common import OrgRole, SolverStatus
 from app.repositories.access import ProjectRef
 from app.repositories.change_plans import InForce, RunState
 from app.repositories.changes import to_change
-from tests.conftest import Store
-
-Auth = Callable[[uuid.UUID], dict[str, str]]
+from tests.support.store import Store
+from tests.support.tokens import Auth
 
 NOTES = """Steering Committee — March 3, 2025
 Attendees: Robert Walsh (VP Eng), Sara Kim (Lead Architect), Mark Chen (Data Engineer)

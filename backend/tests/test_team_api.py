@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
@@ -19,11 +19,9 @@ from app.domain.planning import planning_weeks
 from app.domain.team import ProjectSkill, TeamMember, clean_skill_names
 from app.repositories.access import ProjectRef
 from app.repositories.team import TeamRepository
-from tests.conftest import Store
-from tests.test_optimization_repo import Rows
-from tests.test_repositories import Conn
-
-Auth = Callable[[uuid.UUID], dict[str, str]]
+from tests.support.connections import Conn, Rows
+from tests.support.store import Store
+from tests.support.tokens import Auth
 
 
 @dataclass

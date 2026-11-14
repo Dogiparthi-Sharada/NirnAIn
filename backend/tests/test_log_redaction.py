@@ -21,7 +21,7 @@ from app.api import deps
 from app.core.security import CurrentPrincipal
 from app.domain.common import DocumentKind
 from app.drafts.reader import DraftReader
-from tests.conftest import Store
+from tests.support.store import Store
 from tests.test_documents import Auth, DocumentData, FakeDocuments, _project, _upload
 from tests.test_drafts import FakeLLM
 

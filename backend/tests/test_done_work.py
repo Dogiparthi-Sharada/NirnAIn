@@ -20,9 +20,8 @@ from app.optimization.explain import build_report
 from app.optimization.model import Task
 from app.optimization.solver import solve
 from app.repositories.optimization import OptimizationRepository
-from tests.test_optimization_repo import Rows, project_ctx
-from tests.test_optimization_solver import FAST, make_input
-from tests.test_repositories import Conn
+from tests.support.connections import Conn, Rows, project_ctx
+from tests.support.solver_inputs import FAST, make_input
 
 
 def _node(

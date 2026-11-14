@@ -8,7 +8,7 @@ import pytest
 
 from app.core.errors import ServiceUnavailableError, UnauthorizedError
 from app.core.security import TokenVerifier
-from tests.conftest import ISSUER, FakeJWKClient, KeyPair, TokenFactory
+from tests.support.tokens import ISSUER, FakeJWKClient, KeyPair, TokenFactory
 
 
 async def test_valid_es256_token(verifier: TokenVerifier, make_token: TokenFactory) -> None:

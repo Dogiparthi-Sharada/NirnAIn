@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import io
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from datetime import date
 
 import pytest
@@ -27,9 +27,8 @@ from app.drafts.extract_text import (
 )
 from app.drafts.reader import DraftReader, get_draft_reader
 from app.drafts.rules import rules_draft
-from tests.conftest import Store
-
-Auth = Callable[[uuid.UUID], dict[str, str]]
+from tests.support.store import Store
+from tests.support.tokens import Auth
 
 KICKOFF = """Meeting Notes — Enterprise Data Platform Kickoff
 Date: January 15, 2025 | Attendees: Robert Walsh (VP Eng), Jane Doe (PM), Sara Kim (Lead Architect)

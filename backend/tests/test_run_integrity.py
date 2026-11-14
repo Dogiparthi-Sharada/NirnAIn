@@ -24,7 +24,8 @@ from app.core.security import CurrentPrincipal
 from app.optimization.model import Task
 from app.repositories.optimization import OptimizationRepository
 from app.repositories.work_packages import packages_without_duration
-from tests.conftest import Store
+from tests.support.connections import Conn, Rows
+from tests.support.store import Store
 from tests.test_optimization_api import (
     Auth,
     FakeRunner,
@@ -34,8 +35,6 @@ from tests.test_optimization_api import (
     _ready,
     _url,
 )
-from tests.test_optimization_repo import Rows
-from tests.test_repositories import Conn
 
 MAPPING = "1.2.1 W06 Data mapping has no duration: enter one on step 4"
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import io
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -37,11 +37,10 @@ from app.core.security import CurrentPrincipal
 from app.domain.common import DocumentKind, JobStatus, OrgRole
 from app.domain.intake import SourceDocument
 from app.repositories.documents import DocumentRepository
-from tests.conftest import Store
-from tests.test_optimization_repo import Rows
-from tests.test_repositories import Conn
+from tests.support.connections import Conn, Rows
+from tests.support.store import Store
+from tests.support.tokens import Auth
 
-Auth = Callable[[uuid.UUID], dict[str, str]]
 NOW = datetime(2026, 11, 13, 12, 0, tzinfo=UTC)
 
 

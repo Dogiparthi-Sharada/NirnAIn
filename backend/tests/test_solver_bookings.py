@@ -24,7 +24,7 @@ from app.optimization.model import (
     Task,
 )
 from app.optimization.solver import solve
-from tests.test_optimization_solver import FAST, make_input
+from tests.support.solver_inputs import FAST, make_input
 
 JAN_4 = date(2027, 1, 4)  # a Monday
 JAN_8 = date(2027, 1, 8)

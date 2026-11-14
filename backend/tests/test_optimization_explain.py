@@ -12,7 +12,7 @@ from app.optimization.model import Constraints, Dependency, Employee, SkillRequi
 from app.optimization.outcome import Conflict, Plan, ScheduledTask, SolveOutcome
 from app.optimization.resources import build_resources
 from app.optimization.solver import solve
-from tests.test_optimization_solver import FAST, MONDAY, SAP, make_input, with_constraints
+from tests.support.solver_inputs import FAST, MONDAY, SAP, make_input, with_constraints
 
 
 def test_skill_reassignment_report() -> None:

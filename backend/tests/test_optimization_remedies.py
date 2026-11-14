@@ -9,7 +9,7 @@ from app.optimization.model import Constraints, Employee, Milestone, PlanningInp
 from app.optimization.overrides import apply_overrides, with_baseline
 from app.optimization.remedies import apply_remedy, price_remedies, variants
 from app.optimization.solver import SolveOptions, solve
-from tests.test_optimization_solver import SAP, make_input, with_constraints
+from tests.support.solver_inputs import SAP, make_input, with_constraints
 
 TINY = SolveOptions(time_limit_s=2, workers=1)
 

@@ -18,8 +18,7 @@ from app.domain.changes import AddedMember, DetectedChange, NewMember, PlanOverr
 from app.repositories.access import ProjectRef
 from app.repositories.changes import ChangeRepository
 from app.repositories.team import TeamRepository
-from tests.test_optimization_repo import Rows
-from tests.test_repositories import Conn, Result
+from tests.support.connections import Conn, Result, Rows
 
 PROJECT = ProjectRef(uuid.uuid4(), uuid.uuid4(), "EDP", date(2026, 11, 30), None, None)
 DANA = NewMember(

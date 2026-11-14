@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
@@ -31,11 +31,9 @@ from app.domain.planning import (
 )
 from app.repositories.access import ProjectRef
 from app.repositories.planning import PlanningRepository
-from tests.conftest import Store
-from tests.test_optimization_repo import Rows
-from tests.test_repositories import Conn
-
-Auth = Callable[[uuid.UUID], dict[str, str]]
+from tests.support.connections import Conn, Rows
+from tests.support.store import Store
+from tests.support.tokens import Auth
 
 
 def p0001(message: str) -> DBAPIError:

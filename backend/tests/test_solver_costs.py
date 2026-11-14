@@ -24,7 +24,7 @@ from app.optimization.model import (
 )
 from app.optimization.resources import build_resources
 from app.optimization.solver import solve
-from tests.test_optimization_solver import FAST, make_input
+from tests.support.solver_inputs import FAST, make_input
 
 
 def test_employees_and_contractors_are_priced_by_their_records() -> None:

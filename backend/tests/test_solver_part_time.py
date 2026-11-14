@@ -18,42 +18,14 @@ from app.optimization.explain import build_report
 from app.optimization.load import Mode, task_mode
 from app.optimization.model import (
     Constraints,
-    Dependency,
     Employee,
     PlanningInput,
-    SkillRequirement,
     Task,
 )
 from app.optimization.overrides import apply_overrides
 from app.optimization.remedies import price_remedies
 from app.optimization.solver import solve
-from tests.test_optimization_solver import FAST, make_input
-
-DATA = SkillRequirement("data", "Data Engineering", 3)
-
-
-def _leo(hours: float = 40) -> Employee:
-    return Employee(
-        "leo",
-        "Leo Martins",
-        weekly_capacity_hours=hours,
-        hourly_rate_cents=9_000,
-        skills={"data": 3},  # at the minimum: the WBS pace (D5)
-    )
-
-
-def _pipeline() -> PlanningInput:
-    """Leo is the only data engineer: Ingest (10 d, 80 h) then Model (5 d, 40 h)."""
-    return make_input(
-        tasks=(
-            Task("a", "1.1.1", "Ingest", 10, effort_hours=80, owner_id="leo", skills=(DATA,)),
-            Task("b", "1.1.2", "Model", 5, effort_hours=40, owner_id="leo", skills=(DATA,)),
-            Task("c", "1.1.3", "Docs", 5, owner_id="ana"),
-        ),
-        employees=(_leo(), Employee("ana", "Ana Souza", hourly_rate_cents=8_000)),
-        dependencies=(Dependency("a", "b"),),
-        constraints=Constraints(must_finish_by=date(2027, 3, 31)),
-    )
+from tests.support.solver_inputs import DATA, FAST, data_pipeline_input, leo_martins, make_input
 
 
 def _plan_at(inp: PlanningInput, hours: float) -> dict[str, Any]:
@@ -83,7 +55,7 @@ def test_task_duration_follows_the_persons_hours() -> None:
 
 
 def test_cutting_hours_lengthens_the_plan_and_raising_them_shortens_it() -> None:
-    inp = _pipeline()
+    inp = data_pipeline_input()
     full = _plan_at(inp, 40)
     assert (full["makespan"], full["finish"]) == (15, date(2026, 10, 23))
     assert (full["days"]["a"], full["days"]["b"]) == (10, 5)
@@ -163,7 +135,7 @@ def test_soft_capacity_reassigns_instead_of_overbooking() -> None:
             Task("b", "1.2", "Transform", 10, effort_hours=80, owner_id="leo", skills=(DATA,)),
         ),
         employees=(
-            _leo(16),
+            leo_martins(16),
             Employee("ana", "Ana Souza", hourly_rate_cents=9_000, skills={"data": 3}),
         ),
         dependencies=(),
@@ -185,7 +157,7 @@ def test_soft_capacity_stretches_and_serialises_instead_of_overbooking() -> None
             Task("a", "1.1", "Ingest", 10, effort_hours=80, owner_id="leo", skills=(DATA,)),
             Task("b", "1.2", "Transform", 10, effort_hours=80, owner_id="leo", skills=(DATA,)),
         ),
-        employees=(_leo(16),),
+        employees=(leo_martins(16),),
         dependencies=(),
         constraints=Constraints(must_finish_by=date(2027, 3, 31), capacity_mode="soft"),
     )

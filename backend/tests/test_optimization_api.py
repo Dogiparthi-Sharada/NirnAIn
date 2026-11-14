@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -27,9 +27,8 @@ from app.repositories.optimization import (
     AppliedRun,
     ProjectContext,
 )
-from tests.conftest import Store, rls_violation
-
-Auth = Callable[[uuid.UUID], dict[str, str]]
+from tests.support.store import Store, rls_violation
+from tests.support.tokens import Auth
 
 
 @dataclass

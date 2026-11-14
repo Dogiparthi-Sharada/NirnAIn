@@ -22,7 +22,7 @@ from app.ai.documents import MAX_CHARS, extract_text
 from app.api import deps
 from app.core.security import CurrentPrincipal
 from app.domain.common import DocumentKind
-from tests.conftest import Store
+from tests.support.store import Store
 from tests.test_documents import (
     Auth,
     DocumentData,

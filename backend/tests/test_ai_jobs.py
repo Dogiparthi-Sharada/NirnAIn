@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -47,11 +47,10 @@ from app.jobs.ai_jobs import (
     AiJobRunner,
 )
 from app.repositories.ai_jobs import ActiveJob, ActiveJobExistsError, AiJobStore, ClaimedJob
-from tests.conftest import Store
-from tests.test_optimization_repo import Rows
-from tests.test_repositories import Result
+from tests.support.connections import Result, Rows
+from tests.support.store import Store
+from tests.support.tokens import Auth
 
-Auth = Callable[[uuid.UUID], dict[str, str]]
 NOW = datetime(2026, 11, 13, 12, 0, tzinfo=UTC)
 
 

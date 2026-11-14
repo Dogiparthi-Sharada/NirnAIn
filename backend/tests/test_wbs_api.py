@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -18,9 +18,8 @@ from app.domain.common import OrgRole
 from app.domain.wbs import EstimateSource, WbsNode, estimate_state, reorder
 from app.repositories.access import ProjectRef
 from app.repositories.wbs import NodeRef
-from tests.conftest import Store
-
-Auth = Callable[[uuid.UUID], dict[str, str]]
+from tests.support.store import Store
+from tests.support.tokens import Auth
 
 
 @dataclass

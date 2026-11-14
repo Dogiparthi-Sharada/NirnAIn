@@ -31,9 +31,8 @@ from app.domain.overview_facts import (
 from app.domain.overview_milestones import MilestoneFact, milestone_summary, planned_finishes
 from app.domain.projects import Project
 from app.repositories.overview import OverviewRepository
-from tests.conftest import Store
-from tests.test_optimization_repo import Rows
-from tests.test_repositories import Conn
+from tests.support.connections import Conn, Rows
+from tests.support.store import Store
 
 TODAY = date(2026, 3, 2)
 RESULT: dict[str, Any] = {

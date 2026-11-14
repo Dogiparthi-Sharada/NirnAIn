@@ -16,7 +16,7 @@ from app.optimization.inputs import (
     quote_states_amount,
 )
 from app.optimization.model import Allocation, Employee, Task
-from tests.test_optimization_solver import SAP, make_input, with_constraints
+from tests.support.solver_inputs import SAP, make_input, with_constraints
 
 
 def _ready_facts(**changes: Any) -> InputFacts:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -18,10 +18,10 @@ from app.api import deps
 from app.core.security import CurrentPrincipal
 from app.domain.common import OrgRole
 from app.repositories.wbs_checks import read_validation_input, wbs_changed_at
-from tests.conftest import Store
+from tests.support.store import Store
+from tests.support.tokens import Auth
 from tests.test_wbs_api import FakeWbs, WbsStore, _add, _project
 
-Auth = Callable[[uuid.UUID], dict[str, str]]
 CHANGED = datetime(2026, 11, 14, 21, 5, tzinfo=UTC)
 
 

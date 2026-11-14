@@ -29,9 +29,8 @@ from app.optimization.skill_links import PackageText, ProjectSkill, link_skills,
 from app.optimization.solver import solve
 from app.repositories.optimization import OptimizationRepository
 from app.repositories.wbs import WbsRepository
-from tests.test_optimization_repo import Rows, project_ctx
-from tests.test_optimization_solver import FAST, make_input
-from tests.test_repositories import Conn
+from tests.support.connections import Conn, Rows, project_ctx
+from tests.support.solver_inputs import FAST, make_input
 
 OKTA = ProjectSkill("okta", "Okta SSO", required=True)
 

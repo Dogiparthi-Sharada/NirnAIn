@@ -22,27 +22,10 @@ from app.repositories.optimization import (
     ProjectContext,
 )
 from app.repositories.optimization_store import OptimizationJobStore
-from tests.test_optimization_solver import FAST, make_input
-from tests.test_repositories import Conn, Result
+from tests.support.connections import Conn, Result, Rows, project_ctx
+from tests.support.solver_inputs import FAST, make_input
 
 NOW = datetime(2026, 10, 14, 12, 0, tzinfo=UTC)
-
-
-class Rows(Result):
-    """Result whose rows support attribute access, like SQLAlchemy rows."""
-
-    def __init__(self, rows: list[dict[str, Any]], rowcount: int = 1) -> None:
-        super().__init__(rows, rowcount)
-        self._rows = [_Row(r) for r in rows]
-
-    def scalar(self) -> Any:
-        return next(iter(self._rows[0]._mapping.values())) if self._rows else None
-
-
-class _Row(SimpleNamespace):
-    def __init__(self, mapping: dict[str, Any]) -> None:
-        super().__init__(**mapping)
-        self._mapping = mapping
 
 
 def run_row(**overrides: Any) -> dict[str, Any]:
@@ -64,12 +47,6 @@ def run_row(**overrides: Any) -> dict[str, Any]:
     }
     row.update(overrides)
     return row
-
-
-def project_ctx() -> ProjectContext:
-    return ProjectContext(
-        uuid.uuid4(), uuid.uuid4(), "CRM", date(2026, 10, 5), date(2027, 1, 29), 37_500_000
-    )
 
 
 async def test_project_and_can_write() -> None:

@@ -25,7 +25,7 @@ from app.jobs.optimizer import (
 from app.optimization.explain import Report
 from app.optimization.solver import SolveControl
 from app.repositories.optimization_store import OptimizationJobStore
-from tests.test_optimization_solver import make_input, with_constraints
+from tests.support.solver_inputs import make_input, with_constraints
 
 
 class FakeJobStore:

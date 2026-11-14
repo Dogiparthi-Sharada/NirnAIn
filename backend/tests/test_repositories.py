@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, date, datetime
-from types import SimpleNamespace
 from typing import Any
-
-from sqlalchemy.dialects import postgresql
 
 from app.core.pagination import Cursor
 from app.domain.common import ProjectStatus
@@ -15,37 +12,9 @@ from app.repositories.me import ProfileRepository
 from app.repositories.notifications import NotificationRepository
 from app.repositories.orgs import OrgRepository
 from app.repositories.projects import ProjectRepository, escape_like
+from tests.support.connections import Conn, Result
 
 NOW = datetime(2026, 9, 24, 12, 0, tzinfo=UTC)
-
-
-class Result:
-    def __init__(self, rows: list[dict[str, Any]], rowcount: int = 1) -> None:
-        self._rows = [SimpleNamespace(_mapping=r) for r in rows]
-        self.rowcount = rowcount
-
-    def all(self) -> list[Any]:
-        return self._rows
-
-    def first(self) -> Any:
-        return self._rows[0] if self._rows else None
-
-    def one(self) -> Any:
-        assert len(self._rows) == 1
-        return self._rows[0]
-
-
-class Conn:
-    def __init__(self, *results: Result) -> None:
-        self.results = list(results)
-        self.sql: list[str] = []
-        self.params: list[dict[str, Any]] = []
-
-    async def execute(self, stmt: Any) -> Result:
-        compiled = stmt.compile(dialect=postgresql.dialect())
-        self.sql.append(str(compiled))
-        self.params.append(dict(compiled.params))
-        return self.results.pop(0) if self.results else Result([])
 
 
 def project_row(**overrides: Any) -> dict[str, Any]:

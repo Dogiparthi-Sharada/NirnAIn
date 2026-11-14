@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from datetime import date
 from typing import Any
 
@@ -27,11 +27,10 @@ from app.ai.assistant import (
 from app.ai.llm import ChatMessage, Usage
 from app.api import deps
 from app.repositories.assistant import AssistantRepository
-from tests.conftest import Store
-from tests.test_optimization_repo import Rows
-from tests.test_repositories import Conn
+from tests.support.connections import Conn, Rows
+from tests.support.store import Store
+from tests.support.tokens import Auth
 
-Auth = Callable[[uuid.UUID], dict[str, str]]
 VISIBLE = uuid.uuid4()
 CONTEXT = ProjectContext(
     name="CRM",

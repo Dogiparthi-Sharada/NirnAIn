@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
 from app.domain.common import NotificationLevel, OrgRole
 from app.domain.notifications import Notification
-from tests.conftest import Store, TokenFactory
-
-Auth = Callable[[uuid.UUID], dict[str, str]]
+from tests.support.store import Store
+from tests.support.tokens import Auth, TokenFactory
 
 
 def _setup(store: Store) -> tuple[uuid.UUID, uuid.UUID]:

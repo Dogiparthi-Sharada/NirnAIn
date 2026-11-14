@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 from app.api import deps
 from app.core.security import CurrentPrincipal
 from app.optimization.model import Employee, PlanningInput, Task
-from tests.conftest import Store
+from tests.support.store import Store
 from tests.test_optimization_api import Auth, FakeRunner, FakeRuns, RunStore
 
 TASK, MARK, LISA = "task-design", "mark", "lisa"
