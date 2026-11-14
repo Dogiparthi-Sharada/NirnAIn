@@ -12,7 +12,8 @@ Business rules:
 - video is rejected (415): people should upload the meeting's transcript;
 - audio is accepted but not transcribed yet (stored as a failed extraction);
 - WebVTT / SRT captions keep only the spoken words (`app.ai.transcripts`);
-- at most `MAX_CHARS` characters of text are kept per document;
+- at most `MAX_CHARS` characters of text are kept per document, and a document with
+  more says so (`truncated`): only its first part was read, never silently;
 - failures are recorded with a fixed, user-facing message. Exception text never
   reaches the user or the server log: a parser error can quote the file. Only the
   exception's class is kept, for the API to log with the document's id, size and kind.
@@ -84,13 +85,15 @@ class Extraction:
     status: JobStatus
     text: str | None = None
     error: str | None = None
+    # The file had more text than is kept: `text` is only its first part.
+    truncated: bool = False
     # The parser's exception class when the file couldn't be read: logged, never stored.
     failure: str | None = field(default=None, compare=False)
 
     @classmethod
     def failed(cls, error: str, failure: str | None = None) -> Extraction:
         """A failed extraction with a fixed, user-facing message (and the exception class)."""
-        return cls(JobStatus.FAILED, None, error, failure)
+        return cls(JobStatus.FAILED, None, error, failure=failure)
 
 
 def file_title(filename: str | None) -> str:
@@ -135,15 +138,14 @@ def detect_kind(filename: str | None, content_type: str | None) -> DocumentKind 
 
 
 def normalize(text: str) -> str:
-    """Make extracted text storable and compact, capped at `MAX_CHARS`.
+    """Make extracted text storable and compact (the caller keeps at most `MAX_CHARS`).
 
     Postgres text can't hold NUL characters; line endings are unified, trailing
     spaces and runs of blank lines removed.
     """
     text = text.replace("\x00", "").replace("\r\n", "\n").replace("\r", "\n")
     text = "\n".join(line.rstrip() for line in text.split("\n"))
-    text = re.sub(r"\n{3,}", "\n\n", text).strip()
-    return text[:MAX_CHARS]
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def stream_size(stream: BinaryIO) -> int:
@@ -153,19 +155,20 @@ def stream_size(stream: BinaryIO) -> int:
     return size
 
 
-def _pdf_text(stream: BinaryIO) -> str:
+def _pdf_text(stream: BinaryIO) -> tuple[str, bool]:
+    """The text of the first pages that hold `MAX_CHARS`, and whether pages were left unread."""
     from pypdf import PdfReader  # noqa: PLC0415 - heavy import, only needed for PDFs
 
     reader = PdfReader(stream)
     page_texts: list[str] = []
     collected_chars = 0
-    for page in reader.pages:
+    for page_number, page in enumerate(reader.pages, start=1):
         page_text = page.extract_text() or ""
         page_texts.append(page_text)
         collected_chars += len(page_text)
         if collected_chars >= MAX_CHARS:  # the rest would be cut anyway
-            break
-    return "\n\n".join(page_texts)
+            return "\n\n".join(page_texts), page_number < len(reader.pages)
+    return "\n\n".join(page_texts), False
 
 
 def _docx_text(stream: BinaryIO) -> str:
@@ -193,14 +196,18 @@ def extract_text(kind: DocumentKind, data: bytes | BinaryIO) -> Extraction:
     if kind == DocumentKind.AUDIO:
         return Extraction.failed(AUDIO_ERROR)
     stream = io.BytesIO(data) if isinstance(data, bytes) else data
+    unread = False
     try:
         if kind == DocumentKind.PDF:
-            raw_text = _pdf_text(stream)
+            raw_text, unread = _pdf_text(stream)
         elif kind == DocumentKind.DOCX:
             raw_text = _docx_text(stream)
         else:
-            raw_bytes = stream.read(TEXT_READ_LIMIT_BYTES)
-            raw_text = clean_transcript(raw_bytes.decode("utf-8", errors="replace"))
+            raw_bytes = stream.read(TEXT_READ_LIMIT_BYTES + 1)
+            unread = len(raw_bytes) > TEXT_READ_LIMIT_BYTES
+            raw_text = clean_transcript(
+                raw_bytes[:TEXT_READ_LIMIT_BYTES].decode("utf-8", errors="replace")
+            )
     except Exception as exc:
         # Corrupt or malicious files. Security rule (SEC-006): the exception's text can
         # quote the file, so only its class is kept; the user sees a fixed message.
@@ -208,4 +215,6 @@ def extract_text(kind: DocumentKind, data: bytes | BinaryIO) -> Extraction:
     text = normalize(raw_text)
     if not text:
         return Extraction.failed(NO_TEXT_ERROR)
-    return Extraction(JobStatus.SUCCEEDED, text)
+    return Extraction(
+        JobStatus.SUCCEEDED, text[:MAX_CHARS], truncated=unread or len(text) > MAX_CHARS
+    )

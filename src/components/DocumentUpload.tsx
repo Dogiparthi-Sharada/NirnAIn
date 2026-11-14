@@ -41,6 +41,8 @@ export interface UploadEntry {
   status: UploadEntryStatus
   /** Shown after the size: extraction errors, "uploads when you continue", … */
   detail?: string | null
+  /** Shown as a warning after the status: "Only the first 200,000 characters were read." */
+  warning?: string | null
 }
 
 /**
@@ -182,6 +184,7 @@ export default function DocumentUpload({
                 </span>
                 <span className="muted" style={entry.status === 'failed' ? { color: 'var(--red)' } : undefined}>
                   {meta}
+                  {entry.warning && <span style={{ color: 'var(--amber)' }}>{` \u00B7 \u26A0 ${entry.warning}`}</span>}
                 </span>
                 <button
                   className="x"

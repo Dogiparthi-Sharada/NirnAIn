@@ -72,6 +72,7 @@ export default function AIProjectIntake() {
       sizeBytes: sourceDocument.sizeBytes,
       status: sourceDocument.extractionStatus === 'succeeded' ? ('ready' as const) : ('failed' as const),
       detail: sourceDocument.extractionError,
+      warning: sourceDocument.extractionNote,
     })),
   ]
 

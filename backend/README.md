@@ -91,7 +91,7 @@ All endpoints are under `/api/v1` except health. JSON uses camelCase. Errors are
 | GET | `/api/v1/projects/{projectId}/optimization/runs/latest` | Latest run, or 404 when there are none |
 | GET | `/api/v1/projects/{projectId}/optimization/runs/{runId}` | One run |
 
-| POST | `/api/v1/projects/{projectId}/documents` | Multipart `file`. 201 + `SourceDocument`. 403 not a writer, 404 project not visible, 413 over 100 MB, 415 video or unsupported type. |
+| POST | `/api/v1/projects/{projectId}/documents` | Multipart `file`. 201 + `SourceDocument` (at most 200,000 characters of text are kept; a longer file has `truncated: true` and `extractionNote: "Only the first 200,000 characters were read."`). 403 not a writer, 404 project not visible, 413 over 100 MB, 415 video or unsupported type. |
 | GET | `/api/v1/projects/{projectId}/documents` | Uploaded documents, newest first (pasted notes are not listed) |
 | DELETE | `/api/v1/documents/{documentId}` | 204. 403 not a writer, 404 not visible. |
 | POST | `/api/v1/projects/{projectId}/intake/runs` | `{text}` (may be empty when an upload was read; 422 when there is nothing to analyze). 202 + `IntakeRun`, extracted in the background. 409 a run is active. |
