@@ -1,0 +1,49 @@
+NirnAIn – AI-Assisted Project Planning Platform
+Start hosting NirnAIn today: quick start
+
+Date: November 14, 2026. Author: Sharada Dogiparthi (product owner). Prepared with the NirnAIn build team.
+
+A short checklist for putting the demo online for free: the website and the API on Render, and the database and sign-in on a new Supabase project. Each step names the matching section of the full guide, DEPLOY_DEMO.txt (also docs/DEPLOY_DEMO.md in the repository), which has the exact field values, the "check it worked" tests and the troubleshooting table. This page doesn't repeat them. Keep the full guide open next to it.
+
+Total time: about an hour (the guide's estimate). The step times below are approximate; most of the waiting is Render's first build. No code changes are needed.
+
+GitHub (the demo branch) → Supabase (project, tables, sign-in settings) → Render web service (the API) → Render static site (the website) → Supabase sign-in URLs → first login.
+
+Have these ready
+
+☐ The demo branch on GitHub. Render builds from GitHub, so push demo/mockup first (GITHUB_UPLOAD_STEPS.txt, option A). Note which repository and branch you'll deploy, for example your fork Dogiparthi-Sharada/AI-Assisted-Project-Planning-Platform, branch demo/mockup.
+☐ Free accounts: Supabase and Render. Sign up to Render with GitHub; it makes connecting the repository easier.
+☐ On your computer: Git and Node.js 22 LTS (for one command that creates the database tables).
+☐ A private place for your values (a password manager or a private note) for the guide's "Your values worksheet". Never paste these values into GitHub, an issue or a chat.
+☐ Two names for your Render services, lowercase with -, for example nirnain-api and nirnain-web. They become https://<name>.onrender.com.
+☐ Optional: an Anthropic API key for the AI features. Everything works without it.
+
+The checklist
+
+• Step 1: Clone the repository (or use your local copy) and switch to the demo branch. Time: 5 min. Section of DEPLOY_DEMO: Get the code.
+• Step 2: Create the Supabase project (name nirnain-demo, a letters-and-digits password, a region Render also has). Time: 5 min. Section of DEPLOY_DEMO: 1.1.
+• Step 3: Copy the project URL and the publishable key (never the secret key). Time: 2 min. Section of DEPLOY_DEMO: 1.2.
+• Step 4: Check that sign-in tokens use the new signing keys (ECC or RSA). Time: 3 min. Section of DEPLOY_DEMO: 1.3.
+• Step 5: Copy the Session pooler connection string and put your password in it. Time: 3 min. Section of DEPLOY_DEMO: 1.4.
+• Step 6: Create the tables: npx supabase@latest login, link, then db push --remote (17 migrations). Time: 10 min. Section of DEPLOY_DEMO: 1.5.
+• Step 7: Sign-in settings: Email on, Confirm email off, other providers off. Time: 2 min. Section of DEPLOY_DEMO: 1.6.
+• Step 8: Connect Render to GitHub and create the API web service (Docker, root backend, 8 environment variables, health check /health). Time: 15 min (first build 5–10 min). Section of DEPLOY_DEMO: 2.1 and 2.2.
+• Step 9: Create the static site (build command, publish dist, 5 environment variables). Time: 7 min (build about 2 min). Section of DEPLOY_DEMO: 3.1.
+• Step 10: Add the rewrite rule /* → /index.html (Rewrite), so deep links and reloads work. Time: 2 min. Section of DEPLOY_DEMO: 3.2.
+• Step 11: Check that the API's CORS_ORIGINS is exactly the website's address. Time: 2 min. Section of DEPLOY_DEMO: 3.3.
+• Step 12: Back in Supabase: Site URL and Redirect URLs = your website. Time: 3 min. Section of DEPLOY_DEMO: Part 4.
+• Step 13: First login: wake the API (/health), sign up, land on the dashboard. Time: 5 min. Section of DEPLOY_DEMO: Part 5.
+• Step 14: Optional: load the demo data (Jane Doe's five projects) with the seed script. Do it before step 15 for the full look. Time: 5 min. Section of DEPLOY_DEMO: Part 6.
+• Step 15: Optional: add ANTHROPIC_API_KEY to the API service only. Time: 3 min + redeploy. Section of DEPLOY_DEMO: 2.4.
+
+Done when: you can open https://<web-name>.onrender.com/dashboard in a new tab, reload it, and still see your dashboard, signed in.
+
+Good to know
+
+• Before every demo, wake the API. The free Render API sleeps after 15 minutes without requests and takes about a minute to wake. Open https://<api-name>.onrender.com/health and wait for {"status":"ok",…} (guide section 2.3). The website itself never sleeps.
+• A week without visitors pauses the free Supabase project. Restore it from the Supabase dashboard; the data is kept (guide section "Updating the demo later").
+• Code updates deploy themselves. Every push to the branch you chose redeploys on Render. A new migration needs npx supabase@latest db push --remote again.
+• Don't run supabase config push against the hosted project. The guide explains why (step 1.5).
+• The seed script isn't in the repository. It is in the lead's session folder (demo-seed/, see the appendix of FINAL_PROJECT_REPORT.txt). Its README has the exact command. Use --ai-calls rules only while the API has no ANTHROPIC_API_KEY, otherwise --ai-calls skip.
+• Something wrong? The guide's "Troubleshooting" table covers CORS errors, 401s, "Not Found" on reload, missing VITE_… values, migration errors and email limits.
+• Secrets stay out of the website. Only the three VITE_… values go on the static site, and they are public by design. The database password and the Claude key go only on the API service.
