@@ -63,107 +63,48 @@ constraints below (each person's modes and capacity in `workload.py`),
   + `target_penalty_per_day` per working day after the target date (only
   in the runs of remedies that try to keep it, `remedies.py`).
 
-Infeasibility: the model is rebuilt without objective, with every hard
-constraint group behind an assumption literal. A person's capacity group
-holds their capacity limit (Must hold), the 125% cap (Can flex) and the
-stretching of their tasks, so relaxing it lets them work at the WBS
-durations: a part-timer who makes a date impossible is named.
-`sufficient_assumptions_for_infeasibility()` gives a core, which is shrunk
-by deletion (drop a group, re-solve, keep it dropped if still infeasible)
-within the time budget. The reported list is
-then usually minimal: each entry is needed for the conflict. If the budget
-runs out it may contain extra groups.
+Infeasibility (`blockers.py`): the model is rebuilt without objective, with
+every hard constraint group behind an assumption literal. A person's
+capacity group holds their capacity limit (Must hold), the 125% cap (Can
+flex) and the stretching of their tasks, so relaxing it lets them work at
+the WBS durations: a part-timer who makes a date impossible is named. Each
+core (`sufficient_assumptions_for_infeasibility()`, shrunk by deletion) is
+one blocker; its headline group is relaxed and the search repeats, so every
+independent blocker is named in one run (round 3, R6). Each entry is then
+usually needed for its conflict; if the time budget runs out a core may
+contain extra groups.
 """
 
 from __future__ import annotations
 
 import logging
-import threading
 import time
-from dataclasses import dataclass
-from importlib.metadata import version
 
 from ortools.sat.python import cp_model
 
-from app.optimization import conflicts
 from app.optimization import formatting as fmt
+from app.optimization.blockers import explain_infeasibility
 from app.optimization.builder import ModelBuilder
 from app.optimization.model import (
-    Conflict,
     Plan,
     PlanningInput,
     RunStatus,
     ScheduledTask,
     SolveOutcome,
 )
-from app.optimization.problem import Problem, prepare
+from app.optimization.problem import prepare
+from app.optimization.runtime import (
+    SOLVER_NAME,
+    SOLVER_VERSION,
+    SolveControl,
+    SolveOptions,
+    new_solver,
+    run_model,
+)
 
 logger = logging.getLogger("app.optimization")
 
-SOLVER_VERSION: str = version("ortools")
-SOLVER_NAME = f"OR-Tools CP-SAT {SOLVER_VERSION}"
-
-_KIND_ORDER = ("deadline", "milestone", "budget", "labor", "skill", "capacity", "dependency")
-
-
-@dataclass(frozen=True, slots=True)
-class SolveOptions:
-    time_limit_s: float = 20.0
-    workers: int = 4
-    # Extra time allowed for explaining an infeasible model (default: time_limit_s).
-    iis_time_limit_s: float | None = None
-    random_seed: int = 0
-
-
-class SolveControl:
-    """Lets another thread stop a running solve (used on server shutdown)."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._solver: cp_model.CpSolver | None = None
-        self._stopped = False
-
-    @property
-    def stopped(self) -> bool:
-        return self._stopped
-
-    def stop(self) -> None:
-        with self._lock:
-            self._stopped = True
-            if self._solver is not None:
-                self._solver.stop_search()
-
-    def attach(self, solver: cp_model.CpSolver) -> None:
-        with self._lock:
-            self._solver = solver
-            if self._stopped:
-                solver.stop_search()
-
-    def detach(self) -> None:
-        with self._lock:
-            self._solver = None
-
-
-# --------------------------------------------------------------------------- solving
-def _solver(time_limit_s: float, workers: int, seed: int) -> cp_model.CpSolver:
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = max(time_limit_s, 0.01)
-    solver.parameters.num_workers = max(workers, 1)
-    solver.parameters.random_seed = seed
-    solver.parameters.log_search_progress = False
-    return solver
-
-
-def _run(
-    model: cp_model.CpModel, solver: cp_model.CpSolver, control: SolveControl | None
-) -> cp_model.CpSolverStatus:
-    if control is not None:
-        control.attach(solver)
-    try:
-        return solver.solve(model)
-    finally:
-        if control is not None:
-            control.detach()
+__all__ = ["SOLVER_NAME", "SOLVER_VERSION", "SolveControl", "SolveOptions", "map_status", "solve"]
 
 
 def map_status(status: cp_model.CpSolverStatus) -> RunStatus:
@@ -177,49 +118,6 @@ def map_status(status: cp_model.CpSolverStatus) -> RunStatus:
     if status == cp_model.UNKNOWN:
         return "timeout"
     return "failed"
-
-
-def explain_infeasibility(
-    problem: Problem, options: SolveOptions, control: SolveControl | None = None
-) -> tuple[Conflict, ...]:
-    """The hard constraint groups that conflict, headline constraints first."""
-    builder = ModelBuilder(problem, explain=True)
-    builder.build()
-    model = builder.model
-    if not builder.groups:
-        return (conflicts.GENERIC,)
-    literals = {literal.index: literal for literal, _ in builder.groups}
-    texts = {literal.index: conflict for literal, conflict in builder.groups}
-    # Report the headline constraints (deadline, budget, ...) before the details.
-    order = {
-        literal.index: (_KIND_ORDER.index(builder.kinds[literal.index]), position)
-        for position, (literal, _) in enumerate(builder.groups)
-    }
-    budget = options.iis_time_limit_s or options.time_limit_s
-    deadline = time.monotonic() + budget
-
-    def infeasible(indices: set[int], limit: float) -> set[int] | None:
-        """The (sub)core if the model is infeasible under these assumptions, else None."""
-        model.clear_assumptions()
-        model.add_assumptions([literals[index] for index in sorted(indices)])
-        solver = _solver(limit, options.workers, options.random_seed)
-        if _run(model, solver, control) != cp_model.INFEASIBLE:
-            return None
-        return (set(solver.sufficient_assumptions_for_infeasibility()) & indices) or indices
-
-    core = infeasible(set(literals), budget / 2)
-    if core is None:
-        return (conflicts.GENERIC,)
-    for index in sorted(core, key=order.__getitem__):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0 or (control is not None and control.stopped):
-            break
-        if index not in core or len(core) == 1:
-            continue
-        smaller = infeasible(core - {index}, min(remaining, max(budget / 8, 0.05)))
-        if smaller is not None:
-            core = smaller
-    return tuple(texts[index] for index in sorted(core, key=order.__getitem__))
 
 
 def solve(
@@ -251,8 +149,8 @@ def solve(
 
     builder = ModelBuilder(problem, explain=False)
     variables = builder.build()
-    solver = _solver(options.time_limit_s, options.workers, options.random_seed)
-    mapped = map_status(_run(builder.model, solver, control))
+    solver = new_solver(options.time_limit_s, options.workers, options.random_seed)
+    mapped = map_status(run_model(builder.model, solver, control))
 
     if mapped in ("optimal", "feasible"):
         plan: dict[str, ScheduledTask] = dict(problem.done)

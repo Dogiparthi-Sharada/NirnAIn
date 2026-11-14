@@ -87,7 +87,7 @@ All endpoints are under `/api/v1` except health. JSON uses camelCase. Errors are
 | GET | `/api/v1/notifications` | `unread=true/false`, `limit`, `cursor` |
 | POST | `/api/v1/notifications/{id}/read` | Idempotent. Returns the notification. |
 | GET | `/api/v1/projects/{projectId}/optimization/inputs` | Confirmation sheet: `{rows: [{key, label, value, source, from}], ready, blocking, missing, hash, appliedHash}` (`appliedHash`: the inputs hash of the plan in force, or null) |
-| POST | `/api/v1/projects/{projectId}/optimization/runs` | Optional body `{remedy?: 'specialist'\|'overtime'\|'move_deadline', overrides?: {budgetTotalCents?, mustFinishBy?, durationDays?, hoursPerWeek?}, changeRequestId?, baselineRunId?}` (stored as `options`, plus `inputsHash` = the inputs sheet's `hash` for the saved inputs). Without `baselineRunId`, a run while a plan is in force starts from that plan (its owners are the current owners). Inputs stay editable after a plan is applied. 202 + `OptimizationRun` (`queued`), solved in the background. 403 not a writer, 404 project / change request / baseline run not visible, 409 a run is already queued/running or the change was decided, 422 inputs not ready (`missing`: `workPackages`, `estimates`, `deadline`, `specialist`, `team`). |
+| POST | `/api/v1/projects/{projectId}/optimization/runs` | Optional body `{remedy?: 'specialist'\|'overtime'\|'move_deadline'\|'combined', overrides?: {budgetTotalCents?, mustFinishBy?, deadlineMode?, budgetMode?, durationDays?, hoursPerWeek?, addMembers?, removeMembers?}, changeRequestId?, baselineRunId?}` (stored as `options`, plus `inputsHash` = the inputs sheet's `hash` for the saved inputs). Without `baselineRunId`, a run while a plan is in force starts from that plan (its owners are the current owners). Inputs stay editable after a plan is applied. 202 + `OptimizationRun` (`queued`), solved in the background. 403 not a writer, 404 project / change request / baseline run not visible, 409 a run is already queued/running or the change was decided, 422 inputs not ready (`missing`: `workPackages`, `estimates`, `deadline`, `specialist`, `team`). |
 | GET | `/api/v1/projects/{projectId}/optimization/runs/latest` | Latest run, or 404 when there are none |
 | GET | `/api/v1/projects/{projectId}/optimization/runs/{runId}` | One run |
 
@@ -108,12 +108,13 @@ DB unreachable / pool exhausted / statement timeout → 503.
 
 `app/optimization/` is a pure OR-Tools CP-SAT package (no DB or FastAPI imports):
 `model.py` (input/output + the frozen `input_snapshot` format), `baseline.py`
-(forward-pass "before" plan), `solver.py` (model, status mapping, infeasibility
-explanation via assumption literals; the module docstring documents the formulation
-and its simplifications), `resources.py` (the priced team and contractor profiles),
+(forward-pass "before" plan), `solver.py` (model and status mapping; the module
+docstring documents the formulation and its simplifications), `blockers.py` (every
+blocker of an infeasible run, via assumption literals), `resources.py` (the priced team and contractor profiles),
 `workload.py` (work modes, overtime and capacity per person), `explain.py` +
 `run_summary.py` (the UI `result` payload and DB rows), `overrides.py` (per-run
-what-ifs), `remedies.py` (priced ways to keep the date, `result.remedies`) and
+what-ifs), `remedies.py` + `remedy_options.py` (priced ways to keep the date,
+`result.remedies`) and
 `inputs.py` + `input_sheet.py` (the confirmation sheet).
 
 Every solved run reports `result.summary.targetDate` (the completion date of the plan
@@ -126,6 +127,14 @@ their hours, 1.5x for employees) and `move_deadline` (accept the new date, 0 ext
 Options are offered only when they finish earlier; `costCents` is the extra cost
 against this plan (the whole relaxed plan's cost for an infeasible run). "Can flex"
 capacity never exceeds 125% of contracted hours.
+
+An infeasible run's `iis` names every independent blocker (e.g. a deadline and two
+missing skills): explain, relax that conflict's headline constraint, explain again, up
+to 5 times within the time limit. When no single option gets it a plan, `remedies[]`
+offers `{id: 'combined', title: 'Change these together', detail, costCents,
+completionDate, changes: [{kind: 'deadline'|'budget'|'specialist', label}]}`:
+specialists for missing skills, a later go-live and a budget raise only when nothing
+else fits, listing the ones the plan needs. `remedy: 'combined'` re-runs with them.
 
 Inputs (`app/repositories/planning_input.py`): capacity comes from the project team at
 the hours they give this project (all active org employees when the project has no

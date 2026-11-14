@@ -3,7 +3,7 @@
 `ModelBuilder(problem, explain=False)` builds the main model (objective,
 hard constraints). `explain=True` builds the explanation model: no
 objective, and every hard constraint group behind an assumption literal
-(`groups`) so `solver.explain_infeasibility` can find the groups that
+(`groups`) so `blockers.explain_infeasibility` can find the groups that
 conflict. Both read the same `Problem` (`problem.py`); each person's work
 modes and capacity are in `workload.py`; the conflict texts come from
 `conflicts.py`.

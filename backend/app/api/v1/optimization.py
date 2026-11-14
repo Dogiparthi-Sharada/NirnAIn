@@ -35,8 +35,12 @@ router = APIRouter(tags=["optimization"])
 ACTIVE_RUN_DETAIL = "An optimization is already running for this project."
 DECIDED_CHANGE_DETAIL = "This change was already decided; record a new change to re-plan."
 DECIDED_CHANGE_STATUSES = ("approved", "rejected")
-# A remedy the PM picked answers the question it relaxes, for that run only.
-LIFTED_BY_REMEDY = {"specialist": "specialist", "move_deadline": "deadline"}
+# A remedy the PM picked answers the questions it relaxes, for that run only.
+LIFTED_BY_REMEDY = {
+    "specialist": ("specialist",),
+    "move_deadline": ("deadline",),
+    "combined": ("specialist", "deadline"),
+}
 
 
 class AppliedInputs(OptimizationInputs):
@@ -154,8 +158,8 @@ async def create_run(
     # Fingerprint of the saved inputs, before this run's baseline, overrides and
     # remedy: exactly the `hash` GET …/optimization/inputs returns for the same data.
     saved_inputs_hash = inputs_hash(inp)
-    lifted = LIFTED_BY_REMEDY.get(body.remedy or "")
-    blockers: list[Blocker] = [blocker for blocker in sheet.blockers if blocker.key != lifted]
+    lifted = LIFTED_BY_REMEDY.get(body.remedy or "", ())
+    blockers: list[Blocker] = [blocker for blocker in sheet.blockers if blocker.key not in lifted]
     if blockers:
         raise UnprocessableError(
             blocking_detail([blocker.message for blocker in blockers]),

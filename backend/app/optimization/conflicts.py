@@ -2,7 +2,7 @@
 
 `builder.py` puts every hard constraint group of the explanation model
 behind an assumption literal and attaches one of these (lazily, via
-`functools.partial`) so `solver.explain_infeasibility` can report the groups
+`functools.partial`) so `blockers.explain_infeasibility` can report the groups
 in the conflict. Each text states a fact read off the `Problem` (e.g. the
 dependency chain's earliest finish, the cheapest qualified staffing, how
 long a part-timer needs for a task) or, failing that, says the constraint

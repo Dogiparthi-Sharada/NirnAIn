@@ -628,6 +628,23 @@ def test_specialist_remedy_answers_the_specialist_question(
     assert snapshot["constraints"]["contractor_rate_cents"] == 17_500
 
 
+def test_combined_remedy_applies_every_relaxation(
+    opt_client: TestClient, store: Store, run_store: RunStore, auth: Auth
+) -> None:
+    user, _, pid = _project(opt_client, store, auth)
+    _ready(run_store, pid)
+    run_store.facts[uuid.UUID(pid)] = {"task_skill_gaps": ["SAP"]}
+    response = opt_client.post(_url(pid), json={"remedy": "combined"}, headers=auth(user))
+    assert response.status_code == 202, response.text
+    assert response.json()["options"]["remedy"] == "combined"
+    constraints = run_store.runs[uuid.UUID(response.json()["id"])]["snapshot"]["constraints"]
+    assert (constraints["allow_contractors"], constraints["contractor_rate_cents"]) == (
+        True,
+        17_500,
+    )
+    assert (constraints["deadline_mode"], constraints["budget_mode"]) == ("soft", "soft")
+
+
 def test_optimizer_unavailable_is_503() -> None:
     from types import SimpleNamespace
 

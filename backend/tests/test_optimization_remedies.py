@@ -76,11 +76,16 @@ def test_hard_milestone_is_relaxed_with_the_deadline() -> None:
     assert remedy.detail.endswith("phase milestones may slip (soft)")
 
 
-def test_no_remedy_when_nothing_relaxable() -> None:
+def test_a_budget_no_single_option_fixes_is_offered_combined() -> None:
     inp = with_constraints(make_input(), budget_total_cents=1, budget_mode="hard")
     # A contractor is always tried, but costs more: still over the cap.
     assert [remedy_id for remedy_id, _ in variants(inp, solved=False)] == ["specialist"]
-    assert price_remedies(inp, TINY) == []
+    (remedy,) = price_remedies(inp, TINY)
+    assert remedy.id == "combined"
+    assert [(change.kind, change.label) for change in remedy.changes] == [
+        ("budget", "Spend $12,000 more: this plan costs $12,000, the budget is $0"),
+    ]
+    assert remedy.cost_cents == 120 * 10_000
 
 
 def test_run_with_remedy_applies_it() -> None:
