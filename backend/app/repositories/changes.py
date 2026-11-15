@@ -182,6 +182,7 @@ class ChangeRepository(ChangeTeamWrites):
         await self._connection.execute(
             sa.update(runs)
             .where(runs.c.id == run_id)
+            # jsonb `||` merges the key into the run's options instead of replacing them.
             .values(
                 options=sa.func.coalesce(runs.c.options, sa.text("'{}'::jsonb")).op("||")(
                     sa.func.jsonb_build_object("appliedInputsHash", saved_inputs_hash)

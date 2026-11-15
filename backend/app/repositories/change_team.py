@@ -111,6 +111,8 @@ class ChangeTeamWrites(ChangePlanReads):
         )
         if has_team.first() is not None:
             return
+        # INSERT ... SELECT copies the active pool in one statement; a CHECK on
+        # project_team_members wants at least 1 hour a week, so people below that stay out.
         pool = sa.select(
             sa.literal(project.id, type_=member.c.project_id.type),
             employees.c.id,
@@ -167,6 +169,7 @@ class ChangeTeamWrites(ChangePlanReads):
         await self._connection.execute(
             pg_insert(project_team_members)
             .values(project_id=project.id, employee_id=member.employee_id, **joining)
+            # Upsert: someone already on the team just gets the agreed hours and role.
             .on_conflict_do_update(
                 index_elements=[
                     project_team_members.c.project_id,
