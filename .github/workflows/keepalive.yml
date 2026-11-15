@@ -1,10 +1,11 @@
 name: Production health + keep-alive
 
-# Supabase's free plan pauses a project after ~7 days without activity, which
-# takes login and every data screen down. This runs daily: it exercises the
-# database (via the API's readiness check) and Supabase Auth, so the project
-# stays active, and it fails loudly (GitHub emails the repo owner) if
-# production is down or already paused.
+# Supabase's free plan pauses a project after 7 days without activity, which
+# takes login and every data screen down. This runs daily: it wakes the Render
+# API (free instances sleep after 15 idle minutes), exercises the database via
+# the API's readiness check and pings Supabase Auth, so the project stays
+# active. It fails loudly (GitHub emails the repo owner) if the demo is down or
+# already paused. It calls health endpoints only: no AI feature, no Claude tokens.
 
 on:
   schedule:
@@ -19,17 +20,20 @@ jobs:
     name: Ping production
     runs-on: ubuntu-latest
     env:
-      API_URL: https://api-production-c6141.up.railway.app
-      WEB_URL: https://web-production-e916f.up.railway.app
+      API_URL: https://nirnain-api.onrender.com
+      WEB_URL: https://nirnain-web.onrender.com
       SUPABASE_URL: https://${{ vars.SUPABASE_PROJECT_REF }}.supabase.co
+      # A sleeping free API takes about a minute to wake: allow 2 minutes per try.
+      CURL_OPTIONS: --silent --show-error --max-time 120 --retry 3 --retry-delay 30 --retry-all-errors
     steps:
       - name: API + database readiness
-        run: curl --fail-with-body --silent --show-error --retry 3 --retry-delay 20 --retry-all-errors "$API_URL/health/ready"
+        run: curl $CURL_OPTIONS --fail-with-body "$API_URL/health/ready"
       - name: Supabase Auth health
         env:
           # Publishable key: public by design (it's in the web app bundle).
           SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
         run: |
-          curl --fail --silent --show-error --retry 3 --retry-delay 20 --retry-all-errors \n            -o /dev/null -H "apikey: $SUPABASE_PUBLISHABLE_KEY" "$SUPABASE_URL/auth/v1/health"
+          curl $CURL_OPTIONS --fail -o /dev/null \
+            -H "apikey: $SUPABASE_PUBLISHABLE_KEY" "$SUPABASE_URL/auth/v1/health"
       - name: Website
-        run: curl --fail --silent --show-error --retry 3 --retry-delay 20 --retry-all-errors -o /dev/null "$WEB_URL/healthz"
+        run: curl $CURL_OPTIONS --fail -o /dev/null "$WEB_URL/"
