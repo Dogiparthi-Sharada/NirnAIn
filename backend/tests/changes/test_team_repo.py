@@ -1,12 +1,11 @@
-"""SQL of the team writes (app/repositories/change_team.py, team.py) on a recording connection.
+"""Tests of the SQL of the team writes on a recording connection.
 
-What: reserving a newcomer (an inactive candidate employee), releasing unused candidates,
-approving a change that adds Dana and removes Sam on a project still planned with the
-organization's pool, and taking someone off the team on step 5 (RES-017). Why: these writes
-change the project's team only on approval, must never delete a real employee, and leave
-nobody off the team owning a work package; there is no database in the test run. How it
-fits: compiles every statement for PostgreSQL through the `Conn` recorder of
-tests/test_repositories.py.
+Purpose: These writes change a project's team only on approval, never delete a real employee and
+leave nobody off the team owning a work package. Covers reserving a newcomer, releasing unused
+candidates, approving Dana in and Sam out, and removing someone on step 5 (RES-017).
+How it fits: Compiles every statement of app/repositories/change_team.py and team.py for PostgreSQL
+through the `Conn` recorder of tests/support/connections.py; layer: tests.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -32,6 +31,7 @@ DANA = NewMember(
 
 
 def _repository(conn: Conn) -> ChangeRepository:
+    """Return a change repository over the recording connection."""
     return ChangeRepository(conn)  # type: ignore[arg-type]
 
 
@@ -41,6 +41,7 @@ def _starts(statements: list[str]) -> list[str]:
 
 
 async def test_a_newcomer_is_reserved_as_an_inactive_candidate() -> None:
+    """A newcomer is inserted as an inactive candidate, unless an active namesake exists."""
     conn = Conn(Rows([]))  # nobody in the organization is called Dana Lee
     addition = DetectedChange(
         id="c1", kind="team", action="add", target_label="Dana Lee", to=24, member=DANA
@@ -69,6 +70,7 @@ async def test_a_newcomer_is_reserved_as_an_inactive_candidate() -> None:
 
 
 async def test_release_only_deletes_unused_inactive_candidates() -> None:
+    """Releasing deletes only inactive employees on no team and with no allocations."""
     conn = Conn()
     await _repository(conn).release_members(PROJECT, [uuid.uuid4()])
     [statement] = conn.sql
@@ -81,6 +83,7 @@ async def test_release_only_deletes_unused_inactive_candidates() -> None:
 
 
 async def test_approval_writes_who_joins_and_who_leaves() -> None:
+    """Approval makes the pool the team, removes Sam (unowning his packages), adds Dana."""
     sam, dana, skill = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     conn = Conn(
         Result([]),  # no team yet: the organization's pool becomes the team first
@@ -125,6 +128,7 @@ async def test_approval_writes_who_joins_and_who_leaves() -> None:
 
 
 async def test_approved_requirements_become_accepted_scope_items() -> None:
+    """Approved requirements are inserted as accepted manual scope items."""
     conn = Conn()
     await _repository(conn).add_requirements(PROJECT.id, ["Workday as a data source"])
     assert _starts(conn.sql)[0] == "INSERT INTO public.scope_items"

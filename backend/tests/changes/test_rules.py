@@ -1,9 +1,11 @@
-"""Step 7 change logic without a database: the rule-based notes reader (including QA's
-mid-project meeting with a specialist and someone's hours), questions and overrides,
-structured edits, the checks on Claude's output, and the plan comparison.
+"""Tests of the rule-based notes reader, the questions and overrides, and structured edits.
 
-Shared fixtures (the Steering Committee notes from the approved mockup and a small project
-context) live in tests/changes_fixtures.py.
+Purpose: Without an AI key step 7 reads notes with rules; prove they find the Steering Committee's
+and QA's changes (a specialist, someone's hours), never invent any, and that answers turn into the
+right plan overrides.
+How it fits: Pure tests of app/changes/detect.py, questions.py and derive.py on the contexts of
+tests/support/changes.py; layer: tests.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from app.changes.derive import InvalidEditError, build_impact, derive_overrides,
 from app.changes.detect import detect
 from app.changes.questions import validate_answers
 from app.domain.changes import AddedMember, ChangeEdits, PlanOverrides
-from tests.changes_fixtures import (
+from tests.support.changes import (
     ANA,
     ETL,
     LEO,
@@ -36,6 +38,7 @@ from tests.changes_fixtures import (
 
 # --------------------------------------------------------------------------- rules
 def test_rules_read_the_steering_committee_notes() -> None:
+    """The mockup's notes yield scope, budget, a done connector and an SAP slip to confirm."""
     found = detect(NOTES, project_context())
     kinds = [(change.kind, change.target, change.to) for change in found]
     assert kinds == [
@@ -56,6 +59,7 @@ def test_rules_read_the_steering_committee_notes() -> None:
 
 
 def test_rules_never_invent() -> None:
+    """Meeting dates, "on track" and vague slips are no changes; leaving and a new go-live are."""
     context = project_context()
     # A meeting date isn't a deadline, "on track" isn't a change, a vague slip names nothing.
     assert detect("Kick-off — March 3, 2025\nEverything is on track.", context) == []
@@ -68,6 +72,10 @@ def test_rules_never_invent() -> None:
 
 
 def test_rules_read_qa_meeting_specialist_hours_deadline_and_budget() -> None:
+    """QA's meeting yields a specialist, Leo's hours, deadline and budget, asked as questions.
+
+    The overrides wait for the specialist's rate; declining the newcomer adds nobody.
+    """
     context = qa_context()
     found = detect(QA_NOTES, context)
     assert [(change.kind, change.action, change.target, change.to) for change in found] == [
@@ -121,6 +129,7 @@ def test_rules_read_qa_meeting_specialist_hours_deadline_and_budget() -> None:
 
 
 def test_notes_contractor_takes_the_projects_contractor_rate() -> None:
+    """A contractor from the notes takes the project's contractor rate, so no rate is asked."""
     context = replace(qa_context(), contractor_rate_cents=18_500)
     [specialist, *_] = detect(QA_NOTES, context)
     assert specialist.member is not None
@@ -158,6 +167,7 @@ def test_notes_contractor_takes_the_projects_contractor_rate() -> None:
     ],
 )
 def test_rules_read_people_phrases(sentence: str, expected: tuple[Any, ...] | None) -> None:
+    """Hiring phrases yield a newcomer with name, role, hours and worker type, or nothing."""
     found = detect(sentence, qa_context())
     if expected is None:
         assert found == []
@@ -169,6 +179,7 @@ def test_rules_read_people_phrases(sentence: str, expected: tuple[Any, ...] | No
 
 
 def test_questions_and_overrides_from_notes() -> None:
+    """The notes' questions turn into overrides once all are answered; bad answers are refused."""
     context = project_context()
     impact = build_impact(detect(NOTES, context), "notes", context, "rules")
     by_id = {question.id: question for question in impact.questions}
@@ -194,6 +205,7 @@ def test_questions_and_overrides_from_notes() -> None:
 
 
 def test_edits_and_progress_are_taken_as_they_are() -> None:
+    """Edits and progress become changes without questions; unknown tasks are refused."""
     context = project_context()
     edits = ChangeEdits(
         budget_total_cents=36_500_000,

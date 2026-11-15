@@ -1,13 +1,12 @@
-"""Rules change detection (step 7, no AI key) against the QA pack's meetings M02 and M03.
+"""Tests of the rules change detection against the QA pack's meetings M02 and M03.
 
-What: every R8 rule with the pack's own sentences: "must hold" / "hard" next to a new date
-or budget makes it hard in the re-plan; hours change only with "<Name> … N hours a week";
-values in rejected or replaced statements are not proposed; "done" only for an explicitly
-named work package; actual spend, rates, the reserve and fixed costs are never the budget.
-Why: QA found the rules reader proposing values the notes never decide (Lisa 20 → 80 h/week
-from a task's 80 hours, "UAT done", actual costs and a rejected $400,000 as the budget) and
-dropping "must hold". The meetings are fictional test data (PRJ-QA-1042).
-How it fits: pure tests of `app.changes.detect`, `questions` and `derive`, no database.
+Purpose: QA found the rules reader proposing values the notes never decide and dropping "must hold".
+Prove every R8 rule with the pack's sentences: "must hold" makes a date or budget hard; hours change
+only with "<Name> … N hours a week"; rejected or replaced values, actual spend, rates, the reserve
+and fixed costs are never proposed; "done" needs a named work package.
+How it fits: Pure tests of `app.changes.detect`, `questions` and `derive` on the fictional meetings
+in tests/fixtures/qa_pack (PRJ-QA-1042); layer: tests.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ from app.changes.derive import build_impact, derive_overrides
 from app.changes.detect import detect
 from app.domain.changes import DetectedChange
 
-PACK = Path(__file__).parent / "fixtures" / "qa_pack"
+PACK = Path(__file__).parent.parent / "fixtures" / "qa_pack"
 # The pack's work packages (W01 to W15 of M01) and people with their M01 hours.
 PACKAGES = {
     "W01": ("1.1.1", "Salesforce connector"),
@@ -87,6 +86,7 @@ M03_EXPECTED = [
 
 @pytest.mark.parametrize("suffix", ["txt", "vtt"])
 def test_m02_proposes_only_what_the_meeting_decides(suffix: str) -> None:
+    """M02 (text and VTT) yields exactly the seven changes the meeting decides, with speakers."""
     [path] = PACK.glob(f"M02_*.{suffix}")
     found = detect(path.read_text(), pack_context())
     assert summary(found) == M02_EXPECTED
@@ -96,6 +96,7 @@ def test_m02_proposes_only_what_the_meeting_decides(suffix: str) -> None:
 
 @pytest.mark.parametrize("suffix", ["txt", "vtt"])
 def test_m03_reads_the_hard_deadline_and_budget(suffix: str) -> None:
+    """M03 (text and VTT) yields the hard deadline and budget and the two finished packages."""
     [path] = PACK.glob(f"M03_*.{suffix}")
     found = detect(path.read_text(), pack_context(after_m02=True))
     assert summary(found) == M03_EXPECTED
@@ -103,6 +104,7 @@ def test_m03_reads_the_hard_deadline_and_budget(suffix: str) -> None:
 
 
 def test_m03_hard_modes_reach_the_question_and_the_re_plan() -> None:
+    """A hard deadline shows as "must hold" and reaches the overrides; keeping drops the modes."""
     context = pack_context(after_m02=True)
     [path] = PACK.glob("M03_*.txt")
     impact = build_impact(detect(path.read_text(), context), "notes", context, "rules")
@@ -178,4 +180,5 @@ def test_m03_hard_modes_reach_the_question_and_the_re_plan() -> None:
     ],
 )
 def test_r8_rules_on_single_sentences(sentence: str, expected: list[tuple[object, ...]]) -> None:
+    """Each R8 sentence yields exactly the expected changes (often none)."""
     assert summary(detect(sentence, pack_context())) == expected

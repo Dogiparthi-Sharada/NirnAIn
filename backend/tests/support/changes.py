@@ -1,9 +1,11 @@
-"""Shared step 7 test data and fakes.
+"""Shared step 7 test data and the in-memory change repository.
 
-What: the approved mockup's Steering Committee notes, a project context with three work
-packages and two people, and an in-memory change repository for the API tests.
-Why: the change tests (rules, API, team changes) run without a database; one fake keeps them
-consistent. How it fits: used by test_changes_rules, test_changes_api and test_changes_team.
+Purpose: The change tests (rules, API, team changes) run without a database; one set of notes,
+project contexts and one fake keep them consistent. Holds the approved mockup's Steering Committee
+notes, QA's mid-project meeting, two project contexts and the fake repository.
+How it fits: Used by the tests in tests/changes/; the fake stands in for app/repositories/changes.py
+behind app/api/v1/changes.py; layer: tests.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -14,7 +16,6 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 from app.api.v1 import changes as changes_api
 from app.changes.context import ChangeContext, PersonRef, TaskRef
@@ -30,12 +31,11 @@ from app.domain.changes import (
     NewMember,
     PlanOverrides,
 )
-from app.domain.common import OrgRole, SolverStatus
+from app.domain.common import SolverStatus
 from app.repositories.access import ProjectRef
 from app.repositories.change_plans import InForce, RunState
 from app.repositories.changes import to_change
-from tests.support.store import Store
-from tests.support.tokens import Auth
+from tests.support.store import ProjectScopedFake, Store
 
 NOTES = """Steering Committee — March 3, 2025
 Attendees: Robert Walsh (VP Eng), Sara Kim (Lead Architect), Mark Chen (Data Engineer)
@@ -120,31 +120,16 @@ class ChangeStore:
     inputs_hash: str = "saved-inputs"
 
 
-class FakeChanges:
+class FakeChanges(ProjectScopedFake):
+    """In-memory change repository acting as one user over the shared and change stores."""
+
     def __init__(self, store: Store, change_store: ChangeStore, user_id: uuid.UUID) -> None:
-        self.store, self.change_store, self.user_id = store, change_store, user_id
-
-    def _role(self, project_id: uuid.UUID) -> OrgRole | None:
-        project = self.store.projects.get(project_id)
-        return self.store.role(project.org_id, self.user_id) if project else None
-
-    async def project(self, project_id: uuid.UUID) -> ProjectRef | None:
-        project = self.store.projects.get(project_id)
-        if project is None or self._role(project_id) is None:
-            return None
-        return ProjectRef(
-            project.id,
-            project.org_id,
-            project.name,
-            project.start_date,
-            project.target_end_date,
-            project.budget_cents,
-        )
-
-    async def can_write(self, project_id: uuid.UUID) -> bool:
-        return self._role(project_id) not in (None, OrgRole.VIEWER)
+        """Act as `user_id` over the shared store and the change store."""
+        super().__init__(store, user_id)
+        self.change_store = change_store
 
     async def in_force(self, project_id: uuid.UUID) -> InForce | None:
+        """Return the applied run with the highest version (fixed cost and finish), or None."""
         applied = [
             (run_id, run)
             for run_id, run in self.change_store.runs.items()
@@ -158,6 +143,7 @@ class FakeChanges:
     async def context(
         self, project: ProjectRef, in_force: InForce | None, today: date
     ) -> ChangeContext:
+        """Return the store's context (else Plan v1's) for the plan in force and `today`."""
         context = self.change_store.context or project_context()
         return ChangeContext(
             budget_cents=context.budget_cents,
@@ -180,6 +166,7 @@ class FakeChanges:
         impact: ChangeImpact,
         base_run_id: uuid.UUID,
     ) -> uuid.UUID:
+        """Store a new change in status `ready` and return its id."""
         change_id = uuid.uuid4()
         self.change_store.rows[change_id] = {
             "id": change_id,
@@ -198,6 +185,7 @@ class FakeChanges:
         return change_id
 
     def _view(self, row: dict[str, Any]) -> ChangeRequest:
+        """Return the change as the API shows it, with its base version and proposed run status."""
         base = self.change_store.runs.get(row["base_run_id"]) or {}
         proposed_run = self.change_store.runs.get(row["proposed_run_id"]) or {}
         return to_change(
@@ -209,12 +197,14 @@ class FakeChanges:
         )
 
     async def get(self, change_id: uuid.UUID) -> ChangeRequest | None:
+        """Return a change the acting user can see, or None."""
         row = self.change_store.rows.get(change_id)
         if row is None or self._role(row["project_id"]) is None:
             return None
         return self._view(row)
 
     async def list(self, project_id: uuid.UUID) -> list[ChangeRequest]:
+        """Return the project's changes, newest first."""
         rows = [row for row in self.change_store.rows.values() if row["project_id"] == project_id]
         return [
             self._view(row) for row in sorted(rows, key=lambda row: row["created_at"], reverse=True)
@@ -223,6 +213,7 @@ class FakeChanges:
     async def save_answers(
         self, change_id: uuid.UUID, answers: dict[str, str], *, reset_proposal: bool
     ) -> None:
+        """Save the answers; with `reset_proposal` the change is ready to re-plan again."""
         row = self.change_store.rows[change_id]
         row["answers"] = answers
         if reset_proposal:
@@ -231,12 +222,14 @@ class FakeChanges:
     async def decide(
         self, change_id: uuid.UUID, status: ChangeStatus, proposed_run_id: uuid.UUID | None
     ) -> None:
+        """Record the decision and its time, and the proposed run when there is one."""
         row = self.change_store.rows[change_id]
         row.update(status=status.value, decided_at=datetime.now(UTC))
         if proposed_run_id:
             row["proposed_run_id"] = proposed_run_id
 
     async def run(self, run_id: uuid.UUID) -> RunState | None:
+        """Return a run's state (status, applied, version, inputs hash, baseline), or None."""
         run = self.change_store.runs.get(run_id)
         if run is None:
             return None
@@ -251,9 +244,11 @@ class FakeChanges:
         )
 
     async def saved_inputs_hash(self, project: ProjectRef, today: date) -> str:
+        """Return the store's hash of the saved planning inputs."""
         return self.change_store.inputs_hash
 
     async def apply_run(self, run_id: uuid.UUID) -> None:
+        """Put the run in force as the next plan version and record it."""
         run = self.change_store.runs[run_id]
         run.update(
             applied=True,
@@ -262,16 +257,19 @@ class FakeChanges:
         self.change_store.applied.append(run_id)
 
     async def write_overrides(self, project: ProjectRef, overrides: PlanOverrides) -> None:
+        """Record the approved overrides and activate the newcomers they add."""
         self.change_store.written.append(overrides)
         for member in overrides.add_members or []:
             self.change_store.employees[member.employee_id]["active"] = True
 
     async def record_inputs_in_force(self, run_id: uuid.UUID, saved_inputs_hash: str) -> None:
+        """Record the inputs hash the applied run now stands on."""
         self.change_store.runs[run_id]["applied_inputs_hash"] = saved_inputs_hash
 
     async def reserve_members(
         self, project: ProjectRef, found: list[DetectedChange]
     ) -> list[DetectedChange]:
+        """Point each newcomer at an active namesake, or reserve an inactive candidate for them."""
         reserved = []
         employees = self.change_store.employees
         for change in found:
@@ -294,11 +292,13 @@ class FakeChanges:
         return reserved
 
     async def release_members(self, project: ProjectRef, employee_ids: list[uuid.UUID]) -> None:
+        """Delete the given candidates that are still inactive; real employees stay."""
         for employee_id in employee_ids:
             if not self.change_store.employees[employee_id]["active"]:
                 del self.change_store.employees[employee_id]
 
     async def add_requirements(self, project_id: uuid.UUID, texts: list[str]) -> None:
+        """Record the requirements added to the project's scope."""
         self.change_store.requirements.extend(texts)
 
 
@@ -306,18 +306,11 @@ def use_fake_changes(app: FastAPI, store: Store, change_store: ChangeStore) -> N
     """Route step 7 to the in-memory repository and the rules reader (no Claude)."""
 
     def repo(principal: CurrentPrincipal) -> FakeChanges:
+        """Return the fake repository acting as the caller."""
         return FakeChanges(store, change_store, principal.user_id)
 
     app.dependency_overrides[changes_api.get_change_repo] = repo
     app.dependency_overrides[changes_api.get_change_detector] = lambda: ChangeDetector(None)
-
-
-def new_project(client: TestClient, store: Store, auth: Auth) -> tuple[uuid.UUID, uuid.UUID, str]:
-    """(owner, org, project id) of a fresh project owned by Jane Doe."""
-    user = store.add_user("Jane Doe")
-    org = store.add_org(user, "Acme")
-    response = client.post(f"/api/v1/orgs/{org}/projects", json={"name": "EDP"}, headers=auth(user))
-    return user, org, response.json()["id"]
 
 
 def add_run(

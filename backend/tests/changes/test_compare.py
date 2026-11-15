@@ -1,4 +1,11 @@
-"""Moved test support."""
+"""Tests of the plan comparison shown before a change is approved.
+
+Purpose: Prove each work package's move is measured in the days each plan schedules and comes with
+its reason (done, effort, follows another package).
+How it fits: Pure tests of app/changes/compare.py with the impact from app/changes/derive.py;
+layer: tests.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -10,7 +17,7 @@ from app.changes.context import NodeRow, PlanRow, RunMeta
 from app.changes.derive import build_impact
 from app.changes.detect import detect
 from app.domain.common import SolverStatus
-from tests.changes_fixtures import (
+from tests.support.changes import (
     ETL,
     MARK,
     NOTES,
@@ -22,6 +29,7 @@ from tests.changes_fixtures import (
 
 # --------------------------------------------------------------------------- compare
 def test_comparison_shows_what_moved_and_why() -> None:
+    """Done work leaves the plan; changed effort and its successors shift with their reasons."""
     context = project_context()
     impact = build_impact(detect(NOTES, context), "notes", context, "rules")
     snapshot = {
@@ -62,6 +70,7 @@ def test_comparison_uses_the_days_each_plan_schedules() -> None:
     snapshot = {"start_date": "2027-01-04", "constraints": {"working_days_per_week": 5}}
 
     def meta(ends: dict[uuid.UUID, str]) -> RunMeta:
+        """Return run metadata whose schedule ends each node on the given date."""
         schedule = schedule_dates(
             [
                 {"wbsNodeId": str(node), "start": "2027-01-04", "end": end}

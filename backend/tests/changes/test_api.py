@@ -1,51 +1,42 @@
-"""Step 7 endpoints with an in-memory change repository: the notes → answers → re-plan →
-approve flow, edits / progress, reject, and permissions (viewer, outsider).
+"""Tests of the step 7 change endpoints on the in-memory change repository.
 
-The fake (tests/changes_fixtures.py) mirrors RLS (project readers see, writers change) and
-BE1's apply function (the applied run becomes the next version); C1's re-plan is simulated
-by linking a run.
+Purpose: Prove the notes → answers → re-plan → approve flow, structured edits and progress,
+rejecting, permissions (viewer, outsider) and that an outdated re-plan never goes into force.
+How it fits: The fake (tests/support/changes.py) mirrors RLS (project readers see, writers change)
+and the apply function (the applied run becomes the next version); the re-plan is simulated by
+linking a run; layer: tests.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
 
-import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.domain.changes import PlanOverrides
 from app.domain.common import OrgRole, SolverStatus
-from tests.changes_fixtures import (
+from tests.support.changes import (
     NOTES,
     SALESFORCE,
     SAP,
-    Auth,
     ChangeStore,
     add_run,
-    new_project,
-    use_fake_changes,
 )
+from tests.support.projects import create_project
 from tests.support.store import Store
-
-
-@pytest.fixture
-def change_store() -> ChangeStore:
-    return ChangeStore()
-
-
-@pytest.fixture
-def change_client(app: FastAPI, store: Store, change_store: ChangeStore) -> Iterator[TestClient]:
-    use_fake_changes(app, store, change_store)
-    with TestClient(app, raise_server_exceptions=False) as client:
-        yield client
+from tests.support.tokens import Auth
 
 
 def test_change_flow_notes_to_approved_plan(
     change_client: TestClient, store: Store, change_store: ChangeStore, auth: Auth
 ) -> None:
-    user, _, project_id = new_project(change_client, store, auth)
+    """Notes become questions; answers become overrides; the solved re-plan becomes Plan v2.
+
+    Also: 409 before a plan is in force or before a re-plan exists, 422 for bad bodies and
+    answers, and the notes' new requirement joins the scope on approval.
+    """
+    user, _, project_id = create_project(change_client, store, auth, name="EDP")
     headers = auth(user)
     url = f"/api/v1/projects/{project_id}/changes"
 
@@ -131,7 +122,11 @@ def test_change_flow_notes_to_approved_plan(
 def test_edits_reject_and_permissions(
     change_client: TestClient, store: Store, change_store: ChangeStore, auth: Auth
 ) -> None:
-    user, org, project_id = new_project(change_client, store, auth)
+    """Edits that change nothing or name unknown tasks are 422; progress needs no questions.
+
+    Viewers read but can't reject (403), outsiders get 404, and the owner rejects.
+    """
+    user, org, project_id = create_project(change_client, store, auth, name="EDP")
     headers = auth(user)
     add_run(change_store, project_id, applied=True, version=1)
     url = f"/api/v1/projects/{project_id}/changes"
@@ -174,7 +169,7 @@ def test_outdated_replan_is_not_approved(
 ) -> None:
     """R1: a re-plan solved on inputs edited since, or on another baseline, never goes into
     force; a fresh re-plan on the current inputs does."""
-    user, _, project_id = new_project(change_client, store, auth)
+    user, _, project_id = create_project(change_client, store, auth, name="EDP")
     headers = auth(user)
     add_run(change_store, project_id, applied=True, version=1)
     progress = {"source": "progress", "edits": {"progress": {str(SAP): 100}}}
