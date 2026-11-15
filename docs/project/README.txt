@@ -131,7 +131,7 @@ The documents:
 • Hosting quick start – Files: HOSTING_QUICKSTART.docx, HOSTING_QUICKSTART.txt. What it covers: Host your own copy: a 16-step checklist.
 • Full hosting guide – Files: DEPLOY_DEMO.docx, DEPLOY_DEMO.txt. What it covers: Every hosting step in detail (also docs/DEPLOY_DEMO.md).
 • How the code is kept on GitHub – Files: GITHUB_UPLOAD_STEPS.docx, GITHUB_UPLOAD_STEPS.txt. What it covers: Clone, update, commit and push, with the secret checks before every push.
-• Presentation – Files: NirnAIn_Project_Overview.pptx. What it covers: 18 slides with speaker notes.
+• Capstone presentation – Files: NirnAIn_Capstone_Presentation.pptx. What it covers: 24 slides with speaker notes, aligned with the applied research report.
 
 At the root of the repository: the team engineering guidelines are in CONTRIBUTING.md, the original architecture and roadmap in plan.md, and the feature-to-code map in INDEX.txt ("where is the code for …?"; regenerate it with python3.12 scripts/build_code_index.py). The API and database guides are backend/README.md and supabase/README.md; every test suite is listed in tests/README.md.
 

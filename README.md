@@ -212,7 +212,7 @@ The documentation package for the NirnAIn demo is in [docs/project/](docs/projec
 | Full hosting guide | [DEPLOY_DEMO.docx](docs/project/DEPLOY_DEMO.docx) | [DEPLOY_DEMO.txt](docs/project/DEPLOY_DEMO.txt) |
 | How the code is kept on GitHub | [GITHUB_UPLOAD_STEPS.docx](docs/project/GITHUB_UPLOAD_STEPS.docx) | [GITHUB_UPLOAD_STEPS.txt](docs/project/GITHUB_UPLOAD_STEPS.txt) |
 
-Presentation: [NirnAIn_Project_Overview.pptx](docs/project/NirnAIn_Project_Overview.pptx) (18 slides with speaker notes).
+Capstone presentation: [NirnAIn_Capstone_Presentation.pptx](docs/project/NirnAIn_Capstone_Presentation.pptx) (24 slides with speaker notes, aligned with the applied research report).
 
 API and database guides: [backend/README.md](backend/README.md) · [supabase/README.md](supabase/README.md).
 Feature-to-code map: [INDEX.txt](INDEX.txt).
