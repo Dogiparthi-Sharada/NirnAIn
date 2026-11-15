@@ -1,4 +1,11 @@
-"""Remedies for infeasible plans and per-run overrides, on tiny hand-built instances."""
+"""Tests of the remedies for infeasible plans and of per-run overrides.
+
+Purpose: When no plan meets the limits, each remedy (a contractor, a later go-live, slipping
+milestones, overtime, more budget) must be solved and priced; overrides change only one run.
+How it fits: Pure tests of app/optimization/remedies.py and overrides.py on tiny hand-built inputs;
+layer: tests.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -31,10 +38,11 @@ def _sap_gap_input() -> PlanningInput:
 
 
 def test_missing_skill_offers_a_priced_contractor() -> None:
-    inp = _sap_gap_input()
-    assert solve(inp, TINY).status == "infeasible"
+    """A missing skill offers a contractor, priced for the whole relaxed plan."""
+    planning_input = _sap_gap_input()
+    assert solve(planning_input, TINY).status == "infeasible"
 
-    remedies = price_remedies(inp, TINY)
+    remedies = price_remedies(planning_input, TINY)
 
     # Moving the deadline alone can't fix a missing skill, so it is not offered.
     assert [remedy.id for remedy in remedies] == ["specialist"]
@@ -52,10 +60,13 @@ def test_missing_skill_offers_a_priced_contractor() -> None:
 
 
 def test_tight_hard_deadline_offers_moving_go_live() -> None:
-    inp = with_constraints(make_input(), must_finish_by=date(2026, 10, 16), deadline_mode="hard")
-    assert solve(inp, TINY).status == "infeasible"
+    """A tight hard deadline offers moving go-live by the days needed."""
+    planning_input = with_constraints(
+        make_input(), must_finish_by=date(2026, 10, 16), deadline_mode="hard"
+    )
+    assert solve(planning_input, TINY).status == "infeasible"
 
-    (remedy,) = price_remedies(inp, TINY)
+    (remedy,) = price_remedies(planning_input, TINY)
 
     assert remedy.id == "move_deadline"
     assert remedy.title == "Move go-live to Oct 23 (+7 days)"
@@ -64,23 +75,25 @@ def test_tight_hard_deadline_offers_moving_go_live() -> None:
 
 
 def test_hard_milestone_is_relaxed_with_the_deadline() -> None:
-    inp = make_input(
+    """A hard milestone is relaxed together with the deadline."""
+    planning_input = make_input(
         milestones=(Milestone("m", "Design done", date(2026, 10, 6), "hard", ("a",)),),
     )
-    assert [remedy_id for remedy_id, _ in variants(inp, solved=False)] == [
+    assert [remedy_id for remedy_id, _ in variants(planning_input, solved=False)] == [
         "specialist",
         "move_deadline",
     ]
-    (remedy,) = price_remedies(inp, TINY)
+    (remedy,) = price_remedies(planning_input, TINY)
     assert remedy.title == "Let the phase milestones slip"
     assert remedy.detail.endswith("phase milestones may slip (soft)")
 
 
 def test_a_budget_no_single_option_fixes_is_offered_combined() -> None:
-    inp = with_constraints(make_input(), budget_total_cents=1, budget_mode="hard")
+    """A budget no single remedy fixes is offered as a combined change."""
+    planning_input = with_constraints(make_input(), budget_total_cents=1, budget_mode="hard")
     # A contractor is always tried, but costs more: still over the cap.
-    assert [remedy_id for remedy_id, _ in variants(inp, solved=False)] == ["specialist"]
-    (remedy,) = price_remedies(inp, TINY)
+    assert [remedy_id for remedy_id, _ in variants(planning_input, solved=False)] == ["specialist"]
+    (remedy,) = price_remedies(planning_input, TINY)
     assert remedy.id == "combined"
     assert [(change.kind, change.label) for change in remedy.changes] == [
         ("budget", "Spend $12,000 more: this plan costs $12,000, the budget is $0"),
@@ -89,12 +102,13 @@ def test_a_budget_no_single_option_fixes_is_offered_combined() -> None:
 
 
 def test_run_with_remedy_applies_it() -> None:
-    inp = _sap_gap_input()
-    relaxed = apply_remedy(inp, "specialist")
+    """Each remedy relaxes the input it names; no remedy keeps the input."""
+    planning_input = _sap_gap_input()
+    relaxed = apply_remedy(planning_input, "specialist")
     assert relaxed.constraints.allow_contractors is True
     assert relaxed.constraints.contractor_rate_cents == 17_500
     assert solve(relaxed, TINY).status in ("optimal", "feasible")
-    overtime = apply_remedy(with_constraints(inp, capacity_mode="hard"), "overtime")
+    overtime = apply_remedy(with_constraints(planning_input, capacity_mode="hard"), "overtime")
     assert overtime.constraints.capacity_mode == "soft"
     assert overtime.constraints.target_penalty_per_day > 0  # it tries to keep the date
 
@@ -102,19 +116,20 @@ def test_run_with_remedy_applies_it() -> None:
     moved = apply_remedy(with_milestone, "move_deadline")
     assert moved.constraints.deadline_mode == "soft"
     assert [milestone.mode for milestone in moved.milestones] == ["soft"]
-    assert apply_remedy(inp, None) is inp
+    assert apply_remedy(planning_input, None) is planning_input
 
 
 # --------------------------------------------------------------------------- overrides
 def test_overrides_change_only_this_run() -> None:
-    inp = make_input(
+    """Overrides change budget, dates, durations (effort scales) and hours of this run only."""
+    planning_input = make_input(
         tasks=(
             Task("a", "1.1.1", "Design", 5, effort_hours=20, owner_id="e1"),
             Task("b", "1.1.2", "Build", 10, owner_id="e1"),
         )
     )
     changed = apply_overrides(
-        inp,
+        planning_input,
         {
             "budgetTotalCents": 5_000_000,
             "mustFinishBy": "2026-12-18",
@@ -128,19 +143,20 @@ def test_overrides_change_only_this_run() -> None:
     assert (design.duration_days, design.effort_hours) == (10, 40.0)  # effort scales
     assert (build.duration_days, build.done, build.hours) == (10, True, 0.0)  # 0 left = done
     assert [employee.weekly_capacity_hours for employee in changed.employees] == [40.0, 16.0]
-    assert inp.constraints.budget_total_cents is None  # the original is untouched
-    assert apply_overrides(inp, None) is inp
-    assert apply_overrides(inp, {}) is inp
+    assert planning_input.constraints.budget_total_cents is None  # the original is untouched
+    assert apply_overrides(planning_input, None) is planning_input
+    assert apply_overrides(planning_input, {}) is planning_input
 
 
 def test_overrides_set_the_deadline_and_budget_modes() -> None:
-    inp = with_constraints(make_input(), deadline_mode="soft", budget_mode="hard")
-    changed = apply_overrides(inp, {"deadlineMode": "hard", "budgetMode": "soft"})
+    """Overrides may set the deadline and budget modes; otherwise they are kept."""
+    planning_input = with_constraints(make_input(), deadline_mode="soft", budget_mode="hard")
+    changed = apply_overrides(planning_input, {"deadlineMode": "hard", "budgetMode": "soft"})
     assert (changed.constraints.deadline_mode, changed.constraints.budget_mode) == (
         "hard",
         "soft",
     )
-    kept = apply_overrides(inp, {"mustFinishBy": "2026-12-18"})
+    kept = apply_overrides(planning_input, {"mustFinishBy": "2026-12-18"})
     assert (kept.constraints.deadline_mode, kept.constraints.budget_mode) == ("soft", "hard")
     body = RunOverrides.model_validate({"deadlineMode": "hard"})
     assert body.model_dump(mode="json", by_alias=True, exclude_none=True) == {
@@ -149,6 +165,7 @@ def test_overrides_set_the_deadline_and_budget_modes() -> None:
 
 
 def test_baseline_owners_replace_current_owners() -> None:
-    inp = make_input()
-    rebased = with_baseline(inp, {"a": "e2", "b": "former-employee"})
+    """Baseline owners replace current ones; unknown people are ignored."""
+    planning_input = make_input()
+    rebased = with_baseline(planning_input, {"a": "e2", "b": "former-employee"})
     assert [task.owner_id for task in rebased.tasks] == ["e2", "e1"]
