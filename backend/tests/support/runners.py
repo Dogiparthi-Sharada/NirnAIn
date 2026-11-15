@@ -1,15 +1,19 @@
-"""Fake background job runner that records what the API asked it to do.
+"""Fake background job runner and a helper to wait for real runners.
 
 Purpose: Endpoint tests check that a request queued its job (and failed an orphaned one) without
-running any background work.
-How it fits: Replaces the optimizer, intake and AI job runners through FastAPI dependency
-overrides in the endpoint tests' fixtures; layer: tests.
+running any background work; runner tests wait for the jobs they started.
+How it fits: `FakeRunner` replaces the optimizer, intake and AI job runners through FastAPI
+dependency overrides; `drain` waits on app/jobs/background.py runners; layer: tests.
 Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from typing import Any
+
+from app.jobs.background import BackgroundRunner
 
 
 class FakeRunner:
@@ -27,3 +31,10 @@ class FakeRunner:
     async def fail(self, job_id: uuid.UUID, error: str) -> None:
         """Record that the job was marked failed with `error`."""
         self.failed.append((job_id, error))
+
+
+async def drain(runner: BackgroundRunner[Any]) -> None:
+    """Wait until every job the runner started in the background has finished."""
+    tasks = list(runner._tasks)
+    if tasks:
+        await asyncio.wait(tasks)

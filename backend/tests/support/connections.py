@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import IntegrityError
 
 from app.repositories.optimization import (
     ProjectContext,
@@ -58,6 +59,25 @@ class Conn:
         self.sql.append(str(compiled))
         self.params.append(dict(compiled.params))
         return self.results.pop(0) if self.results else Result([])
+
+
+class UniqueViolationError(Exception):
+    """Driver error carrying Postgres's unique-violation SQLSTATE."""
+
+    sqlstate = "23505"
+
+
+class RaisingConn(Conn):
+    """Connection whose every statement fails with an IntegrityError caused by `cause`."""
+
+    def __init__(self, cause: Exception) -> None:
+        """Fail every statement with `cause` as the driver error."""
+        super().__init__()
+        self.cause = cause
+
+    async def execute(self, stmt: Any) -> Result:
+        """Raise the integrity error instead of running the statement."""
+        raise IntegrityError("INSERT", {}, self.cause)
 
 
 class Rows(Result):

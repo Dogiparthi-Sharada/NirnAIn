@@ -19,7 +19,13 @@ from app.repositories.optimization import (
     ProjectContext,
 )
 from app.repositories.optimization_store import OptimizationJobStore
-from tests.support.connections import Conn, Result, Rows, project_context
+from tests.support.connections import (
+    Conn,
+    RaisingConn,
+    Rows,
+    UniqueViolationError,
+    project_context,
+)
 from tests.support.solver_inputs import FAST, make_input
 
 NOW = datetime(2026, 10, 14, 12, 0, tzinfo=UTC)
@@ -100,21 +106,8 @@ async def test_get_and_latest_map_columns() -> None:
     assert await repo.latest(uuid.uuid4()) is None
 
 
-class _UniqueError(Exception):
-    sqlstate = "23505"
-
-
 class _OtherError(Exception):
     sqlstate = "23503"
-
-
-class RaisingConn(Conn):
-    def __init__(self, exc: Exception) -> None:
-        super().__init__()
-        self.exc = exc
-
-    async def execute(self, stmt: Any) -> Result:
-        raise IntegrityError("INSERT", {}, self.exc)
 
 
 async def test_create_maps_unique_violation() -> None:
@@ -123,7 +116,7 @@ async def test_create_maps_unique_violation() -> None:
     assert isinstance(rid, uuid.UUID)
     assert conn.sql[0].startswith("INSERT INTO public.optimization_runs")
     with pytest.raises(ActiveRunExistsError):
-        await OptimizationRepository(RaisingConn(_UniqueError())).create(uuid.uuid4(), {})  # type: ignore[arg-type]
+        await OptimizationRepository(RaisingConn(UniqueViolationError())).create(uuid.uuid4(), {})  # type: ignore[arg-type]
     with pytest.raises(IntegrityError):
         await OptimizationRepository(RaisingConn(_OtherError())).create(uuid.uuid4(), {})  # type: ignore[arg-type]
 

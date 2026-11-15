@@ -25,6 +25,7 @@ from app.jobs.optimizer import (
 from app.optimization.explain import Report
 from app.optimization.solver import SolveControl
 from app.repositories.optimization_store import OptimizationJobStore
+from tests.support.runners import drain
 from tests.support.solver_inputs import make_input, with_constraints
 
 
@@ -61,19 +62,13 @@ def settings() -> Settings:
     return Settings(_env_file=None, optimizer_time_limit_s=5, optimizer_workers=2)  # type: ignore[call-arg]
 
 
-async def _drain(runner: OptimizationRunner) -> None:
-    tasks = list(runner._tasks)
-    if tasks:
-        await asyncio.wait(tasks)
-
-
 async def test_run_solves_and_writes_report() -> None:
     store = FakeJobStore()
     runner = OptimizationRunner(store, settings())  # type: ignore[arg-type]
     run_id = uuid.uuid4()
     await runner.submit(run_id)
     assert runner.active == 1
-    await _drain(runner)
+    await drain(runner)
     ((rid, report),) = store.finished
     assert rid == run_id
     assert report.status == "optimal"
@@ -87,7 +82,7 @@ async def test_infeasible_run_gets_priced_remedies() -> None:
     store.snapshot = tight.to_snapshot()
     runner = OptimizationRunner(store, settings())  # type: ignore[arg-type]
     await runner.submit(uuid.uuid4())
-    await _drain(runner)
+    await drain(runner)
     ((_, report),) = store.finished
     assert report.status == "infeasible"
     assert report.iis  # the conflicts are still explained
@@ -105,7 +100,7 @@ async def test_late_run_keeps_its_plan_and_gets_ways_to_keep_the_date() -> None:
     store.snapshot = late.to_snapshot()
     runner = OptimizationRunner(store, settings())  # type: ignore[arg-type]
     await runner.submit(uuid.uuid4())
-    await _drain(runner)
+    await drain(runner)
     ((_, report),) = store.finished
     assert report.status == "optimal"
     assert report.result is not None
@@ -129,7 +124,7 @@ async def test_remedy_pricing_failure_keeps_the_conflicts(
     store.snapshot = tight.to_snapshot()
     runner = OptimizationRunner(store, settings())  # type: ignore[arg-type]
     await runner.submit(uuid.uuid4())
-    await _drain(runner)
+    await drain(runner)
     ((_, report),) = store.finished
     assert (report.status, report.result) == ("infeasible", None)
     assert report.iis
@@ -141,7 +136,7 @@ async def test_run_not_queued_is_skipped() -> None:
     store.snapshot = None
     runner = OptimizationRunner(store, settings())  # type: ignore[arg-type]
     await runner.submit(uuid.uuid4())
-    await _drain(runner)
+    await drain(runner)
     assert (store.finished, store.failed) == ([], [])
 
 
@@ -151,7 +146,7 @@ async def test_bad_snapshot_fails_safely() -> None:
     runner = OptimizationRunner(store, settings())  # type: ignore[arg-type]
     run_id = uuid.uuid4()
     await runner.submit(run_id)
-    await _drain(runner)
+    await drain(runner)
     assert store.failed == [(run_id, SNAPSHOT_ERROR)]
 
 
@@ -164,7 +159,7 @@ async def test_solver_crash_fails_without_leaking(monkeypatch: pytest.MonkeyPatc
     runner = OptimizationRunner(store, settings())  # type: ignore[arg-type]
     run_id = uuid.uuid4()
     await runner.submit(run_id)
-    await _drain(runner)
+    await drain(runner)
     assert store.failed == [(run_id, FAILED_ERROR)]
     assert "secret" not in FAILED_ERROR
 
@@ -195,7 +190,7 @@ async def test_fail_swallows_db_errors() -> None:
     runner = OptimizationRunner(store, settings())  # type: ignore[arg-type]
     store.broken = True
     await runner.submit(uuid.uuid4())
-    await _drain(runner)  # the claim fails, then marking failed fails: both logged
+    await drain(runner)  # the claim fails, then marking failed fails: both logged
 
 
 async def test_recover_stale() -> None:
@@ -243,5 +238,5 @@ async def test_background_task_schedules_on_the_event_loop() -> None:
     tasks = BackgroundTasks()
     tasks.add_task(runner.submit, uuid.uuid4())
     await tasks()  # what Starlette does after sending the response
-    await _drain(runner)
+    await drain(runner)
     assert len(store.finished) == 1

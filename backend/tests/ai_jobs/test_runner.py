@@ -9,7 +9,6 @@ Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -40,6 +39,7 @@ from app.jobs.ai_jobs import (
     AiJobRunner,
 )
 from app.repositories.ai_jobs import ClaimedJob
+from tests.support.runners import drain
 
 
 # --------------------------------------------------------------------------- runner
@@ -160,7 +160,7 @@ async def _run(store: FakeStore, llm: FakeLLM | None = None) -> AiJobRunner:
     """Run one job through a fresh runner and wait for it to finish."""
     runner = AiJobRunner(store, Settings(_env_file=None), llm=llm or FakeLLM())  # type: ignore[arg-type, call-arg]
     await runner.submit(uuid.uuid4())
-    await asyncio.wait(list(runner._tasks))
+    await drain(runner)
     return runner
 
 
