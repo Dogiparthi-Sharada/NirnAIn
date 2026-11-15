@@ -1,0 +1,709 @@
+California State University, East Bay
+
+College of Business and Economics
+
+BAN 693 – Capstone Project
+
+NirnAIn: An AI-Assisted Project Planning Platform
+
+From Meeting Notes to Optimized, Explainable Project Plans
+
+Applied Research Report
+
+Sharada Dogiparthi, Team Lead; Backend Development and Systems Integration
+
+Srilekha Budithi, Quality Assurance, Frontend Development and Testing
+
+Rakshitha Venigella, Deployment, Technical Documentation and UI/UX Design
+
+Faculty Advisor: Professor Surendra Sarnikar
+
+November 2026
+
+Table of Contents
+
+  1 Introduction and Business Problem
+    1.1 The Problem
+    1.2 Objectives and Research Questions
+    1.3 Solution Overview
+  2 Related Work
+  3 Data Description
+    3.1 Sources and Data Model
+    3.2 Volumes and Quality
+  4 Models
+    4.1 ETL and Intake Pipeline
+    4.2 Data Model
+    4.3 Optimization Model
+    4.4 AI Models
+    4.5 Visualization
+  5 Results
+    5.1 Case Study: Plan v1 to Plan v2
+    5.2 Test Results
+    5.3 Code Quality and Deployment
+  6 Conclusions and Impact
+  7 Contributions (Team Members and AI)
+  8 References
+  9 Appendix: Code
+
+List of Figures
+
+  Figure 1. The NirnAIn workflow: seven steps, the re-planning loop and the dashboard.
+  Figure 2. System architecture: web app, API with background jobs, Supabase and the optional Claude integration.
+  Figure 3. The intake pipeline as extract, transform and load stages.
+  Figure 4. Core entities (12 of 25 tables) and their one-to-many relationships.
+  Figure 5. From reviewed inputs to an applied plan, with the blocker and remedy loop.
+  Figure 6. One AI call: user text in a data block, Claude or the rules, then evidence grounding.
+  Figure 7. Project dashboard for the Enterprise Data Platform with Plan v2 in force.
+  Figure 8. Plan v2: optimal, $184,800, go-live July 2, 2027, solved by CP-SAT in 0.1 seconds.
+  Figure 9. End-to-end results across QA rounds (left) and unit tests by area (right).
+
+List of Tables
+
+  Table 1. Research questions and where they are answered.
+  Table 2. Related approaches compared with NirnAIn.
+  Table 3. Data sources and limits.
+  Table 4. The 25 tables by area (17 migrations).
+  Table 5. Synthetic demonstration dataset.
+  Table 6. Validation layers and units.
+  Table 7. Dimensional view behind the dashboard.
+  Table 8. The CP-SAT formulation at a glance (time in working days, money in cents).
+  Table 9. AI features with Claude and without it.
+  Table 10. Plan v1 and Plan v2 of the Enterprise Data Platform.
+  Table 11. Test layers and results.
+  Table 12. The three blocking defects found by the QA pack, all fixed.
+  Table 13. Code-standards audit before and after the refactoring pass.
+  Table 14. Research questions answered.
+  Table 15. Main limitations.
+  Table 16. Team members and roles.
+
+1 Introduction and Business Problem
+
+What if a project plan could be built straight from the meeting where the project was born, and stay correct when the project changes?
+
+In short: project plans are built by hand from scattered notes and go stale quickly; NirnAIn turns notes into optimized, versioned plans.
+
+1.1 The Problem
+
+Projects start in meetings, but plans start in spreadsheets. A project manager (PM) must turn notes into a charter, a scope, a work breakdown structure (WBS), a staffing plan and a schedule. The Project Management Institute treats planning, scope and change as core performance domains [1]. Yet the translation is still manual.
+
+Four problems follow:
+
+• Manual planning. Requirements and risks are buried in free text. Errors flow into the WBS and the schedule.
+• Resource conflicts. Schedules assume full-time people. Part-time allocations, skill levels and other projects are ignored.
+• Opaque plans. When budget, deadline and people cannot all fit, tools rarely say why or what the options cost.
+• Uncontrolled change. Mid-project changes are absorbed silently. Nobody can say which plan was approved and why.
+
+The stakes are real. Flyvbjerg and Budzier [2] describe an enterprise system migration budgeted at under $5 million that ended in a $192.5 million charge against earnings.
+
+1.2 Objectives and Research Questions
+
+In short: four research questions (Table 1) guided five objectives, from evidence-based intake to a secure, tested SaaS product.
+
+Table 1. Research questions and where they are answered.
+
++-----+----------------------------------------------------------------+---------------------------------------+
+| ID  | Research question                                              | Answered in                           |
++-----+----------------------------------------------------------------+---------------------------------------+
+| RQ1 | Can a language model, held to verbatim evidence and backed by  | Section 4.1, Section 4.4, Section 5.1 |
+|     | rules, turn meeting notes into scope a PM can trust?           |                                       |
+| RQ2 | Can constraint programming produce feasible schedules, explain | Section 4.3, Section 5.1              |
+|     | infeasibility and price the ways out?                          |                                       |
+| RQ3 | Can mid-project changes be re-planned with minimal disruption, | Section 4.3, Section 5.1              |
+|     | without applying outdated plans?                               |                                       |
+| RQ4 | Can a three-person team deliver this as a secure, multi-       | Chapter 3, Section 5.2                |
+|     | tenant, tested SaaS application?                               |                                       |
++-----+----------------------------------------------------------------+---------------------------------------+
+
+The objectives were: (O1) scope with source quotes; (O2) a three-level WBS; (O3) optimized, explainable schedules; (O4) versioned change control; and (O5) a secure, tested web application. Some features were left out by product-owner decision, such as leave calendars and actual costs (Chapter 6).
+
+1.3 Solution Overview
+
+In short: seven planning steps, one optimizer, one AI layer with a rule-based fallback, all on a secure web stack.
+
+Figure 1 shows the workflow. The PM creates a project, runs AI intake on notes, reviews the scope, builds the WBS and sets constraints. The optimizer then produces Plan v1. Mid-project changes loop back through re-planning to Plan v2, v3 and so on.
+
+Figure 1. The NirnAIn workflow: seven steps, the re-planning loop and the dashboard.
+
+    +-----------+   +-----------+   +-----------+   +-----------+   +-------------+   +------------+   +-------------+
+    | 1 Create  |-->| 2 AI      |-->| 3 Scope   |-->| 4 WBS     |-->| 5           |-->| 6 Optimize |-->| 7 Changes   |
+    | project   |   | intake    |   | review    |   | builder   |   | Constraints |   | Plan vN    |   | & versions  |
+    +-----------+   +-----------+   +-----------+   +-----------+   +-------------+   +------------+   +-------------+
+
+The stack is shown in Figure 2. A React [3] web app calls a Python FastAPI [4] service. Each query runs in PostgreSQL under the caller's identity, so Row Level Security (RLS) decides what the caller sees. The optimizer uses Google OR-Tools CP-SAT [5]. AI features use Anthropic Claude when a key is configured, with deterministic rules as the fallback. Render hosts the website and the API; Supabase hosts the database and sign-in.
+
+Figure 2. System architecture: web app, API with background jobs, Supabase and the optional Claude integration.
+
+    +---------------------+  HTTPS + token  +-------------------------+  SQL as role   +----------------------+
+    | Web browser         |---------------->| NirnAIn API (FastAPI)   |--------------->| Supabase             |
+    | React 19 SPA        |<----------------| jobs: CP-SAT, intake    | 'authenticated'| Postgres 17, RLS     |
+    +---------------------+  JSON           +-------------------------+                +----------------------+
+
+The team worked in short iterations ("rounds"). Each round had a written specification. Features were built on branches and merged only when every check passed: linting, strict typing, unit tests, database tests and the production build. The product owner made numbered decisions (D1 to D6) between rounds.
+
+2 Related Work
+
+Why not just use a scheduling tool? Because no single tool covers notes, optimization and change control.
+
+In short: NirnAIn combines four research areas that are usually separate (Table 2).
+
+• Scheduling. The critical path method (CPM) [6] ignores resource limits. The resource-constrained project scheduling problem (RCPSP) adds them; Brucker et al. [7] classify its models, and Hartmann and Briskorn [8] survey variants such as multimode and multi-skill problems. NirnAIn's problem is such a variant. Herroelen and Leus [9] stress stable re-planning after disruptions.
+• Constraint programming. Interval variables and cumulative constraints model scheduling directly [10]. CP-SAT adds a SAT engine with lazy clause generation, a linear relaxation and parallel workers [11].
+• Language models. LLMs extract structure from text with few examples [12] and are widely used in software engineering [13]. Meetings are hard to summarize faithfully [14]. Hallucination [15] and prompt injection [16] are the main risks.
+• Commercial tools. Microsoft Project [17] schedules tasks the PM types in. Jira [18] manages backlogs and issues.
+
+Table 2. Related approaches compared with NirnAIn.
+
++---------------------+---------------------+--------------------+----------------------+----------------------+
+| Approach            | Starts from         | Resource limits    | Explains             | Change control       |
+|                     |                     |                    | infeasibility        |                      |
++---------------------+---------------------+--------------------+----------------------+----------------------+
+| CPM [6] and RCPSP   | A network built by  | None (CPM);        | Rarely exposed to    | Outside the model    |
+| models [7]          | an analyst          | optimized (RCPSP)  | users                |                      |
+| CP solvers (CP      | A formal model      | Optimized          | Possible with        | Outside the model    |
+| Optimizer, CP-SAT)  |                     |                    | assumption cores     |                      |
+| [10], [11]          |                     |                    |                      |                      |
+| LLM extraction      | Free text           | Not modeled        | Not applicable       | Not applicable       |
+| [12], [13]          |                     |                    |                      |                      |
+| Commercial tools    | Tasks or issues     | Heuristic leveling | Limited              | Baselines or issue   |
+| [17], [18]          | typed by people     | or none            |                      | history              |
+| NirnAIn             | Meeting notes and   | CP-SAT with Must   | Every blocker named, | Versioned plans with |
+|                     | documents, reviewed | hold / Can flex    | remedies priced      | a stale-input guard  |
+|                     | by the PM           | limits             |                      |                      |
++---------------------+---------------------+--------------------+----------------------+----------------------+
+
+3 Data Description
+
+What data does a planning assistant need, and how do we keep it clean?
+
+In short: text from the PM, structured planning data, system-generated plan history and synthetic demo data, validated at every layer.
+
+3.1 Sources and Data Model
+
+In short: 25 tables in PostgreSQL, all with RLS (Table 3, Table 4).
+
+Table 3. Data sources and limits.
+
++-----------------+--------------------------------------------------+-----------------------------------------+
+| Source          | Format and limits                                | Stored in                               |
++-----------------+--------------------------------------------------+-----------------------------------------+
+| Meeting notes   | Pasted text                                      | intake_runs, change_requests            |
+| Documents       | PDF, Word, transcripts (.vtt, .srt, .txt, .md)   | source_documents                        |
+|                 | up to 100 MB; text only, at most 200,000         |                                         |
+|                 | characters; video refused                        |                                         |
+| Team and skills | Employees or contractors, 1 to 80 hours per      | employees, project_team_members, skills |
+|                 | week, rates, proficiency 1 to 5                  |                                         |
+| Constraints     | Budget, reserve, caps, deadline, milestones,     | constraint_sets, milestones             |
+|                 | Must hold / Can flex                             |                                         |
+| Plan history    | Frozen runs, assignments, weekly bookings,       | optimization_runs, allocations          |
+|                 | versions                                         |                                         |
+| Demo data       | One workspace, five projects, seeded through the | All tables                              |
+|                 | public API                                       |                                         |
++-----------------+--------------------------------------------------+-----------------------------------------+
+
+Table 4. The 25 tables by area (17 migrations).
+
++--------------------------+-----------------------------------------------------------------------------------+
+| Area                     | Tables                                                                            |
++--------------------------+-----------------------------------------------------------------------------------+
+| Tenancy (3)              | organizations, organization_members, profiles                                     |
+| Projects (3)             | projects, notifications, audit_events                                             |
+| Intake (4)               | source_documents, intake_runs, scope_items, ai_jobs                               |
+| WBS (4)                  | wbs_nodes, dependencies, task_skill_requirements, milestones                      |
+| Resources (6)            | employees, employee_skills, skills, allocations, project_team_members,            |
+|                          | project_skills                                                                    |
+| Planning and changes (5) | constraint_sets, optimization_runs, planned_assignments, recommendations,         |
+|                          | change_requests                                                                   |
++--------------------------+-----------------------------------------------------------------------------------+
+
+Employees are costed at the company rate on record, or $85 per hour shown as an assumption (decision D1). Contractors must have a rate.
+
+3.2 Volumes and Quality
+
+In short: five demo projects with 39 work packages (Table 5); validation in the browser, the API and the database (Table 6).
+
+Table 5. Synthetic demonstration dataset.
+
++--------------------------+---------------+------------+---------------+--------------------+--------+
+| Project                  | Stage         | Budget     | Work packages | Team (contractors) | Plans  |
++--------------------------+---------------+------------+---------------+--------------------+--------+
+| Enterprise Data Platform | On track      | $375,000   | 15            | 5 (1)              | v1, v2 |
+| Warehouse Build          | Planning      | $540,000   | 7             | 3 (1)              | None   |
+| Portal Redesign          | At risk, 38%  | $410,000   | 7             | 4 (1)              | v1     |
+| ERP Migration            | On track, 64% | $820,000   | 10            | 4 (1)              | v1     |
+| Workday HR Integration   | Draft         | $260,000   | None          | None               | None   |
+| Total                    | Five projects | $2,405,000 | 39            | 16 (4)             | 4      |
++--------------------------+---------------+------------+---------------+--------------------+--------+
+
+Testing used separate synthetic data: the end-to-end suite builds a fresh workspace per run (239 checks), and the QA pack has 217 cases around three synthetic meetings.
+
+Table 6. Validation layers and units.
+
++----------------------------+---------------------------------------------------------------------------------+
+| Layer                      | Representative rules                                                            |
++----------------------------+---------------------------------------------------------------------------------+
+| Browser                    | Budgets and numbers checked before saving                                       |
+| API (Pydantic)             | Names of 1 to 200 characters; no negative budgets; end after start; 1 to 80     |
+|                            | hours per week; contractors need a rate                                         |
+| Database (CHECK, triggers) | budget_cents >= 0; proficiency 1 to 5; WBS level 1 to 3; uploads at most 100    |
+|                            | MB; same-project links                                                          |
+| AI output                  | Fixed categories; a quote is kept only if it occurs verbatim in the notes       |
+| Units                      | Money in integer cents; durations in working days; timestamps as timestamptz;   |
+|                            | camelCase JSON                                                                  |
++----------------------------+---------------------------------------------------------------------------------+
+
+Security is part of quality. The API runs each request as the database role authenticated with the caller's claims, so RLS policies decide which rows a user sees [19], [20].
+
+4 Models
+
+How do we get from a meeting transcript to an optimal, explainable plan?
+
+In short: five models work in sequence: an intake pipeline, a data model, a CP-SAT optimizer, AI models with fallbacks, and visual views.
+
+4.1 ETL and Intake Pipeline
+
+In short: extract text, transform it into evidence-backed scope items, and load them for review (Figure 3).
+
+Figure 3. The intake pipeline as extract, transform and load stages.
+
+    +------------------------+       +--------------------------+       +---------------------------+
+    | Extract: upload, text  |------>| Transform: Claude or     |------>| Load: scope_items, PM     |
+    | up to 200,000 chars    |       | rules, evidence check    |       | review, then the WBS      |
+    +------------------------+       +--------------------------+       +---------------------------+
+
+• Extract. Files are streamed. PDF and Word text is extracted; captions lose timings and keep speakers.
+• Transform. An intake job (one per project at a time) calls Claude or the rule-based extractor. Each item must quote the notes verbatim, or it is labeled inferred.
+• Load. Items land in six categories. The PM accepts, edits or removes each one; pending items block the WBS step.
+
+4.2 Data Model
+
+In short: a normalized relational schema for operations, with a dimensional view for analytics (Figure 4, Table 7).
+
+Figure 4. Core entities (12 of 25 tables) and their one-to-many relationships.
+
+    +---------------+ 1:N +----------+ 1:N +-----------+ 1:N +-------------------+
+    | organizations |---->| projects |---->| wbs_nodes |---->| dependencies      |
+    +---------------+     +----------+     +-----------+     +-------------------+
+
+The WBS is a tree with codes computed by a view. Links that cross projects are blocked by database triggers. Each optimization run stores a snapshot of its inputs, so every plan can be reproduced. Following Kimball and Ross [21], the planning data also forms a star schema.
+
+Table 7. Dimensional view behind the dashboard.
+
++------------------------------+--------------------------------------------+----------------------------------+
+| Element                      | Role                                       | Source tables                    |
++------------------------------+--------------------------------------------+----------------------------------+
+| Planned work: hours and cost | Fact (person, package, week, plan version) | allocations, planned_assignments |
+| Project                      | Dimension                                  | projects, constraint_sets        |
+| Person                       | Dimension                                  | employees, project_team_members  |
+| Skill                        | Dimension                                  | skills, employee_skills          |
+| Time and plan version        | Dimensions                                 | dates, optimization_runs         |
++------------------------------+--------------------------------------------+----------------------------------+
+
+4.3 Optimization Model
+
+In short: CP-SAT decides who works on each package and when, at the lowest cost that respects the PM's limits (Table 8, Figure 5).
+
+Table 8. The CP-SAT formulation at a glance (time in working days, money in cents).
+
++---------------------+----------------------------------------------------------------------------------------+
+| Part                | Formulation                                                                            |
++---------------------+----------------------------------------------------------------------------------------+
+| Decisions           | x[t,r] = 1 if work package t goes to candidate r; start s[t] and end e[t]; makespan C  |
+| Assignment          | Exactly one candidate per package; one optional interval per working mode              |
+| Durations           | Depend on the person: part-timers take effort / daily hours, rounded up; each skill    |
+|                     | level above the minimum is 10% faster (max 30%), each level below 25% slower (decision |
+|                     | D5)                                                                                    |
+| Capacity            | Daily load per person, plus bookings on other projects, within their hours; Can flex   |
+|                     | allows up to 125% as paid overtime                                                     |
+| Dependencies        | FS, SS, FF and SF links with lags on real starts and ends                              |
+| Deadline and budget | Hard: C <= deadline; labor cost <= budget minus reserve. Soft: a penalty per day late  |
+|                     | or per $1,000 over                                                                     |
+| Objective           | Minimize labor cost + $200 per day of makespan + soft penalties + $500 per package     |
+|                     | moved off its owner + $10 per day of start shift                                       |
+| Window              | Unfinished work starts no earlier than today; finished work keeps its dates (decision  |
+|                     | D4)                                                                                    |
++---------------------+----------------------------------------------------------------------------------------+
+
+Figure 5. From reviewed inputs to an applied plan, with the blocker and remedy loop.
+
+    +-------------+   +--------------+   +--------------+   +------------------------+
+    | Inputs and  |-->| Frozen run,  |-->| CP-SAT solve |-->| Apply as Plan vN       |
+    | SHA-256 hash|   | inputsHash   |   |              |   | (409 if inputs changed)|
+    +-------------+   +--------------+   +--------------+   +------------------------+
+
+Three features make the model useful to a PM:
+
+• Every blocker named. If no plan fits, each hard limit sits behind an assumption literal. CP-SAT returns conflicting sets, up to five, in plain English.
+• Priced remedies (decision D2). A slipping or infeasible plan gets options: a contractor (confirmed rate or a $175 per hour estimate), overtime up to 25% at 1.5 times the rate, or accepting the date. The PM decides.
+• No stale plans. The inputs hash (SHA-256, Listing 2) fingerprints exactly what the solver used. Applying a run whose inputs changed is refused with HTTP 409 (Listing 3).
+
+Changes follow five steps: record, analyze, re-plan from today, compare with the plan in force, and approve or reject. Re-plans stay close to the plan in force because moving tasks and owners costs money in the objective.
+
+4.4 AI Models
+
+In short: Claude powers five features, each with a rule-based fallback that uses no tokens (Figure 6, Table 9).
+
+Figure 6. One AI call: user text in a data block, Claude or the rules, then evidence grounding.
+
+    +-------------+   +-------------+   +------------------+   +--------------------+
+    | Notes, docs |-->| Data block  |-->| Claude or rules  |-->| Evidence grounding |
+    +-------------+   +-------------+   +------------------+   +--------------------+
+
+Table 9. AI features with Claude and without it.
+
++---------------------------+------------------------------------+-----------------------------------------+
+| Feature                   | With Claude                        | Rule-based fallback                     |
++---------------------------+------------------------------------+-----------------------------------------+
+| Project draft from notes  | Fields with their quotes           | Patterns; never invents a value         |
+| Intake (scope items)      | Category, quote and evidence label | Headings and keywords; at most 60 items |
+| WBS generation and review | Proposes and reviews packages      | Template and structural checks          |
+| Change detection          | Reads new meeting notes            | Only values a sentence states           |
+| Planning assistant        | Answers from project data          | Reports "unavailable"                   |
++---------------------------+------------------------------------+-----------------------------------------+
+
+Claude returns structured output validated against a schema [22]. User text sits in a delimited data block with angle brackets escaped, which guards against prompt injection [16]. Quotes are re-checked against the notes, which guards against hallucination [15].
+
+4.5 Visualization
+
+In short: a dashboard, a results view with a Gantt timeline, and a plan comparison.
+
+The dashboard (Figure 7) shows progress, budget headroom, milestones, risks and delivery health. Untracked values say "Not tracked yet" instead of guessing. The results view adds cost, finish date, utilization, the critical path and a Gantt timeline (Figure 8). The comparison view shows the proposed plan against the plan in force, package by package.
+
+Figure 7. Project dashboard for the Enterprise Data Platform with Plan v2 in force.
+
+    [Screenshot: see the Word or PDF version of this report.]
+
+5 Results
+
+Does it work on a realistic project, and how well is it tested?
+
+In short: the walkthrough absorbed a capacity cut with one priced decision; 521 unit tests and 235 of 236 end-to-end checks pass.
+
+5.1 Case Study: Plan v1 to Plan v2
+
+In short: losing a quarter of one developer's time cost $10,800 and finished ten days earlier (Table 10).
+
+The Enterprise Data Platform project has a $375,000 budget and a hard deadline of September 30, 2027. Intake produced 20 accepted scope items, each with its quote. The WBS has 5 deliverables, 15 work packages and 45 weeks of effort. A contracted SAP specialist covers a skill nobody on the team has.
+
+Then the Steering Committee cut Tom Rivera's time from 32 to 24 hours per week. The re-plan slipped, so the app offered priced options. The PM approved bringing in a contractor, which became Plan v2 (Figure 8).
+
+Table 10. Plan v1 and Plan v2 of the Enterprise Data Platform.
+
++--------------------------+----------------------+-----------------------------------------+------------------+
+| Measure                  | Plan v1              | Plan v2                                 | Difference       |
++--------------------------+----------------------+-----------------------------------------+------------------+
+| Trigger                  | Initial optimization | Tom Rivera 32 to 24 hours per week;     | Not applicable   |
+|                          |                      | contractor approved                     |                  |
+| Planned labor cost       | $174,000             | $184,800                                | +$10,800 (+6.2%) |
+| Go-live date             | July 12, 2027        | July 2, 2027                            | 10 days earlier  |
+| Days ahead of the target | 80                   | 90                                      | +10              |
+| Budget headroom          | $201,000             | $190,200                                | -$10,800         |
+| Constraint violations    | 0                    | 0                                       | None             |
++--------------------------+----------------------+-----------------------------------------+------------------+
+
+Figure 8. Plan v2: optimal, $184,800, go-live July 2, 2027, solved by CP-SAT in 0.1 seconds.
+
+    [Screenshot: see the Word or PDF version of this report.]
+
+5.2 Test Results
+
+In short: four test layers; every blocking defect was fixed (Table 11, Figure 9, Table 12).
+
+Table 11. Test layers and results.
+
++------------------------------------+------------------------------------+------------------------------------+
+| Layer                              | Scope                              | Result                             |
++------------------------------------+------------------------------------+------------------------------------+
+| Backend unit and API tests         | 67 files: optimizer, AI and        | 521 passed in 15.3 s               |
+| (pytest)                           | intake, change control, APIs,      |                                    |
+|                                    | platform                           |                                    |
+| Database tests (pgTAP)             | 12 files: tenancy, RLS, uploads,   | 124 planned assertions, in rolled- |
+|                                    | apply, cross-project links         | back transactions                  |
+| API end-to-end suite               | 239 business scenarios in a fresh  | 235 pass, 1 fail (low priority), 3 |
+|                                    | workspace                          | informational                      |
+| Browser click-through              | Every screen, button and focus     | First run 144 of 179 passed; final |
+|                                    | state                              | walkthrough with no errors         |
+| QA pack part 1 (journey and        | 287 results                        | 83 pass, 37 fail (fixed in round   |
+| solver)                            |                                    | 3), 132 blocked, 35 not run (AI    |
+|                                    |                                    | only)                              |
+| QA pack part 2 (screens and        | 155 cases                          | 81 pass, 16 fail (fixed in round   |
+| security)                          |                                    | 4, except low-priority items), 37  |
+|                                    |                                    | blocked, 21 ignored (AI only)      |
++------------------------------------+------------------------------------+------------------------------------+
+
+Figure 9. End-to-end results across QA rounds (left) and unit tests by area (right).
+
+    Run                                   PASS   FAIL
+    Baseline (Nov 13, 18:55)               194     13
+    Round 4 (Nov 14, 12:45)                236      1
+    After code standards (Nov 14, 17:27)   235      1
+
+"Blocked" means not testable in this release, for example features excluded by decision or a different solver objective. The one open failure is low priority: without an AI key, a one-line "Project: ... Sponsor: ..." note is not parsed.
+
+Table 12. The three blocking defects found by the QA pack, all fixed.
+
++-------------------------------------------------------+------------------------------------------------------+
+| Defect                                                | Fix                                                  |
++-------------------------------------------------------+------------------------------------------------------+
+| A plan solved before an input change could still be   | Apply and approve refused with HTTP 409; "Run again" |
+| applied                                               | offered                                              |
+| Another workspace could link to a project's work      | API check plus database triggers on every link       |
+| packages                                              |                                                      |
+| A package without a duration vanished from a "ready"  | The package now blocks the run and is named          |
+| plan                                                  |                                                      |
++-------------------------------------------------------+------------------------------------------------------+
+
+5.3 Code Quality and Deployment
+
+In short: zero code-standard findings after a refactoring pass, and a verified live deployment (Table 13).
+
+Table 13. Code-standards audit before and after the refactoring pass.
+
++----------------------------------------+----------------+-----------------+--------------+
+| Finding                                | Backend before | Frontend before | After (both) |
++----------------------------------------+----------------+-----------------+--------------+
+| Files without the standard header      | 194            | 115             | 0            |
+| Single-letter identifiers              | 1,999          | 91              | 0            |
+| Functions without a docstring or JSDoc | 1,298          | 247             | 0            |
+| Files over 500 lines                   | 4              | 1               | 0            |
++----------------------------------------+----------------+-----------------+--------------+
+
+The release runs on Render (https://nirnain-web.onrender.com) with a Supabase database: 17 migrations, 25 tables, RLS on each. Checks confirmed health, CORS limited to the website, hidden API docs, refused weak passwords and unauthenticated calls, and no server errors. At the product owner's request, Claude is enabled on the hosted API.
+
+6 Conclusions and Impact
+
+So, did it work, and what is still missing?
+
+In short: all four research questions are answered positively, with clear limits (Table 14, Table 15).
+
+Table 14. Research questions answered.
+
++------------------------------+--------------------+----------------------------------------------------------+
+| Question                     | Answer             | Evidence                                                 |
++------------------------------+--------------------+----------------------------------------------------------+
+| RQ1 Evidence-based intake    | Yes, with a caveat | 20 of 20 walkthrough items quoted verbatim; the Claude   |
+|                              |                    | path was only spot-checked                               |
+| RQ2 Explainable optimization | Yes                | Plan v2 optimal in 0.1 s; every blocker named; costs     |
+|                              |                    | recomputed to the cent by the QA pack                    |
+| RQ3 Controlled change        | Yes                | Capacity cut absorbed through a priced decision; stale   |
+|                              |                    | plans refused with HTTP 409                              |
+| RQ4 Secure, tested SaaS      | Yes                | RLS on all 25 tables; 521 unit tests; 235 of 236 end-to- |
+|                              |                    | end checks pass                                          |
++------------------------------+--------------------+----------------------------------------------------------+
+
+Impact. A PM gets from meeting to defensible plan faster. Scope comes with evidence, trade-offs come with prices, and every plan is a numbered version. These benefits are shown on synthetic projects; measuring them on real ones is future work.
+
+Table 15. Main limitations.
+
++-------------------------------------------------------+------------------------------------------------------+
+| Limitation                                            | Consequence                                          |
++-------------------------------------------------------+------------------------------------------------------+
+| No leave, holidays or effective-dated availability    | Weekly hours are constant over the plan              |
+| (by decision)                                         |                                                      |
+| No actual hours or estimate at completion (by         | Spending shows "Not tracked yet"                     |
+| decision)                                             |                                                      |
+| No fixed costs or audio transcription (by decision)   | Labor-only costs; transcripts must be uploaded       |
+| Free hosting tier                                     | The API sleeps after 15 minutes idle and takes about |
+|                                                       | a minute to wake                                     |
+| Language-model path not in automated QA               | AI quality was spot-checked only                     |
++-------------------------------------------------------+------------------------------------------------------+
+
+Future work. Add calendars, actual hours and fixed costs. Evaluate Claude extraction on annotated meetings [14]. Explore robust scheduling [9] and portfolio-level planning. Pilot with real PMs.
+
+7 Contributions (Team Members and AI)
+
+In short: three roles, one team (Table 16).
+
+Table 16. Team members and roles.
+
++---------------------+--------------------------------------------------------+
+| Team member         | Role                                                   |
++---------------------+--------------------------------------------------------+
+| Sharada Dogiparthi  | Team Lead; Backend Development and Systems Integration |
+| Srilekha Budithi    | Quality Assurance, Frontend Development and Testing    |
+| Rakshitha Venigella | Deployment, Technical Documentation and UI/UX Design   |
++---------------------+--------------------------------------------------------+
+
+• Sharada Dogiparthi led the team, set priorities and guided the technical direction. She led backend development of the planning, optimization and change-control services. She also integrated the web app, database, authentication and AI services into one release.
+• Srilekha Budithi led quality assurance and defined test scenarios across the workflow. She contributed to the frontend and its integration with the API. She carried out functional and regression testing and followed defects to resolution.
+• Rakshitha Venigella deployed the application and maintained its hosting configuration. She prepared the technical documentation for users and developers. She also led the UI/UX design of the planning screens.
+
+Development was supported by AI-assisted coding tools under the team's direction and review.
+
+8 References
+
+[1] Project Management Institute, A Guide to the Project Management Body of Knowledge (PMBOK Guide) and The Standard for Project Management, 7th ed. Project Management Institute, 2021.
+
+[2] B. Flyvbjerg and A. Budzier, "Why your IT project may be riskier than you think," Harvard Business Review, Sep. 2011. [Online]. Available: https://hbr.org/2011/09/why-your-it-project-may-be-riskier-than-you-think (accessed Nov. 14, 2026).
+
+[3] Meta Platforms, Inc., "React." [Online]. Available: https://react.dev/ (accessed Nov. 14, 2026).
+
+[4] FastAPI, "FastAPI documentation." [Online]. Available: https://fastapi.tiangolo.com/ (accessed Nov. 14, 2026).
+
+[5] L. Perron and V. Furnon, "OR-Tools," version 9.15, Google. [Online]. Available: https://developers.google.com/optimization/ (accessed Nov. 14, 2026).
+
+[6] J. E. Kelley and M. R. Walker, "Critical-path planning and scheduling," in Papers Presented at the Eastern Joint IRE-AIEE-ACM Computer Conference, Dec. 1959, pp. 160–173, doi: 10.1145/1460299.1460318.
+
+[7] P. Brucker, A. Drexl, R. Möhring, K. Neumann, and E. Pesch, "Resource-constrained project scheduling: Notation, classification, models, and methods," European Journal of Operational Research, vol. 112, no. 1, pp. 3–41, 1999, doi: 10.1016/S0377-2217(98)00204-5.
+
+[8] S. Hartmann and D. Briskorn, "A survey of variants and extensions of the resource-constrained project scheduling problem," European Journal of Operational Research, vol. 207, no. 1, pp. 1–14, 2010, doi: 10.1016/j.ejor.2009.11.005.
+
+[9] W. Herroelen and R. Leus, "Project scheduling under uncertainty: Survey and research potentials," European Journal of Operational Research, vol. 165, no. 2, pp. 289–306, 2005, doi: 10.1016/j.ejor.2004.04.002.
+
+[10] P. Laborie, J. Rogerie, P. Shaw, and P. Vilím, "IBM ILOG CP optimizer for scheduling," Constraints, vol. 23, no. 2, pp. 210–250, 2018, doi: 10.1007/s10601-018-9281-x.
+
+[11] L. Perron, F. Didier, and S. Gay, "The CP-SAT-LP solver (invited talk)," in Proc. 29th Int. Conf. Principles and Practice of Constraint Programming (CP 2023), LIPIcs, vol. 280, 2023, pp. 3:1–3:2, doi: 10.4230/LIPIcs.CP.2023.3.
+
+[12] T. Brown et al., "Language models are few-shot learners," in Advances in Neural Information Processing Systems, vol. 33, 2020, pp. 1877–1901.
+
+[13] X. Hou et al., "Large language models for software engineering: A systematic literature review," ACM Transactions on Software Engineering and Methodology, vol. 33, no. 8, pp. 1–79, 2024, doi: 10.1145/3695988.
+
+[14] M. Zhong et al., "QMSum: A new benchmark for query-based multi-domain meeting summarization," in Proc. 2021 Conf. North American Chapter of the Association for Computational Linguistics: Human Language Technologies, 2021, pp. 5905–5921, doi: 10.18653/v1/2021.naacl-main.472.
+
+[15] Z. Ji et al., "Survey of hallucination in natural language generation," ACM Computing Surveys, vol. 55, no. 12, pp. 1–38, 2023, doi: 10.1145/3571730.
+
+[16] K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz, "Not what you've signed up for: Compromising real-world LLM-integrated applications with indirect prompt injection," in Proc. 16th ACM Workshop on Artificial Intelligence and Security (AISec '23), 2023, pp. 79–90, doi: 10.1145/3605764.3623985.
+
+[17] Microsoft, "Compare Project plans," Microsoft Project. [Online]. Available: https://www.microsoft.com/en-us/microsoft-365/project/microsoft-project-enterprise-plans-and-pricing (accessed Nov. 14, 2026).
+
+[18] Atlassian, "Jira." [Online]. Available: https://www.atlassian.com/software/jira (accessed Nov. 14, 2026).
+
+[19] PostgreSQL Global Development Group, "Row security policies," PostgreSQL 17 Documentation, Sec. 5.9. [Online]. Available: https://www.postgresql.org/docs/17/ddl-rowsecurity.html (accessed Nov. 14, 2026).
+
+[20] Supabase, "Row level security," Supabase Docs. [Online]. Available: https://supabase.com/docs/guides/database/postgres/row-level-security (accessed Nov. 14, 2026).
+
+[21] R. Kimball and M. Ross, The Data Warehouse Toolkit: The Definitive Guide to Dimensional Modeling, 3rd ed. Wiley, 2013.
+
+[22] Anthropic, "Structured outputs," Claude Platform Docs. [Online]. Available: https://platform.claude.com/docs/en/build-with-claude/structured-outputs (accessed Nov. 14, 2026).
+
+9 Appendix: Code
+
+In short: four short excerpts from the repository (https://github.com/Dogiparthi-Sharada/NirnAIn), its structure, and how to run the tests.
+
+Listing 1 builds the CP-SAT model, Listing 2 computes the inputs hash, Listing 3 applies a run, and Listing 4 shows RLS policies. Listing 5 and Listing 6 show the repository and the test commands. INDEX.txt at the repository root maps every feature to its file and function.
+
+Listing 1. CP-SAT model build: tasks, capacity, dependencies, makespan, deadlines, budget and the objective. Source: backend/app/optimization/builder.py, lines 94–110.
+
+        def build(self) -> Variables:
+            """Add every variable and constraint; the main model also gets its objective."""
+            problem, model = self.problem, self.model
+            variables = Variables(start={}, end={}, assign={})
+            for task in problem.tasks.values():
+                self._task(task, variables)
+            self.workload.close()
+            self._dependencies(variables)
+            makespan = model.new_int_var(0, problem.horizon, "makespan")
+            for task_end in variables.end.values():
+                model.add(makespan >= task_end)
+            self.penalize(makespan * MAKESPAN_CENTS_PER_DAY)
+            self._deadlines(variables, makespan)
+            self._budget(variables.assign)
+            if not self.explain:
+                model.minimize(cp_model.LinearExpr.sum(self._terms))
+            return variables
+
+Listing 2. The inputs hash: the SHA-256 fingerprint of exactly what the solver uses. Source: backend/app/optimization/inputs.py, lines 163–184.
+
+    def inputs_hash(planning_input: PlanningInput) -> str:
+        """SHA-256 of what the solver will use (other projects' bookings and today excluded).
+
+        Hours, type, rates and skills of every person are part of it, so editing
+        any of them invalidates a confirmed sheet.
+        """
+        snapshot = planning_input.to_snapshot()
+        snapshot.pop("allocations", None)
+        # The day it is computed isn't an input: the hash must not change overnight.
+        snapshot.pop("today", None)
+        # Applying a plan writes its assignees as the packages' owners and keeps finished work at
+        # the plan's dates. Those are the plan's own output (owners are only a "don't reassign"
+        # preference to the solver), so applying a plan must not make that same plan look stale.
+        for task in snapshot["tasks"]:
+            for plan_written_field in ("owner_id", "applied_start", "applied_end"):
+                task.pop(plan_written_field, None)
+        # No reserve changes nothing the solver does: such inputs keep the hash they had
+        # before the reserve reached the solver.
+        if not planning_input.constraints.contingency_pct:
+            snapshot["constraints"].pop("contingency_pct", None)
+        canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(canonical.encode()).hexdigest()
+
+Listing 3. API endpoint that applies a run and refuses outdated inputs with HTTP 409. Source: backend/app/api/v1/plan.py, lines 56–78.
+
+    async def apply_run(
+        project_id: ProjectId, run_id: RunId, runs: OptimizationRuns, plans: Plans
+    ) -> OptimizationRun:
+        """Make a successful run the next plan version (409 when its inputs are outdated)."""
+        candidate = await runs.get(project_id, run_id)
+        if candidate is None:
+            raise NotFoundError(RUN_NOT_FOUND)
+        if not await runs.can_write(project_id):
+            raise ForbiddenError("You do not have permission to apply this run")
+        # Unsolved or already applied runs are refused by the apply function itself (422).
+        if candidate.status in SUCCESSFUL and candidate.version is None:
+            project = await runs.project(project_id)
+            if project is None:
+                raise NotFoundError("Project not found")
+            saved = await runs.load_input(project, datetime.now(UTC).date())
+            # A run without a recorded hash can't prove it is current: it is outdated too.
+            if candidate.options.get("inputsHash") != inputs_hash(saved):
+                raise ConflictError(STALE_RUN_DETAIL)
+        await plans.apply(run_id)
+        run = await runs.get(project_id, run_id)
+        if run is None:
+            raise NotFoundError(RUN_NOT_FOUND)
+        return run
+
+Listing 4. Row Level Security policies on the projects table. Source: supabase/migrations/20260924000200_projects.sql, lines 141–165.
+
+    alter table public.projects enable row level security;
+
+    create policy "projects: readable per visibility rules"
+      on public.projects for select to authenticated
+      using ((select private.can_read_project(id)));
+
+    create policy "projects: non-viewers can create in their org"
+      on public.projects for insert to authenticated
+      with check (
+        (select private.has_org_role(org_id, array['owner', 'admin', 'pm', 'member']::public.org_role[]))
+        and created_by = (select auth.uid())
+      );
+
+    create policy "projects: writers can update"
+      on public.projects for update to authenticated
+      using ((select private.can_write_project(id)))
+      with check ((select private.is_org_member(org_id)));
+
+    create policy "projects: admins or creator can delete"
+      on public.projects for delete to authenticated
+      using (
+        (select private.has_org_role(org_id, array['owner', 'admin']::public.org_role[]))
+        or created_by = (select auth.uid())
+      );
+
+
+Listing 5. Repository structure (main folders).
+
+    NirnAIn/
+    ├── backend/app/
+    │   ├── api/v1/         HTTP routers (projects, intake, WBS, optimization, changes)
+    │   ├── ai/             Claude prompts, rules extractor, evidence, transcripts
+    │   ├── changes/        change detection and plan comparison
+    │   ├── optimization/   CP-SAT model, costing, blockers, remedies, inputs hash
+    │   └── repositories/   SQL queries under the caller's RLS context
+    ├── backend/tests/      pytest suite (521 tests)
+    ├── src/                React and TypeScript web application
+    ├── supabase/
+    │   ├── migrations/     17 SQL migrations (25 tables with RLS)
+    │   └── tests/database/ pgTAP tests
+    ├── tests/e2e/api/      API end-to-end suite (239 checks)
+    ├── scripts/            demo seed and code-index generator
+    ├── docs/               hosting guide and project documents
+    └── INDEX.txt           feature-to-code map
+
+Listing 6. Commands that run the test suites (from the repository root).
+
+    pnpm exec tsc --noEmit -p . && pnpm build          # web: types and build
+    cd backend && uv sync --frozen                     # API: dependencies
+    uv run ruff check . && uv run ruff format --check .
+    uv run mypy app && uv run pytest -q                # API: types and tests
+    supabase start && supabase test db                 # database: pgTAP (Docker)
+    python3.12 tests/e2e/api/run_api_suite.py --fresh-workspace   # end-to-end

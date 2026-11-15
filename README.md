@@ -206,6 +206,7 @@ The documentation package for the NirnAIn demo is in [docs/project/](docs/projec
 | Read me first | [README.docx](docs/project/README.docx) | [README.txt](docs/project/README.txt) |
 | Final project report | [FINAL_PROJECT_REPORT.docx](docs/project/FINAL_PROJECT_REPORT.docx) | [FINAL_PROJECT_REPORT.txt](docs/project/FINAL_PROJECT_REPORT.txt) |
 | Applied research report (final report v2; also [PDF](docs/project/FINAL_PROJECT_REPORT_v2.pdf)) | [FINAL_PROJECT_REPORT_v2.docx](docs/project/FINAL_PROJECT_REPORT_v2.docx) | [FINAL_PROJECT_REPORT_v2.txt](docs/project/FINAL_PROJECT_REPORT_v2.txt) |
+| Applied research report, concise edition (v3; also [PDF](docs/project/FINAL_PROJECT_REPORT_v3.pdf)) | [FINAL_PROJECT_REPORT_v3.docx](docs/project/FINAL_PROJECT_REPORT_v3.docx) | [FINAL_PROJECT_REPORT_v3.txt](docs/project/FINAL_PROJECT_REPORT_v3.txt) |
 | Architecture and design decisions | [ARCHITECTURE_AND_DESIGN_DECISIONS.docx](docs/project/ARCHITECTURE_AND_DESIGN_DECISIONS.docx) | [ARCHITECTURE_AND_DESIGN_DECISIONS.txt](docs/project/ARCHITECTURE_AND_DESIGN_DECISIONS.txt) |
 | Lessons learned | [LESSONS_LEARNED.docx](docs/project/LESSONS_LEARNED.docx) | [LESSONS_LEARNED.txt](docs/project/LESSONS_LEARNED.txt) |
 | Hosting quick start | [HOSTING_QUICKSTART.docx](docs/project/HOSTING_QUICKSTART.docx) | [HOSTING_QUICKSTART.txt](docs/project/HOSTING_QUICKSTART.txt) |
