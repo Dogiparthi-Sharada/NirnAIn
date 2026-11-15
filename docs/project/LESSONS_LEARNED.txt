@@ -1,60 +1,62 @@
 NirnAIn – AI-Assisted Project Planning Platform
 NirnAIn demo: lessons learned
 
-Date: November 14, 2026. Author: Sharada Dogiparthi (product owner). Prepared with the NirnAIn build team.
+Authors: Sharada Dogiparthi (Team Lead), Srilekha Budithi, Rakshitha Venigella. BAN 693 Capstone Project, California State University, East Bay. Date: November 14, 2026.
 
-What worked, what didn't, and what we would do differently. Written from the lead's project history (Nov 13–14, 2026), the QA reports and the git history of demo/mockup. Times are PST.
+What worked, what didn't, and what we would do differently. Written by the team from the project's history (November 13–14, 2026), the QA reports and the git history. Times are PST.
 
 In one paragraph
 
-A lead agent and about 23 parallel helper agents took NirnAIn from a stalled repository (production down, two open pull requests) to a demo that matches the approved mockup, in about a day and a half. What made it work was structure: a written contract per round, one git worktree per helper, a monitor, and merges only when every check was green. Layered testing, and above all the product owner's own QA pack, found the bugs that mattered. Most of the pain came from the environment (session restarts, one shared CPU) and from measuring progress before testing it.
+The team took NirnAIn from a stalled repository (nothing running publicly, two pieces of work left open) to a demo that matches the approved mockup in about a day and a half, and then onto a free live demo at https://nirnain-web.onrender.com. What made it work was structure: a written specification per round, one feature branch per slice, and merges into the integration branch only when every automated check passed. Layered testing, and above all the product owner's QA pack, found the bugs that mattered. Most of the pain came from the environment (one shared CPU, no Docker) and from measuring progress before testing it.
 
 What worked
 
-• A written contract per round (nirnain-contract.md, round2-contract.md, round3-contract.md) – Evidence: Every slice coded against the same API shapes, migration number ranges and owners. Round 2 (decisions D1–D6) was built and merged the same evening (helpers 11, 12 and 13 merged 20:56–21:09 on Nov 13). Keep doing it because: Parallel work only converges if the interfaces are written down first.
-• One git worktree and branch per helper, merged by the lead – Evidence: 20 helper merges into demo/mockup; the monitor reported "Main repository checkout: clean (only the lead commits there)". Keep doing it because: Helpers can't overwrite each other, and a stalled helper can be replaced in the same worktree.
-• A monitor (helpers/monitor.py → STATUS.md every few minutes) – Evidence: It flagged edits outside a helper's area, missing file headers and single-letter names (the PO's code standard) before merge. Keep doing it because: Problems were caught at merge time, not in review weeks later.
-• Merge gates: every check green – Evidence: ruff, ruff format, mypy (strict), pytest, pgTAP inside rolled-back transactions, tsc, vite build. Keep doing it because: Backend tests grew from 358 to 511; nothing reached demo/mockup with a failing check.
-• Three layers of testing – Evidence: API scenario suite (~240 checks), browser click-through (179 checks first run), the PO's QA pack (217 cases). Keep doing it because: Each layer found a different kind of defect (next table).
-• The PO's QA pack – Evidence: It found three P0 defects: an outdated plan could be applied, another workspace could link your work packages, and a package without a duration silently vanished from a "ready" plan. Its independent checks recomputed every plan's cost to the cent. Keep doing it because: A pack written from the business side, with micro-oracles and adversarial inputs, tests what the builders didn't think of.
-• Token discipline – Evidence: QA ran against a no-key copy of the API that counted Claude calls and failed on any; AI-only cases were skipped by PO decision; the demo seed runs with --ai-calls rules or skip. QA used 0 Claude tokens. Keep doing it because: Cheap, and tests are repeatable because the rule-based paths are deterministic.
-• Rule-based fallback for every AI feature – Evidence: The full demo works without ANTHROPIC_API_KEY. Keep doing it because: Hosting and testing don't depend on a paid key.
+• A written specification per round (rounds 1–4) – Evidence: Every slice was coded against the same API shapes, migration number ranges and owners. Round 2 (decisions D1–D6) was specified, built and merged the same evening (merged 20:56–21:09 on Nov 13). Keep doing it because: Parallel work only converges if the interfaces are written down first.
+• One feature branch per slice, merged into an integration branch – Evidence: 24 merges into the integration branch on Nov 13–14: screens ported from the mockup, backend slices, fix rounds, documentation and code-standards sweeps. Keep doing it because: Changes can't overwrite each other, and an unfinished slice can be picked up again from its branch.
+• Merge gates: every automated check green – Evidence: ruff, ruff format, mypy (strict), pytest, pgTAP inside rolled-back transactions, tsc, vite build. Keep doing it because: Backend tests grew from 358 to 521; nothing reached the integration branch with a failing check.
+• Code-standards sweeps – Evidence: An audit of file headers, docstrings, descriptive names and file length (at most 500 lines) found 47 files without headers and 5 files over 500 lines. Two sweeps (frontend and backend) on Nov 14 fixed them without changing behaviour. Keep doing it because: The code reads the same everywhere, and problems are caught at merge time, not in review weeks later.
+• Three layers of testing – Evidence: API scenario suite (~240 checks), browser click-through (179 checks in the first run), the PO's QA pack (217 cases). Keep doing it because: Each layer found a different kind of defect (next table).
+• The PO's QA pack – Evidence: It found three P0 defects: an outdated plan could be applied, another workspace could link your work packages, and a package without a duration silently vanished from a "ready" plan. Its independent checks recomputed every plan's cost to the cent. Keep doing it because: A pack written from the business side, with micro-oracles and adversarial inputs, tests what the developers didn't think of.
+• Token discipline – Evidence: QA ran against a no-key copy of the API that counted Claude calls and failed on any; AI-only cases were skipped by PO decision; the demo seed has two no-token modes (--ai-calls rules or skip). QA used 0 Claude tokens. Keep doing it because: Cheap, and tests are repeatable because the rule-based paths are deterministic.
+• Rule-based fallback for every AI feature – Evidence: The full demo works without ANTHROPIC_API_KEY. The hosted API has a key, and still falls back to the rules if Claude fails. Keep doing it because: Hosting and testing don't depend on a paid key.
 • "Never invent" – Evidence: Scope items quote the notes word for word; missing data shows "Needs you", never a made-up number; the rules change detector was tightened to propose only values a sentence states. Keep doing it because: Trust: a PM can check every value against its source.
-• Fast, plain-language PO decisions – Evidence: D1–D8 were decided in one evening, written up as a contract and built the same night. Keep doing it because: Short decision loops beat long specs for a demo.
-• A live preview of the integration build (http://localhost:54321) – Evidence: The PO could click through after every merge round. Keep doing it because: Feedback on the real app, not on screenshots.
+• Fast, plain-language PO decisions – Evidence: D1–D8 were decided in one evening, written into the round-2 specification and built the same night. Keep doing it because: Short decision loops beat long specs for a demo.
+• A live preview environment – Evidence: The integration build ran as a live preview, built from its own checkout; the PO clicked through it after every merge round. Keep doing it because: Feedback on the real app, not on screenshots.
+• Test tools kept with the code – Evidence: The API scenario suite (tests/e2e/api/), the demo seed (scripts/seed_demo/) and the feature-to-code map (INDEX.txt) are in the repository. Keep doing it because: Anyone can re-run the checks, rebuild the demo data and find the code for a feature.
 
 What each test layer caught
 
 • API scenario suite: Task length didn't depend on who did the work (B1); all plans cost $0 (B2); re-plans started in the past (B9); required skills ignored (B12); two blockers but only one named (B18).
 • Browser click-through: Stale intake results (B13), budget and number validation (B14, B15), dates in UTC (B16), disabled buttons without a reason (B17), a change that couldn't be dismissed (B11).
 • PO's QA pack: P0 stale apply, P0 cross-workspace links, P0 missing durations, the reserve not held back, done work vanishing, a whole week booked for a one-day task, export hours understated, invented values from notes.
-• The lead, while merging: Applying a plan changed its own inputs fingerprint (step 6 then said "inputs changed"); the same on step-7 approval; a SQLAlchemy 2.1 deprecation that failed tests depending on their order.
+• The team, while merging: Applying a plan changed its own inputs hash (step 6 then said "inputs changed"); the same on step-7 approval; a SQLAlchemy 2.1 deprecation that failed tests depending on their order.
 
 What didn't work
 
-• Chat-session restarts and an overnight pause cancelled or froze helpers (Nov 13 17:55, about 20:39, and overnight until 10:22 on Nov 14) – Effect: Four early helpers stalled and one was cancelled by a restart. Their work moved to replacement helpers (3b, 3c, 4b, 7b) or to helper 2. What we changed: Detached background services; a "commit early and often" rule; relaunching helpers in the same worktree so committed work survives.
-• One shared CPU (~2 GB RAM, no Docker or sudo) – Effect: Load average reached about 17 with four helpers plus browser tests; everything ran several times slower. What we changed: Accepted as a limit of the machine (see "next time").
+• One shared CPU (~2 GB RAM, no Docker or sudo) – Effect: Load average reached about 17 with several builds and browser tests running at once; everything ran several times slower. What we changed: Accepted as a limit of the machine (see "next time").
 • "% done" measured before testing – Effect: Early figures counted features built, not features tested. After QA the honest figure went down. What we changed: Report only what has passed a test.
 • Requirement churn – Effect: "Remove skills" (D8) was requested and reversed within the hour; three revert commits in two branches. What we changed: — (see "next time").
-• Test-data pollution – Effect: QA projects reused the same people, so later runs saw them as already booked and reported false regressions. What we changed: The suite runs in a fresh workspace.
-• Shared-database safety – Effect: A helper committed migration statements to the shared database by accident (reverted). What we changed: pgTAP tests run only inside begin … rollback.
-• Building in the main checkout – Effect: The live preview's build was overwritten for about a minute. What we changed: The preview is built and served from its own worktree and branch (preview/live).
-• Fingerprint bugs – Effect: Applying a plan, and approving a step-7 change, wrote values into the inputs, so the new plan looked out of date at once. Plans saved before a solver-logic change still look out of date once after a deploy. What we changed: Plan-written fields left out of the fingerprint; approvals record the hash the plan came into force with; a regression test for each.
-• A plan lock that blocked real work – Effect: After Plan v1, steps 3–5 were locked, so adding a person or editing a requirement mid-project was impossible (B3, B4). What we changed: Lock removed (D3); fingerprints (R1) keep applying safe instead.
+• Test-data pollution – Effect: QA projects reused the same people, so later runs saw them as already booked and reported false regressions. What we changed: Every suite run starts in a fresh QA workspace (--fresh-workspace).
+• Shared-database safety – Effect: Migration statements were committed to the shared development database by accident (reverted). What we changed: pgTAP tests run only inside begin … rollback.
+• Building the preview in the dev checkout – Effect: The live preview's build was overwritten for about a minute. What we changed: The preview is built and served from its own checkout and branch.
+• The inputs-hash bug – Effect: Applying a plan, and approving a step-7 change, wrote values into the inputs, so the new plan looked out of date at once. Plans saved before a solver-logic change still look out of date once after a deploy. What we changed: Plan-written fields left out of the inputs hash; approvals record the hash the plan came into force with; a regression test for each.
+• A plan lock that blocked real work – Effect: After Plan v1, steps 3–5 were locked, so adding a person or editing a requirement mid-project was impossible (B3, B4). What we changed: Lock removed (D3); the inputs hash (R1) keeps applying safe instead.
 • Model gaps found late – Effect: Durations didn't depend on the person, people had no rate, and the reserve wasn't held back. All three looked fine on screen. What we changed: Assignment-dependent durations, worker type (D1), reserve (R5).
 • QA pack vs product model – Effect: The pack assumed a Gurobi objective and features the PO had ruled out: part 1 had 132 BLOCKED results (but the feasible/infeasible conclusion matched in all 32 matrix rows). What we changed: BLOCKED results labelled by reason, so they aren't read as failures.
 • Mockup data the product can't produce – Effect: The seed can't show the mockup's workspace name, project codes, other PMs, "Inferred" evidence without Claude, or spend to date. What we changed: Listed in the seed README instead of faked.
 • Floating tool versions – Effect: CI installs the Supabase CLI latest; the current CLI's db push targets the local database unless --remote is given. What we changed: Noted as a next step (see the final report).
+• Free-tier limits – Effect: The free Render API sleeps after 15 idle minutes and takes about a minute to wake; a free Supabase project pauses after a week without activity; GitHub disables scheduled workflows in a public repository after 60 days without commits. What we changed: A daily keep-alive workflow (wakes the API, checks the database and Supabase Auth, loads the website; 0 Claude tokens), "wake the API before a demo", and re-enabling the workflow after a quiet spell.
 
 What we would do differently
 
 1. Test from the first hour. Run a thin end-to-end slice (create → plan v1 → change → v2) and the QA pack's journey early, and measure progress as "tested and passing".
-2. Put the mid-project story in the first contract. Step 7, versions, the today anchor and "done work stays" all came from QA. They are the heart of the product.
+2. Put the mid-project story in the first specification. Step 7, versions, the today anchor and "done work stays" all came from QA. They are the heart of the product.
 3. Batch and freeze decisions. Collect PO decisions at fixed points (for example after each QA round) and don't start building a reversal-prone decision until it has settled.
-4. Size concurrency to the machine. On one CPU, two helpers plus one test runner is the useful maximum. A bigger box pays for itself.
-5. Isolate data by default. One database (or schema) per helper, transactional tests only, and a fresh QA workspace with unique names for every suite run.
+4. Size concurrency to the machine. On one CPU, two parallel builds plus one test runner is the useful maximum. A bigger box pays for itself.
+5. Isolate data by default. One database (or schema) per developer, transactional tests only, and a fresh QA workspace with unique names for every suite run.
 6. Keep the preview separate from day one. Never build in the checkout the live site is served from.
 7. Make "apply, then check the status" a standing test for every write that touches plan inputs.
 8. Align the QA pack with product decisions before running it, so "not supported" cases are marked up front.
 9. Pin tool versions in CI (Supabase CLI, pnpm) and update them on purpose.
-10. Keep QA evidence with the code. The QA reports and screenshots live in the lead's session folder, outside git. Archive them (without secrets) before the folder is cleaned up.
+10. Keep QA evidence with the code. The QA reports and screenshots were kept outside git and are now archived by the team. Next time, store them (without secrets) next to the code from the first round.
+11. Plan for free-tier limits from the start. A keep-alive job, "wake the API before a demo" and a monthly spend limit on the AI key belong in the first hosting checklist.
