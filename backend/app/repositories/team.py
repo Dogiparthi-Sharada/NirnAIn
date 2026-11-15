@@ -66,6 +66,8 @@ class TeamRepository(TeamSkillQueries):
     async def members(self, project: ProjectRef, weeks: Sequence[date]) -> list[TeamMember]:
         """The team, with average weekly hours already booked on other projects in `weeks`."""
         member, employee, booking = project_team_members, employees, allocations
+        # Hours booked on other projects in the window, summed per person; the outer join
+        # below keeps people with no bookings (0 hours).
         other = (
             sa.select(booking.c.employee_id, sa.func.sum(booking.c.hours).label("total"))
             .where(

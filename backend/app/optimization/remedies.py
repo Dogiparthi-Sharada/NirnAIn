@@ -178,6 +178,7 @@ def price_remedies(
     if not solved:
         # Tried last, and only when no single option gets a plan (R6).
         found.append(("combined", change_together(planning_input)))
+    # The run's time limit is shared by the variants, with a floor so each one can solve.
     share = SolveOptions(
         time_limit_s=max(options.time_limit_s / len(found), MIN_VARIANT_SECONDS),
         workers=options.workers,
@@ -192,8 +193,10 @@ def price_remedies(
         outcome = solve(variant, share, control, explain=False)
         if outcome.plan is None:
             continue
+        # Next to a plan, an option is only worth offering when it finishes earlier.
         if base_finish is not None and finish_of(variant, outcome) >= base_finish:
             continue
+        # Priced as the extra cost over this plan; without a plan, the whole relaxed plan's.
         remedy = DESCRIBE[remedy_id](
             planning_input, variant, outcome, cost_of(variant, outcome) - base_cost
         )

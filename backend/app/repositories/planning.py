@@ -243,6 +243,8 @@ class PlanningRepository(DependencyQueries):
     async def capacity(self, project: ProjectRef, weeks: Sequence[date]) -> list[CapacityEntry]:
         """Active org employees with their average weekly hours on other projects in `weeks`."""
         staff, bookings = employees, allocations
+        # Hours booked on other projects in the window, summed per person; the outer join
+        # below keeps people with no bookings (0 hours).
         other = (
             sa.select(bookings.c.employee_id, sa.func.sum(bookings.c.hours).label("total"))
             .where(

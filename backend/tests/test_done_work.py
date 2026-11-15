@@ -20,26 +20,8 @@ from app.optimization.explain import build_report
 from app.optimization.model import Task
 from app.optimization.solver import solve
 from app.repositories.optimization import OptimizationRepository
-from tests.support.connections import Conn, Rows, project_context
+from tests.support.connections import Conn, Rows, project_context, wbs_node_row
 from tests.support.solver_inputs import FAST, make_input
-
-
-def _node(
-    node_id: uuid.UUID, parent: uuid.UUID | None, level: int, code: str, **values: Any
-) -> dict[str, Any]:
-    """A `wbs_nodes_with_code` row."""
-    row = {
-        "id": node_id,
-        "parent_id": parent,
-        "level": level,
-        "name": f"Node {code}",
-        "description": None,
-        "duration_days": None,
-        "effort_hours": None,
-        "owner_employee_id": None,
-        "code": code,
-    }
-    return row | values
 
 
 def _listed(params: dict[str, Any]) -> set[str]:
@@ -55,11 +37,11 @@ async def test_finished_work_is_loaded_done_at_its_applied_dates() -> None:
     connection = Conn(
         Rows(
             [
-                _node(root, None, 1, "1"),
-                _node(deliverable, root, 2, "1.1"),
-                _node(done, deliverable, 3, "1.1.1", duration_days=0),
-                _node(never, deliverable, 3, "1.1.2", duration_days=0),
-                _node(open_work, deliverable, 3, "1.1.3", duration_days=5),
+                wbs_node_row(root, None, 1, "1"),
+                wbs_node_row(deliverable, root, 2, "1.1"),
+                wbs_node_row(done, deliverable, 3, "1.1.1", duration_days=0),
+                wbs_node_row(never, deliverable, 3, "1.1.2", duration_days=0),
+                wbs_node_row(open_work, deliverable, 3, "1.1.3", duration_days=5),
             ]
         ),
         Rows([{"node_id": str(done), "first_day": "2026-10-05", "last_day": "2026-10-09"}]),

@@ -1,10 +1,11 @@
-"""Hours booked on other projects reduce a person's free hours (QA pack RES-006).
+"""Tests that hours booked on other projects reduce a person's free hours (QA pack RES-006).
 
-Applying a plan books its hours (`allocations`); another project's run sees
-them as load the person already carries (`load.allocation_blocks`). Those
-hours come off the person's daily capacity, and what is left stays usable:
-a task may stretch to the hours left beside a booking (`load.booked_modes`)
-instead of only waiting for the booking to end.
+Purpose: Applying a plan books its hours; another project's run sees them as load the person already
+carries. What is left stays usable: a task may stretch to the hours left beside a booking instead of
+only waiting for the booking to end.
+How it fits: Pure tests of app/optimization/load.py (`allocation_blocks`, `booked_modes`) and the
+solver; layer: tests.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -50,14 +51,15 @@ def _project_y(effort_hours: float, capacity_mode: ConstraintMode) -> PlanningIn
 def test_work_that_fits_the_hours_left_beside_a_booking_is_planned(
     capacity_mode: ConstraintMode,
 ) -> None:
-    inp = _project_y(24, capacity_mode)
-    outcome = solve(inp, FAST)
+    """Work that fits the hours left beside a booking is stretched over the week, on time."""
+    planning_input = _project_y(24, capacity_mode)
+    outcome = solve(planning_input, FAST)
     assert outcome.status == "optimal"
     assert outcome.plan is not None
     scheduled = outcome.plan.tasks["y"]
     # 24 h at the 4.8 h/day left (8 h less 16 h / 5 days): the whole week.
     assert (scheduled.start, scheduled.end) == (0, 5)
-    report = build_report(inp, outcome)
+    report = build_report(planning_input, outcome)
     assert report.result is not None
     summary = report.result["summary"]
     assert summary["completionDate"] == JAN_8.isoformat()
@@ -69,6 +71,7 @@ def test_work_that_fits_the_hours_left_beside_a_booking_is_planned(
 
 
 def test_more_work_than_the_hours_left_is_still_refused() -> None:
+    """More work than the hours left misses the hard deadline."""
     outcome = solve(_project_y(32, "hard"), FAST)
     assert outcome.status == "infeasible"
     assert {conflict.name for conflict in outcome.conflicts} >= {
@@ -77,6 +80,7 @@ def test_more_work_than_the_hours_left_is_still_refused() -> None:
 
 
 def test_booked_modes_stretch_a_task_to_each_level_of_hours_left() -> None:
+    """Each booking level adds a stretched mode; full or empty days add none."""
     task = Task("y", "1.1.1", "Y work", 3, effort_hours=24)
     light, heavy = Block(0, 5, 16), Block(5, 10, 32)
     # 8 h/day capacity: 6.4 h and 4.8 h are left beside the two bookings.

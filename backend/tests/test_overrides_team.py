@@ -1,10 +1,11 @@
-"""Re-plan overrides that change the team: people leaving and people joining mid-project.
+"""Tests of re-plan overrides that change the team: people leaving and joining mid-project.
 
-What: `apply_overrides` with `removeMembers` / `addMembers`, on a pure planning input, and
-one small CP-SAT solve proving the solver reassigns a leaver's work to the newcomer.
-Why: step 7 lets the PM bring in a specialist or take someone off the project after Plan v1;
-the re-plan must plan with exactly that team. How it fits: covers app/optimization/overrides.py
-(C1's run endpoint applies the overrides before freezing the snapshot).
+Purpose: Step 7 lets the PM bring in a specialist or take someone off the project after Plan v1; the
+re-plan must plan with exactly that team, and one small solve proves the leaver's work goes to the
+newcomer.
+How it fits: Covers app/optimization/overrides.py (`removeMembers` / `addMembers`), which the run
+endpoint applies before freezing the snapshot; layer: tests.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -69,6 +70,7 @@ def _dana(**fields: Any) -> dict[str, Any]:
 
 
 def test_leaver_drops_out_with_their_ownership_and_bookings() -> None:
+    """A leaver drops out of the team with their package ownership and bookings."""
     changed = apply_overrides(_input(), {"removeMembers": ["sam"], "hoursPerWeek": {"sam": 8}})
     assert [employee.id for employee in changed.employees] == ["mark"]
     # Their package has no current owner: the solver places it without a move penalty.
@@ -77,6 +79,7 @@ def test_leaver_drops_out_with_their_ownership_and_bookings() -> None:
 
 
 def test_newcomer_joins_with_matched_skills_and_the_team_rate() -> None:
+    """A newcomer joins with the skills packages need and the default rate unless one is given."""
     changed = apply_overrides(_input(), {"addMembers": [_dana()]})
     dana = changed.employees[-1]
     assert (dana.id, dana.name, dana.weekly_capacity_hours, dana.is_contractor) == (
@@ -101,6 +104,7 @@ def test_newcomer_joins_with_matched_skills_and_the_team_rate() -> None:
 
 
 def test_newcomer_worker_type_decides_contractor_and_keeps_skills() -> None:
+    """The worker type decides contractor or employee, over the older flag."""
     legacy = {key: value for key, value in _dana().items() if key != "isContractor"}
     contractor = apply_overrides(_input(), {"addMembers": [{**legacy, "workerType": "contractor"}]})
     employee = apply_overrides(_input(), {"addMembers": [{**legacy, "workerType": "employee"}]})
@@ -120,6 +124,7 @@ def test_newcomer_worker_type_decides_contractor_and_keeps_skills() -> None:
 
 
 def test_solver_reassigns_the_leavers_work_to_the_newcomer() -> None:
+    """The solver gives the leaver's work to the newcomer who has the skill."""
     changed = apply_overrides(
         _input(), {"removeMembers": ["sam"], "addMembers": [_dana(hourlyRateCents=17_500)]}
     )

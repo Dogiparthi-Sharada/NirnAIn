@@ -94,6 +94,7 @@ async def _required_skills(conn: AsyncConnection, project_id: uuid.UUID) -> tupl
         .select_from(listed.join(skill, skill.c.id == listed.c.skill_id))
         .where(listed.c.project_id == project_id, listed.c.required.is_(True))
     )
+    # UNION (not UNION ALL): a skill both tagged and listed as Required is checked once.
     names: Sequence[Any] = (
         (await conn.execute(sa.union(tagged, required).order_by("name"))).scalars().all()
     )
@@ -138,6 +139,8 @@ async def read_validation_input(
     The scope items are left out: only the AI review reads them (`AiJobStore` adds them).
     """
     project, limits = projects, constraint_sets
+    # Step-5 dates win over the project's; the outer join keeps projects without a saved set.
+    # Every query names the project explicitly, because the AI job reads without RLS.
     row = (
         await conn.execute(
             sa.select(
@@ -166,6 +169,7 @@ async def read_validation_input(
         deadline=row.deadline,
         working_days_per_week=int(row.per_week),
         specialists_allowed=row.specialist_answer == "yes",
+        # A rate counts only once the PM confirmed it; a blank confirmed rate is the estimate.
         specialist_rate_cents=(
             row.contractor_rate_cents or DEFAULT_SPECIALIST_RATE_CENTS
             if row.specialist_rate_confirmed

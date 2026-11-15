@@ -102,6 +102,24 @@ class _Row(SimpleNamespace):
         self._mapping = mapping
 
 
+def wbs_node_row(
+    node_id: uuid.UUID, parent: uuid.UUID | None, level: int, code: str, **values: Any
+) -> dict[str, Any]:
+    """Return a `wbs_nodes_with_code` row named after its code; `values` override columns."""
+    row = {
+        "id": node_id,
+        "parent_id": parent,
+        "level": level,
+        "name": f"Node {code}",
+        "description": None,
+        "duration_days": None,
+        "effort_hours": None,
+        "owner_employee_id": None,
+        "code": code,
+    }
+    return row | values
+
+
 def project_context() -> ProjectContext:
     """Return the CRM project's context (Oct 5, 2026 to Jan 29, 2027; $375,000)."""
     return ProjectContext(

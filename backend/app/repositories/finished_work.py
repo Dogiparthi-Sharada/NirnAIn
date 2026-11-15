@@ -29,6 +29,7 @@ async def finished_work(
     if not candidates:
         return {}
     runs = optimization_runs
+    # One row per scheduled package of every applied run (a lateral unnest of the jsonb array).
     item = (
         sa.func.jsonb_array_elements(runs.c.result["schedule"])
         .table_valued(sa.column("value", JSONB))
@@ -45,9 +46,11 @@ async def finished_work(
         .where(
             runs.c.project_id == project_id,
             runs.c.applied_at.is_not(None),
+            # Runs without a schedule array (failed, or older results) would break the unnest.
             sa.func.jsonb_typeof(runs.c.result["schedule"]) == "array",
             node_id.in_([str(candidate) for candidate in candidates]),
         )
+        # DISTINCT ON + ORDER BY applied_at DESC: the dates of the latest applied plan win.
         .ext(distinct_on(node_id))
         .order_by(node_id, runs.c.applied_at.desc())
     )

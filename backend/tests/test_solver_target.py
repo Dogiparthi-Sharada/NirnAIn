@@ -1,10 +1,10 @@
-"""When a change moves the date: the target, the slip and the ways to keep it (round-2 D2).
+"""Tests of the target date, the slip and the ways to keep the date (round-2 D2).
 
-A step-7 re-plan tries to keep the completion date of the plan in force
-(`target_date`); other runs, the deadline. A plan that finishes later
-reports `slipDays` and gets priced options: bring in a contractor, let
-people work up to 25% overtime, or accept the new date. "Can flex"
-capacity never goes beyond 25% over contracted hours.
+Purpose: A step-7 re-plan tries to keep the plan in force's completion date; other runs, the
+deadline. A later plan reports `slipDays` with priced options (a contractor, up to 25% overtime, or
+accepting the date); "Can flex" never goes beyond 25% over contracted hours.
+How it fits: Pure tests of app/optimization (overrides, solver, remedies, report); layer: tests.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -27,8 +27,9 @@ def _leo_cut_to_16_hours() -> PlanningInput:
 
 
 def test_a_late_replan_reports_its_target_and_slip() -> None:
-    inp = _leo_cut_to_16_hours()
-    report = build_report(inp, solve(inp, FAST))
+    """A late re-plan reports the plan in force's date as target and the slip."""
+    planning_input = _leo_cut_to_16_hours()
+    report = build_report(planning_input, solve(planning_input, FAST))
     assert report.result is not None
     summary = report.result["summary"]
     assert (summary["completionDate"], summary["targetDate"], summary["slipDays"]) == (
@@ -43,9 +44,12 @@ def test_a_late_replan_reports_its_target_and_slip() -> None:
 
 
 def test_ways_to_keep_the_date_are_priced_against_this_plan() -> None:
-    inp = _leo_cut_to_16_hours()
-    current = solve(inp, FAST)
-    remedies = {remedy.id: remedy for remedy in price_remedies(inp, FAST, current=current)}
+    """Each way to keep the date is priced against this plan, and its re-run delivers it."""
+    planning_input = _leo_cut_to_16_hours()
+    current = solve(planning_input, FAST)
+    remedies = {
+        remedy.id: remedy for remedy in price_remedies(planning_input, FAST, current=current)
+    }
     assert list(remedies) == ["specialist", "overtime", "move_deadline"]
 
     contractor = remedies["specialist"]
@@ -81,17 +85,18 @@ def test_ways_to_keep_the_date_are_priced_against_this_plan() -> None:
 
     # "Use this option" re-runs with the remedy: each run reaches the promised date,
     # at the promised extra cost.
-    plan_cost = build_report(inp, current).expected_cost_cents
+    plan_cost = build_report(planning_input, current).expected_cost_cents
     for remedy in remedies.values():
-        chosen = apply_remedy(inp, remedy.id)
+        chosen = apply_remedy(planning_input, remedy.id)
         rerun = build_report(chosen, solve(chosen, FAST))
         assert rerun.completion_date == remedy.completion_date, remedy.id
         assert rerun.expected_cost_cents == plan_cost + (remedy.cost_cents or 0), remedy.id
 
 
 def test_can_flex_stops_at_25_percent_over_contracted_hours() -> None:
+    """Flexible capacity stops at 25% overtime, and none is used when not needed."""
     # Two full-time 5-day packages for one person by Oct 9: 200% of their hours.
-    inp = make_input(
+    planning_input = make_input(
         tasks=(
             Task("a", "1.1", "Design", 5, owner_id="e1"),
             Task("b", "1.2", "Build", 5, owner_id="e1"),
@@ -100,15 +105,18 @@ def test_can_flex_stops_at_25_percent_over_contracted_hours() -> None:
         dependencies=(),
         constraints=Constraints(capacity_mode="soft", must_finish_by=date(2026, 10, 9)),
     )
-    out = solve(inp, FAST)
-    assert out.status == "infeasible"
-    assert [conflict.name for conflict in out.conflicts] == [
+    outcome = solve(planning_input, FAST)
+    assert outcome.status == "infeasible"
+    assert [conflict.name for conflict in outcome.conflicts] == [
         "Deadline: must finish by Oct 9, 2026",
         "Capacity: Solo (40h/week)",
     ]
     # Ten days are enough: overtime isn't needed, so none is used.
     relaxed = dataclasses.replace(
-        inp, constraints=dataclasses.replace(inp.constraints, must_finish_by=date(2026, 10, 16))
+        planning_input,
+        constraints=dataclasses.replace(
+            planning_input.constraints, must_finish_by=date(2026, 10, 16)
+        ),
     )
     report = build_report(relaxed, solve(relaxed, FAST))
     assert report.expected_cost_cents == 80 * 10_000

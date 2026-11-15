@@ -1,4 +1,11 @@
-"""Repository SQL, compiled for PostgreSQL and run against a recording connection."""
+"""Tests of the project, organization, profile and notification repositories' SQL.
+
+Purpose: Prove the queries behind the core screens: keyset pagination and search with escaped
+wildcards, archiving on status change, the dashboard counts, memberships and notifications.
+How it fits: Compiles the statements of app/repositories (projects, orgs, me, notifications) for
+PostgreSQL through the recording connection of tests/support/connections.py; layer: tests.
+Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -18,6 +25,7 @@ NOW = datetime(2026, 9, 24, 12, 0, tzinfo=UTC)
 
 
 def project_row(**overrides: Any) -> dict[str, Any]:
+    """Return a project row, changed by `overrides`."""
     row = {
         "id": uuid.uuid4(),
         "org_id": uuid.uuid4(),
@@ -49,15 +57,17 @@ def project_row(**overrides: Any) -> dict[str, Any]:
 
 
 def test_escape_like() -> None:
+    """LIKE wildcards and backslashes in a search are escaped."""
     assert escape_like(r"50%_off\x") == r"50\%\_off\\x"
 
 
 async def test_project_list_sql() -> None:
+    """The list joins the PM, hides archived, searches and pages by cursor (one extra row)."""
     rows = [project_row(), project_row(), project_row()]
     conn = Conn(Result(rows))
     repo = ProjectRepository(conn)  # type: ignore[arg-type]
     cursor = Cursor(NOW, uuid.uuid4())
-    items, nxt = await repo.list_page(
+    items, next_cursor = await repo.list_page(
         uuid.uuid4(), statuses=None, search="100%", limit=2, cursor=cursor
     )
     sql = conn.sql[0]
@@ -70,33 +80,36 @@ async def test_project_list_sql() -> None:
     assert conn.params[0]["param_1"] == 3 or 3 in conn.params[0].values()
     assert "%100\\%%" in conn.params[0].values()
     assert len(items) == 2
-    assert nxt == Cursor(items[1].created_at, items[1].id)
+    assert next_cursor == Cursor(items[1].created_at, items[1].id)
 
 
 async def test_project_list_status_filter() -> None:
+    """A status filter lists exactly those statuses; a short page has no next cursor."""
     conn = Conn(Result([project_row()]))
     repo = ProjectRepository(conn)  # type: ignore[arg-type]
-    items, nxt = await repo.list_page(
+    items, next_cursor = await repo.list_page(
         uuid.uuid4(), statuses=[ProjectStatus.ARCHIVED], search=None, limit=5, cursor=None
     )
     assert "public.projects.status IN" in conn.sql[0]
-    assert nxt is None
+    assert next_cursor is None
     assert len(items) == 1
 
 
 async def test_project_create_generates_id_without_returning() -> None:
+    """A project gets its id in Python, so the insert needs no RETURNING under RLS."""
     conn = Conn(Result([]))
     repo = ProjectRepository(conn)  # type: ignore[arg-type]
     creator = uuid.uuid4()
-    pid = await repo.create(uuid.uuid4(), creator, {"name": "X", "currency": "USD"})
-    assert isinstance(pid, uuid.UUID)
+    project_id = await repo.create(uuid.uuid4(), creator, {"name": "X", "currency": "USD"})
+    assert isinstance(project_id, uuid.UUID)
     assert conn.sql[0].startswith("INSERT INTO public.projects")
     assert "RETURNING" not in conn.sql[0]
-    assert conn.params[0]["id"] == pid
+    assert conn.params[0]["id"] == project_id
     assert conn.params[0]["created_by"] == creator
 
 
 async def test_project_update_archives() -> None:
+    """Archiving stamps the time once; other statuses clear it; other edits leave it."""
     conn = Conn(Result([], rowcount=1), Result([], rowcount=0), Result([], rowcount=1))
     repo = ProjectRepository(conn)  # type: ignore[arg-type]
     assert await repo.update(uuid.uuid4(), {"status": ProjectStatus.ARCHIVED}) is True
@@ -108,6 +121,7 @@ async def test_project_update_archives() -> None:
 
 
 async def test_project_get_and_delete() -> None:
+    """A project is read by id and deleted; a missing one is None."""
     row = project_row()
     conn = Conn(Result([row]), Result([], rowcount=1), Result([]))
     repo = ProjectRepository(conn)  # type: ignore[arg-type]
@@ -120,6 +134,7 @@ async def test_project_get_and_delete() -> None:
 
 
 async def test_dashboard_sql() -> None:
+    """The dashboard counts with filters over active projects in one query."""
     conn = Conn(
         Result(
             [
@@ -142,14 +157,15 @@ async def test_dashboard_sql() -> None:
 
 
 async def test_org_repository() -> None:
-    uid, oid = uuid.uuid4(), uuid.uuid4()
+    """Visibility, membership, members (with profiles) and the user's organizations are read."""
+    user_id, org_id = uuid.uuid4(), uuid.uuid4()
     conn = Conn(
         Result([{"one": 1}]),
         Result([]),
         Result(
             [
                 {
-                    "user_id": uid,
+                    "user_id": user_id,
                     "role": "owner",
                     "joined_at": NOW,
                     "email": "a@b.c",
@@ -159,25 +175,26 @@ async def test_org_repository() -> None:
                 }
             ]
         ),
-        Result([{"id": oid, "name": "Acme", "slug": "acme", "role": "admin"}]),
+        Result([{"id": org_id, "name": "Acme", "slug": "acme", "role": "admin"}]),
     )
     repo = OrgRepository(conn)  # type: ignore[arg-type]
-    assert await repo.is_visible(oid) is True
-    assert await repo.is_member(oid, uid) is False
-    members = await repo.list_members(oid)
+    assert await repo.is_visible(org_id) is True
+    assert await repo.is_member(org_id, user_id) is False
+    members = await repo.list_members(org_id)
     assert members[0].full_name == "A"
     assert "LEFT OUTER JOIN public.profiles" in conn.sql[2]
-    orgs = await repo.memberships_for(uid)
+    orgs = await repo.memberships_for(user_id)
     assert orgs[0].role == "admin"
 
 
 async def test_profile_repository() -> None:
-    uid = uuid.uuid4()
+    """A profile is read and updated."""
+    user_id = uuid.uuid4()
     conn = Conn(
         Result(
             [
                 {
-                    "id": uid,
+                    "id": user_id,
                     "email": "a@b.c",
                     "full_name": None,
                     "avatar_url": None,
@@ -188,15 +205,16 @@ async def test_profile_repository() -> None:
         Result([], rowcount=1),
     )
     repo = ProfileRepository(conn)  # type: ignore[arg-type]
-    profile = await repo.get(uid)
+    profile = await repo.get(user_id)
     assert profile is not None
     assert profile.email == "a@b.c"
-    assert await repo.update(uid, {"full_name": "B"}) is True
+    assert await repo.update(user_id, {"full_name": "B"}) is True
     assert conn.sql[1].startswith("UPDATE public.profiles SET full_name=")
 
 
 async def test_notification_repository() -> None:
-    uid = uuid.uuid4()
+    """Notifications page by cursor and filter by read state; marking read keeps the first time."""
+    user_id = uuid.uuid4()
     row = {
         "id": uuid.uuid4(),
         "org_id": uuid.uuid4(),
@@ -208,13 +226,15 @@ async def test_notification_repository() -> None:
     }
     conn = Conn(Result([row, row]), Result([], rowcount=1), Result([row]), Result([]))
     repo = NotificationRepository(conn)  # type: ignore[arg-type]
-    items, nxt = await repo.list_page(uid, unread=True, limit=1, cursor=Cursor(NOW, uuid.uuid4()))
+    items, next_cursor = await repo.list_page(
+        user_id, unread=True, limit=1, cursor=Cursor(NOW, uuid.uuid4())
+    )
     assert "read_at IS NULL" in conn.sql[0]
     assert "public.notifications.user_id = " in conn.sql[0]
     assert len(items) == 1
-    assert nxt is not None
-    assert await repo.mark_read(row["id"], uid) is True
+    assert next_cursor is not None
+    assert await repo.mark_read(row["id"], user_id) is True
     assert "read_at=coalesce(public.notifications.read_at, now())" in conn.sql[1]
     assert await repo.get(row["id"]) is not None
-    _, _ = await repo.list_page(uid, unread=False, limit=10, cursor=None)
+    _, _ = await repo.list_page(user_id, unread=False, limit=10, cursor=None)
     assert "read_at IS NOT NULL" in conn.sql[3]

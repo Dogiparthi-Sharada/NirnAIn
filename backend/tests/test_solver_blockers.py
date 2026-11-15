@@ -1,10 +1,12 @@
-"""Every blocker of an infeasible run, and the combined way out (round 3, R6).
+"""Tests that an infeasible run names every blocker and offers the combined way out (round 3, R6).
 
-The pack's M03 meeting: the board makes April 30 a hard go-live, James's
-SOC2 Controls qualification is withdrawn, nobody on the team has SAP
-Integration and outside specialists are prohibited. Each of these blocks
-the plan on its own, so one run must name all three, and since no single
-option fixes them all, offer to change them together.
+Purpose: In the pack's M03 meeting the board makes April 30 a hard go-live, James's SOC2 Controls
+qualification is withdrawn, nobody has SAP Integration and specialists are prohibited. Each blocks
+the plan on its own, so one run must name all three and, since no single option fixes them all,
+offer to change them together.
+How it fits: Pure tests of app/optimization/solver.py and remedies.py on the M03 input;
+layer: tests.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -28,16 +30,19 @@ QUICK = SolveOptions(time_limit_s=10, workers=1)
 
 
 def _skill(name: str) -> SkillRequirement:
+    """Return a level-3 requirement of the named skill."""
     return SkillRequirement(name.lower().replace(" ", "-"), name, 3)
 
 
 def _package(task_id: str, code: str, name: str, hours: int, skill: str, owner: str | None) -> Task:
+    """Return a work package of `hours` (8 a day) needing `skill`, owned by `owner`."""
     return Task(
         task_id, code, name, hours // 8, effort_hours=hours, owner_id=owner, skills=(_skill(skill),)
     )
 
 
 def _person(person_id: str, name: str, hours: float, rate: int, skills: list[str]) -> Employee:
+    """Return a person with the given weekly hours, rate and level-3 skills."""
     return Employee(
         person_id, name, hours, rate, skills={_skill(skill).skill_id: 3 for skill in skills}
     )
@@ -97,6 +102,7 @@ def m03_input() -> PlanningInput:
 
 
 def test_one_run_names_the_deadline_and_both_missing_skills() -> None:
+    """One run names the deadline, both missing skills and the dependencies behind the date."""
     outcome = solve(m03_input(), QUICK)
 
     assert outcome.status == "infeasible"
@@ -117,8 +123,9 @@ def test_one_run_names_the_deadline_and_both_missing_skills() -> None:
 
 
 def test_blockers_are_named_up_to_the_limit() -> None:
+    """At most MAX_BLOCKERS blockers are named."""
     gaps = [f"Skill {number}" for number in range(MAX_BLOCKERS + 1)]
-    inp = make_input(
+    planning_input = make_input(
         tasks=tuple(
             _package(f"t{number}", f"1.{number}", f"Package {number}", 8, gap, None)
             for number, gap in enumerate(gaps)
@@ -126,15 +133,16 @@ def test_blockers_are_named_up_to_the_limit() -> None:
         dependencies=(),
         constraints=Constraints(allow_contractors=False),
     )
-    conflicts = solve(inp, QUICK).conflicts
+    conflicts = solve(planning_input, QUICK).conflicts
     assert len(conflicts) == MAX_BLOCKERS
     assert all(conflict.name.startswith("Skill: ") for conflict in conflicts)
 
 
 def test_no_single_option_works_so_they_are_combined() -> None:
-    inp = m03_input()
+    """The combined remedy moves go-live and brings in a contractor, and its re-run plans."""
+    planning_input = m03_input()
 
-    (remedy,) = price_remedies(inp, QUICK)
+    (remedy,) = price_remedies(planning_input, QUICK)
 
     assert (remedy.id, remedy.title) == ("combined", "Change these together")
     assert remedy.completion_date is not None
@@ -151,6 +159,6 @@ def test_no_single_option_works_so_they_are_combined() -> None:
     assert remedy.to_json()["changes"][0] == {"kind": "deadline", "label": deadline.label}
 
     # "Use this option" re-runs with all of those changes and gets that plan.
-    rerun = solve(apply_remedy(inp, "combined"), QUICK)
+    rerun = solve(apply_remedy(planning_input, "combined"), QUICK)
     assert rerun.plan is not None
     assert rerun.status == "optimal"
