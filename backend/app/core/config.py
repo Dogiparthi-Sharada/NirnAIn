@@ -72,8 +72,8 @@ class Settings(BaseSettings):
     # Per-request limit for the synchronous assistant call.
     assistant_timeout_s: float = Field(default=60.0, gt=0, le=300)
 
-    # Injected by Railway at build/deploy time.
-    railway_git_commit_sha: str | None = None
+    # Set automatically by Render on every deploy (the deployed commit).
+    render_git_commit: str | None = None
 
     # ------------------------------------------------------------------ validators
     @field_validator("cors_origins", mode="before")
@@ -142,8 +142,8 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ derived
     @property
     def version(self) -> str:
-        """Return the deployed git commit (set by Railway) or `dev` locally."""
-        return self.railway_git_commit_sha or "dev"
+        """Return the deployed git commit (set by Render) or `dev` locally."""
+        return self.render_git_commit or "dev"
 
     @property
     def is_production(self) -> bool:

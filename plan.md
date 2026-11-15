@@ -11,12 +11,12 @@
 | Login | Email + password (verified email, strong password policy), **Google**, **Microsoft (Azure/Entra)** |
 | Authorization | Postgres **RLS** is the source of truth. The backend runs each request as `authenticated` with the user's JWT claims. |
 | Schema ownership | `supabase/migrations/` (database team). The backend has no Alembic. |
-| Hosting | **Railway**: `web` (Caddy serving the Vite build) + `api` (FastAPI), auto-deployed from GitHub `main` |
+| Hosting | **Render**: `nirnain-web` (static site serving the Vite build) + `nirnain-api` (FastAPI web service, Docker), auto-deployed from GitHub `main` |
 | Environments | **Production only.** `main` is protected; PRs + CI are required. |
-| CI/CD | GitHub Actions: web/api/db checks on every PR. On `main`: `supabase db push`, then Railway deploys ("Wait for CI"). |
+| CI/CD | GitHub Actions: web/api/db checks on every PR. On `main`: `supabase db push`, then Render redeploys both services. |
 | Optimizer | **Google OR-Tools (CP-SAT)**. Gurobi is dropped, so §6.2 and §6.6 licensing notes no longer apply. The MILP formulation in §6.1 carries over. |
 | Team split | Frontend (`src/`), Backend (`backend/`), Database (`supabase/`), enforced with CODEOWNERS |
-| Background jobs | Start with in-process FastAPI background tasks + job rows in Postgres. Add Redis + arq on Railway when the AI/optimizer load needs it. |
+| Background jobs | Start with in-process FastAPI background tasks + job rows in Postgres. Add Redis + arq on the hosting platform when the AI/optimizer load needs it. |
 
 ---
 
@@ -568,10 +568,10 @@ Audio STT intake · OCR for scanned PDFs · real-time collaboration on the WBS �
 | # | Task | Status |
 |---|------|--------|
 | 1 | Foundation: DB schema + RLS, FastAPI, Supabase Auth UI, CI/CD | ✅ Done (branch `feat/foundation`) |
-| 2 | Railway project `projectai`: services `web` + `api`, domains, base variables | ✅ Done |
-| 3 | Supabase production project `projectai-prod` (us-east-1), 5 migrations live, keys wired into Railway + GitHub | ✅ Done |
+| 2 | Render services `nirnain-web` (static site) + `nirnain-api` (web service), base variables | ✅ Done |
+| 3 | Supabase production project (us-east-1), 17 migrations live, keys wired into Render | ✅ Done |
 | 4 | PRs #1–#3 merged; CI green; migrations auto-pushed on `main`; web + api live; `main` protected (PR + 4 checks, squash-only) | ✅ Done |
-| 4a | Railway GitHub App installed; both services auto-deploy from `main` with "Wait for CI" | ✅ Done |
+| 4a | Render connected to GitHub; both services auto-deploy from `main` | ✅ Done |
 | 4b | NirnAIn redesign from Figma Make (PR #5), landing page at `/` + dashboard at `/dashboard` (PR #7) | ✅ Done |
 | 4c | Cross-device email links: "email confirmed" screen (PR #6); `/auth/confirm` + branded templates ready, activate with custom SMTP | ✅ Partly (needs #6) |
 | 4d | Daily production health + keep-alive (Supabase free tier pauses after ~7 days idle; it paused on 2026-10-12) | ✅ Done |
@@ -583,9 +583,9 @@ Audio STT intake · OCR for scanned PDFs · real-time collaboration on the WBS �
 | 6e | Register "Organization" field (DB trigger change) · Terms/Privacy pages + checkbox · landing-page feature claims vs built features | Planned |
 | 7 | AI intake, WBS, OR-Tools optimizer (Phases 2–5 of §11) | Planned |
 
-### Current Railway resources
-- Project: `projectai` (id `cef0a0bb-18d6-4638-a6c8-56e9d62c4d52`), environment `production`
-- `web` → https://web-production-e916f.up.railway.app
-- `api` → https://api-production-c6141.up.railway.app
-- Both services in `us-east4-eqdc4a` (Virginia), same region as Supabase
-- Supabase: org `ProjectAI`, project ref `owiefydmdbzwrhltjfqg`; DB password in git-ignored `supabase/.env` + GitHub secret
+### Current hosting resources
+- Render (free plan, Virginia, same region as Supabase):
+  - `nirnain-web` (static site) → https://nirnain-web.onrender.com
+  - `nirnain-api` (web service, Docker) → https://nirnain-api.onrender.com
+- Supabase: project ref `finsijpbqjfqazwrmecy` (us-east-1); the DB password lives only in Render's environment
+- Daily keep-alive: `.github/workflows/keepalive.yml`

@@ -15,4 +15,3 @@ supabase
 plan.md
 Dockerfile*
 !Dockerfile.web
-railway*.json

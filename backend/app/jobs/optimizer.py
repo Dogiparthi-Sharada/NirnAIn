@@ -1,7 +1,7 @@
 """In-process optimization worker (plan.md §0: no Redis yet).
 
 Purpose: Solve a queued run on a worker thread (CP-SAT is CPU-bound) and store its outcome;
-infeasible or late plans also get priced remedies. Railway restarts the process on every deploy, so
+infeasible or late plans also get priced remedies. The host restarts the process on every deploy, so
 runs stuck longer than `OPTIMIZER_STALE_AFTER_S` are failed on startup and before a 409.
 How it fits: The API (app/api/v1/optimization.py) commits a queued run and calls
 `OptimizationRunner.submit`; writes go through app/repositories/optimization_store.py on a service

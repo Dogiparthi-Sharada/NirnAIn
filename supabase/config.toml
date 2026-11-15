@@ -436,11 +436,11 @@ enabled = true
 # production project). Everything not listed here inherits from above.
 # ---------------------------------------------------------------------
 [remotes.production]
-project_id = "owiefydmdbzwrhltjfqg"
+project_id = "finsijpbqjfqazwrmecy"
 
 [remotes.production.auth]
-site_url = "https://web-production-e916f.up.railway.app"
+site_url = "https://nirnain-web.onrender.com"
 additional_redirect_urls = [
-  "https://web-production-e916f.up.railway.app/**",
+  "https://nirnain-web.onrender.com/**",
   "http://localhost:8443/**",
 ]

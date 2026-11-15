@@ -534,7 +534,7 @@ config.py - Application settings, loaded from environment variables (and `.env` 
       Settings._upper_level() - Normalise the log level name to upper case (`info` -> `INFO`).
       Settings._stale_after_exceeds_solve() - Require the stale-run timeout to exceed twice the solver time limit.
       Settings._require_in_production() - Fail start-up in production when DATABASE_URL or SUPABASE_URL is missing.
-      Settings.version() - Return the deployed git commit (set by Railway) or `dev` locally.
+      Settings.version() - Return the deployed git commit (set by Render) or `dev` locally.
       Settings.is_production() - Tell whether this process runs in the production environment.
       Settings.docs_enabled() - Tell whether Swagger docs are served: the explicit setting, else not in production.
       Settings.jwt_issuer() - Return the issuer Supabase puts in access tokens, or None without a Supabase URL.

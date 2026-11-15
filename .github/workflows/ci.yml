@@ -2,8 +2,8 @@ name: CI / CD
 
 # Every PR and every push to main runs the full check suite.
 # On main, database migrations are pushed to Supabase after all checks pass.
-# Railway watches this repo with "Wait for CI" enabled, so the web and api
-# services redeploy only after this workflow (including the DB push) is green.
+# Render redeploys the website and the API from main on every commit; run
+# these checks before merging.
 
 on:
   pull_request:

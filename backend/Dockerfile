@@ -10,7 +10,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 WORKDIR /app
 
 # Dependencies first so this layer is cached until the lockfile changes.
-# (No BuildKit cache mounts: Railway requires service-specific mount ids.)
+# (No BuildKit cache mounts, so the image builds the same on any builder.)
 COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev --no-install-project
 
@@ -33,5 +33,5 @@ COPY --from=builder --chown=app:app /app /app
 USER app
 EXPOSE 8000
 
-# sh -c so ${PORT} (injected by Railway) is expanded at runtime.
+# sh -c so ${PORT} (injected by the host, e.g. Render) is expanded at runtime.
 CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"]

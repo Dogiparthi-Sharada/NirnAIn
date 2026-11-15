@@ -1,10 +1,11 @@
-# Static SPA server for the ProjectAI web app (Railway).
-# Env: PORT (set by Railway), VITE_SUPABASE_URL and VITE_API_URL (used in the CSP).
+# Static SPA server for the NirnAIn web app (container option; the demo itself
+# is a Render static site). Env: PORT (set by the host), VITE_SUPABASE_URL and
+# VITE_API_URL (used in the CSP).
 {
 	admin off
 	persist_config off
 	servers {
-		# Railway terminates TLS at its edge proxy.
+		# The host terminates TLS at its edge proxy.
 		trusted_proxies static private_ranges
 	}
 }

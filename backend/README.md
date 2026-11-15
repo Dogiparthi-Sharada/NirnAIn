@@ -211,16 +211,17 @@ The worker (`app/jobs/intake.py`) writes results on a service connection:
 null for items added by hand), `evidenceNote`, `suggestedText` (flagged items: the
 version the quote supports) and `sourceDocumentId` (the upload the quote is from).
 
-## Deploy (Railway)
+## Deploy (Render)
 
 The service deploys from `backend/Dockerfile`. It uses a uv builder, then a slim
-runtime image that runs as a non-root user.
+runtime image that runs as a non-root user. The full step-by-step guide is
+`docs/DEPLOY_DEMO.md`.
 
-1. Create a Railway service from this repo. Set **Root Directory** to `/backend`.
-   Set the **config file path** to `/backend/railway.json`, because the config
-   file path doesn't follow the root directory.
+1. Create a Render **Web Service** from this repo: language **Docker**, **Root
+   Directory** `backend`, Dockerfile path `./Dockerfile`.
 2. Set the variables from `.env.example`: `ENVIRONMENT=production`, `DATABASE_URL`
    (Supavisor **session pooler** URL, IPv4), `DATABASE_SSL=require`, `SUPABASE_URL`,
-   `CORS_ORIGINS`, and optionally `SUPABASE_JWT_SECRET` and `LOG_LEVEL`.
-   Railway provides `PORT` and `RAILWAY_GIT_COMMIT_SHA`.
-3. Railway health-checks `/health`. Only changes under `backend/**` trigger a redeploy.
+   `CORS_ORIGINS`, `OPTIMIZER_WORKERS=1`, `DB_POOL_SIZE=3`, `DB_MAX_OVERFLOW=2`, and
+   optionally `ANTHROPIC_API_KEY`, `SUPABASE_JWT_SECRET` and `LOG_LEVEL`.
+   Render provides `PORT` and `RENDER_GIT_COMMIT`.
+3. Set the health check path to `/health`. Render redeploys on every commit to `main`.

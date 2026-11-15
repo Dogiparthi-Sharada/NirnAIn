@@ -71,7 +71,7 @@ def test_database_url_normalised_for_asyncpg() -> None:
 
 def test_derived_urls_and_version(monkeypatch: pytest.MonkeyPatch) -> None:
     """The JWT issuer, JWKS URL and version are derived from the environment."""
-    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "abc123")
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "abc123")
     configured = make_settings(supabase_url="https://x.supabase.co/")
     assert configured.jwt_issuer == "https://x.supabase.co/auth/v1"
     assert configured.jwks_url == "https://x.supabase.co/auth/v1/.well-known/jwks.json"

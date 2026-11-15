@@ -28,7 +28,7 @@ def test_health_without_db(client: TestClient) -> None:
 
 def test_health_reports_git_sha(settings: Settings) -> None:
     """Health reports the deployed git commit as the version."""
-    app = create_app(settings.model_copy(update={"railway_git_commit_sha": "deadbeef"}))
+    app = create_app(settings.model_copy(update={"render_git_commit": "deadbeef"}))
     with TestClient(app) as test_client:
         assert test_client.get("/health").json()["version"] == "deadbeef"
 

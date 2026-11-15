@@ -1,6 +1,6 @@
 """Liveness and readiness endpoints for the hosting platform.
 
-Purpose: Let Railway tell a running process (`/health`) from one that can serve requests
+Purpose: Let Render tell a running process (`/health`) from one that can serve requests
 (`/health/ready` checks the database) without touching user data.
 How it fits: Mounted directly by app/main.py (outside `/api/v1`); layer: api.
 Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
