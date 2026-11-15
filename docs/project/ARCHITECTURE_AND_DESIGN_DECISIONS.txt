@@ -1,18 +1,18 @@
 NirnAIn – AI-Assisted Project Planning Platform
 NirnAIn: architecture and design decisions
 
-Date: November 14, 2026. Author: Sharada Dogiparthi (product owner). Prepared with the NirnAIn build team.
+Authors: Sharada Dogiparthi (Team Lead), Srilekha Budithi, Rakshitha Venigella. BAN 693 Capstone Project, California State University, East Bay. Date: November 14, 2026.
 
-How the NirnAIn demo is built, and why. This covers the state of the integration branch demo/mockup on November 14, 2026. The original backend plan is in plan.md and the team rules are in AGENTS.md, both at the root of the repository. The API and database guides are backend/README.md and supabase/README.md.
+How the NirnAIn demo is built, and why. This covers the code on GitHub (https://github.com/Dogiparthi-Sharada/NirnAIn, branch main) on November 14, 2026. The original backend plan is in plan.md and the team engineering guidelines in CONTRIBUTING.md, both at the root of the repository; INDEX.txt maps every feature to its code. The API and database guides are backend/README.md and supabase/README.md.
 
 1. System overview
 
-NirnAIn has three parts: a single-page web app, an API, and Supabase (database and sign-in). Claude is optional. Every AI feature has a rule-based fallback, so the demo runs without an AI key.
+NirnAIn has three parts: a single-page web app, an API, and Supabase (database and sign-in). Claude powers the AI features when the API has an ANTHROPIC_API_KEY (the hosted demo has one). Every AI feature has a rule-based fallback, so the demo also runs without an AI key.
 
                                     sign in, refresh (publishable key)
        .--------------------------------------------------------------------------------------------.
        |                                                                                            |
-       |                 RENDER (free tiers)                            SUPABASE (new free project) |
+       |                 RENDER (free tiers)                            SUPABASE (free project)     |
        |                                                                                            |
 +------+------+          +------------------------------+                                           |
 | Browser     | loads    | Static site                  |               +---------------------------v----+
@@ -52,11 +52,11 @@ The planning flow has seven steps, plus a dashboard:
 
 The parts and where they run:
 
-• Website – Technology: React 19, Vite, Tailwind v4, TypeScript, React Router 7, TanStack Query, supabase-js (sign-in only). Folder: src/. Hosted on (demo): Render static site.
-• API – Technology: Python 3.12, FastAPI, SQLAlchemy 2 Core (async, asyncpg), OR-Tools CP-SAT, pydantic v2. Folder: backend/. Hosted on (demo): Render web service (Docker, backend/Dockerfile).
-• Database and sign-in – Technology: Supabase: Postgres 17, Auth, Row Level Security. Folder: supabase/ (17 migrations, pgTAP tests 001–014). Hosted on (demo): New Supabase free project.
-• AI – Technology: Anthropic Claude through backend/app/ai/llm.py only. Folder: backend/app/ai/, drafts/, changes/. Hosted on (demo): Anthropic API (optional).
-• CI – Technology: GitHub Actions: web, api and db checks on every pull request. Folder: .github/workflows/ci.yml. Hosted on (demo): GitHub.
+• Website – Technology: React 19, Vite, Tailwind v4, TypeScript, React Router 7, TanStack Query, supabase-js (sign-in only). Folder: src/. Hosted on (demo): Render static site (https://nirnain-web.onrender.com).
+• API – Technology: Python 3.12, FastAPI, SQLAlchemy 2 Core (async, asyncpg), OR-Tools CP-SAT, pydantic v2. Folder: backend/. Hosted on (demo): Render web service (Docker, backend/Dockerfile, Virginia; https://nirnain-api.onrender.com).
+• Database and sign-in – Technology: Supabase: Postgres 17, Auth, Row Level Security. Folder: supabase/ (17 migrations, pgTAP tests 001–014). Hosted on (demo): Supabase free project (us-east-1).
+• AI – Technology: Anthropic Claude through backend/app/ai/llm.py only. Folder: backend/app/ai/, drafts/, changes/. Hosted on (demo): Anthropic API (key set on the hosted API only).
+• Automation – Technology: GitHub Actions: web, api and db checks (currently disabled; run them locally) and a daily keep-alive. Folder: .github/workflows/ci.yml, .github/workflows/keepalive.yml. Hosted on (demo): GitHub.
 
 Shape of the API: a modular monolith (plan.md §2.2) without Redis. Long work (optimization, intake, WBS AI jobs) runs in the API process as background tasks with a job row in Postgres. Runs left in queued/running by a restart are marked failed on start-up (OPTIMIZER_STALE_AFTER_S, default 180 s).
 
@@ -89,7 +89,7 @@ The tables by area:
 • Optimization – Tables: optimization_runs, planned_assignments, recommendations. Notes: A run stores its frozen input_snapshot, its options (overrides, remedy, inputsHash, solverSettings), its result (summary, remedies), iis when infeasible, and version once applied.
 • Changes – Tables: change_requests. Notes: Step 7: source (notes, edits, progress), status, impact, answers, base and proposed runs.
 
-Conventions (AGENTS.md): money is bigint cents, durations are integer working days (1 week = 5 days), timestamps are timestamptz, JSON is camelCase on the wire, errors are RFC 7807 problem+json.
+Conventions (CONTRIBUTING.md): money is bigint cents, durations are integer working days (1 week = 5 days), timestamps are timestamptz, JSON is camelCase on the wire, errors are RFC 7807 problem+json.
 
 3. Request and sign-in flow
 
@@ -226,15 +226,15 @@ Safety rules for AI:
 
 7. Decision log
 
-Dates are in 2026 (PST). "PO" is the product owner, Sharada Dogiparthi. The round contracts referred to here (round 1, 2 and 3) were the lead's working specs.
+Dates are in 2026 (PST). "PO" is the product owner, Sharada Dogiparthi (Team Lead). Rounds 1–4 are the team's iterations; each one started from a written specification (API shapes, schema changes, owners).
 
 The decisions, in order:
 
-• Decision 1: Where the demo's design comes from. Options considered: Restyle the existing screens; copy the mockup app over src/; port the approved mockup into the real React components. Choice: Port the mockup 1:1 (same markup, class names, copy and CSS), with live data, Supabase sign-in and React Router; build labels and mockup-only notes off. Why: The PO asked for the UI to look exactly like the approved mockup "and logic accordingly". AGENTS.md: the repo stays the source of truth for the running app. Missing data shows "Needs you" or empty states, never invented numbers. Date: Nov 13.
-• Decision 2: How to build in about a day. Options considered: One agent working through it in order; several agents in one checkout; one git worktree and branch per helper. Choice: A lead plus ~23 parallel helpers over the project, one worktree and branch each (nirnain/*), a shared API/schema contract per round, merged into demo/mockup by the lead. Why: Parallel speed without agents overwriting each other. Clear ownership per slice. A monitor flagged edits outside a helper's area, missing file headers and single-letter names. Date: Nov 13.
-• Decision 3: Merge gates. Options considered: Merge on review only; merge only with every check green. Choice: ruff, ruff format, mypy (strict), pytest, pgTAP inside rolled-back transactions, tsc, vite build. Why: Production rules (AGENTS.md); several helpers merging into one branch. Date: Nov 13.
+• Decision 1: Where the demo's design comes from. Options considered: Restyle the existing screens; copy the mockup app over src/; port the approved mockup into the real React components. Choice: Port the mockup 1:1 (same markup, class names, copy and CSS), with live data, Supabase sign-in and React Router; build labels and mockup-only notes off. Why: The PO asked for the UI to look exactly like the approved mockup "and logic accordingly". The team engineering guidelines (CONTRIBUTING.md): the repo stays the source of truth for the running app. Missing data shows "Needs you" or empty states, never invented numbers. Date: Nov 13.
+• Decision 2: How to build in about a day. Options considered: Work through it in order on one branch; everyone in one checkout; one feature branch per slice, merged into an integration branch. Choice: One feature branch per slice (a screen ported from the mockup, a backend slice, a fix round), a written specification per round (API shapes, schema, owners), merged into the integration branch only when every check passes. Why: Parallel work without overwriting each other's changes. Clear ownership per slice. Code-standards checks (file headers, docstrings, descriptive names, files of at most 500 lines) before each merge, and two code-standards sweeps on Nov 14. Date: Nov 13.
+• Decision 3: Merge gates. Options considered: Merge on review only; merge only with every check green. Choice: ruff, ruff format, mypy (strict), pytest, pgTAP inside rolled-back transactions, tsc, vite build. Why: The team engineering guidelines (CONTRIBUTING.md); several feature branches merging into one integration branch. Date: Nov 13.
 • Decision 4: Local environment. Options considered: Docker supabase start; a hosted Supabase project; a Docker-free stand-in. Choice: Postgres 17 + GoTrue + a Caddy gateway on :54321, on the shared box. Why: No Docker or sudo on the 1-CPU, ~2 GB machine; the old Supabase project no longer existed; test locally, never against production data. Date: Nov 13.
-• Decision 5: Optimizer engine. Options considered: Gurobi (the fork's draft PR, student licence); OR-Tools CP-SAT. Choice: CP-SAT; Gurobi not built (PO list). Why: Already the locked decision in plan.md §0; free, runs in CI and on free hosting; no licence. Date: plan.md §0 (Sep 24); confirmed Nov 13.
+• Decision 5: Optimizer engine. Options considered: Gurobi (an earlier planning draft, student licence); OR-Tools CP-SAT. Choice: CP-SAT; Gurobi not built (PO list). Why: Already the locked decision in plan.md §0; free, runs in CI and on free hosting; no licence. Date: plan.md §0 (Sep 24); confirmed Nov 13.
 • Decision 6: Uploads. Options considered: Store files in object storage; accept video and audio; keep only the text. Choice: PDF, Word, transcripts (.vtt/.srt/.txt) up to 100 MB; MP4/video refused with a note; audio "coming soon". Why: PO decision. No transcription service in the demo; the transcript carries the content. Date: Nov 13.
 • Decision 7: Token discipline. Options considered: Run QA through Claude; QA on a no-key copy of the API. Choice: No-key QA API that counts Claude calls as a guard; AI-only QA cases skipped (PO decision); the demo seed runs with --ai-calls rules or skip. Why: The token budget. Rules make tests repeatable. QA used 0 Claude tokens. Date: Nov 13.
 • Decision 8: D1 worker type. Options considered: A rate field for everyone; Employee vs Contractor. Choice: Employee: no rate typed, cost from the company record, else a standard $85/h shown as an assumption. Contractor: an hourly rate is required. Both count toward the budget. Why: QA found every plan cost $0 (people added in the app had no rate). Date: Nov 13 evening.
@@ -251,5 +251,7 @@ The decisions, in order:
 • Decision 19: Infeasible runs (R6). Options considered: Name one blocker; name every blocker and offer a combined fix. Choice: Up to 5 blockers per run, plus "Change these together" when no single option works. Why: QA pack M03 expects the deadline, SAP and SOC 2 together (QA B18). Date: Nov 13–14.
 • Decision 20: Change detection without AI (R8). Options considered: Generous keyword matching; strict rules: only what a sentence states. Choice: No values from rejected proposals or after "instead of"; hours only from "<Name> … N hours a week"; "must hold" next to a date = hard. Why: The rules detector invented values (Lisa 20 → 80 h, a rejected $400k as the budget). Date: Nov 13–14.
 • Decision 21: Cross-project links (round 4, P0). Options considered: API check only; API check + database rule. Choice: SECURITY DEFINER triggers for every link; the same error for unknown and foreign ids. Why: QA pack SEC-001: another workspace could link your work packages. Date: Nov 14.
-• Decision 22: Hosting. Options considered: Railway (old setup: 404, its Supabase project gone); Hugging Face static Space; Render static site + Render web service + a new Supabase project. Choice: Website and API on Render free tiers, database and sign-in on a new Supabase free project. Why: Free, no code changes. Hugging Face static Spaces can't serve deep links (/dashboard answers "Entry not found") without a hash-router code change. Date: Nov 13 evening (decision); guide Nov 14.
+• Decision 22: Hosting. Options considered: Hugging Face static Space; Render static site + Render web service + a Supabase project. Choice: Website and API on Render's free plan (Virginia region), database and sign-in on a Supabase free project (us-east-1, close to the API). Why: Free, no credit card, no code changes. Hugging Face static Spaces can't serve deep links (/dashboard answers "Entry not found") without a hash-router code change. Date: Nov 13 evening (decision); guide and live demo Nov 14.
 • Decision 23: Not built for the demo. Choice: Effective-dated availability, leave, holidays, actual hours / EAC, fixed costs, Gurobi, an as-of clock, sub-day scheduling, audio transcription. Why: PO decision, to keep the demo to about a day. Date: Nov 13 evening.
+• Decision 24: Keeping the free demo awake. Options considered: Accept the pauses; a paid plan; a scheduled health check. Choice: A daily GitHub Actions workflow (keepalive.yml, 13:17 UTC) wakes the API, checks /health/ready (the database) and Supabase Auth health, and loads the website. It reads the repository variables SUPABASE_PROJECT_REF and SUPABASE_PUBLISHABLE_KEY. Why: A free Supabase project pauses after a week without activity. The workflow calls health endpoints only, so it spends no Claude tokens. Date: Nov 14.
+• Decision 25: Claude on the hosted demo. Options considered: Rules only; a key on the API service only. Choice: ANTHROPIC_API_KEY set on the Render API service, never on the static site; a monthly spend limit in the Anthropic Console (Settings → Limits). Why: The live demo shows the real AI features; without a key every feature falls back to the rules. Date: Nov 14.

@@ -1,15 +1,15 @@
 NirnAIn – AI-Assisted Project Planning Platform
 NirnAIn demo: final project report
 
-Date: November 14, 2026. Author: Sharada Dogiparthi (product owner). Prepared with the NirnAIn build team.
+Authors: Sharada Dogiparthi (Team Lead), Srilekha Budithi, Rakshitha Venigella. BAN 693 Capstone Project, California State University, East Bay. Date: November 14, 2026.
 
-Product owner: Sharada Dogiparthi · Period: November 13–14, 2026 (PST) · Build: integration branch demo/mockup, commit be8a334 (Nov 14, 12:39)
+Period: November 13–14, 2026 (PST) · Code: https://github.com/Dogiparthi-Sharada/NirnAIn, branch main · Live demo: https://nirnain-web.onrender.com (demo login in section 1).
 
-Related documents in this package: ARCHITECTURE_AND_DESIGN_DECISIONS.txt, LESSONS_LEARNED.txt, HOSTING_QUICKSTART.txt, GITHUB_UPLOAD_STEPS.txt, DEPLOY_DEMO.txt (the full hosting guide) and the presentation NirnAIn_Project_Overview.pptx.
+Related documents in this package: ARCHITECTURE_AND_DESIGN_DECISIONS.txt, LESSONS_LEARNED.txt, HOSTING_QUICKSTART.txt, GITHUB_UPLOAD_STEPS.txt (how the code is kept on GitHub), DEPLOY_DEMO.txt (the full hosting guide), the applied research report FINAL_PROJECT_REPORT_v2 (.docx, .pdf, .txt) and the presentation NirnAIn_Project_Overview.pptx.
 
 1. Executive summary
 
-On the morning of November 13 the project was stalled. Production was down (Railway answered 404, a keep-alive job had failed since October 26, and the Supabase project no longer existed). Two pull requests were open: AI intake with Claude (upstream PR #18, CI green) and a Gurobi planning draft on the product owner's fork (failing checks).
+On the morning of November 13 the project was stalled. Nothing was running publicly, the earlier database project no longer existed, and two pieces of work were left open: AI intake with Claude (checks green) and a Gurobi planning draft (failing checks).
 
 The goal was a working demo within about a day, hosted for free, that looks exactly like the approved clickable mockup "and logic accordingly".
 
@@ -21,49 +21,50 @@ Result. All seven planning steps, the dashboard, the landing page and sign-in wo
 • An OR-Tools CP-SAT optimizer that names every blocker and offers priced ways to keep a date.
 • Plan versions (v1 → v2 …) with step-7 change handling.
 
-The product owner's QA pack and the lead's test suites found four P0 defects; all four are fixed. The API scenario suite went from 194 PASS / 13 FAIL to 236 PASS / 1 FAIL, and the backend's automated tests grew from 358 to 511. QA used 0 Claude tokens. A step-by-step guide hosts the demo for free on Render and a new Supabase project.
+The product owner's QA pack and the team's own test suites found four P0 defects; all four are fixed. The API scenario suite went from 194 PASS / 13 FAIL to 236 PASS / 1 FAIL, and the backend's automated tests grew from 358 to 521. QA used 0 Claude tokens.
 
-Still to do:
+The demo is live on free plans: the website at https://nirnain-web.onrender.com (a Render static site), the API at https://nirnain-api.onrender.com (a Render web service, Docker, Virginia region), and the database and sign-in on a Supabase free project in us-east-1. Claude powers the AI features on the hosted API. A daily keep-alive workflow stops the free Supabase project from pausing. Demo login: jane.doe@nirnain.demo / JaneDemo2026! (five seeded projects; Enterprise Data Platform is at Plan v2).
 
-• Host the demo (about an hour, HOSTING_QUICKSTART.txt).
-• Open the pull request into main (GITHUB_UPLOAD_STEPS.txt), after the CI deploy step is updated (section 7).
-• Merge the in-progress WBS live-checks branch.
+Still to do (section 7): set a monthly spend limit for the Claude key, turn the CI workflow back on once its database deploy step is updated, and close the low-priority open items.
 
 The work took about a day and a half, not one day, because four QA-driven fix rounds were added.
 
 2. Objectives vs delivered
 
-• A working demo within about a day – Delivered: Working on demo/mockup and served locally from preview/live; 155 commits ahead of main (287 files, +44,894 / −5,148 lines). Status: ✅ Done (about 1.5 days including four fix rounds).
-• Hosted for free – Delivered: The hosting guide (DEPLOY_DEMO.txt; docs/DEPLOY_DEMO.md in the repository): Render static site + Render web service + a new Supabase project, no code changes. Status: 🟡 Guide ready; deployment is the next step.
+• A working demo within about a day – Delivered: Working on the integration branch, now main on GitHub: 208 commits on November 13–14, 24 of them merges of feature branches; about 490 files changed since the October baseline (about +66,000 / −4,000 lines). Status: ✅ Done (about 1.5 days including four fix rounds).
+• Hosted for free – Delivered: Live at https://nirnain-web.onrender.com: Render static site + Render web service (Docker) + a Supabase free project, no credit card, no code changes. The hosting guide (DEPLOY_DEMO.txt; docs/DEPLOY_DEMO.md in the repository) rebuilds it step by step, and a daily keep-alive keeps it awake. Status: ✅ Done.
 • UI "exactly like the approved mockup, and logic accordingly" – Delivered: Every mockup screen ported with the same markup, class names, copy and CSS, on live data. The few things the app can't show are listed (section 6). Status: ✅ Done.
-• Keep the AI intake work (PR #18) – Delivered: Included (first commit on the branch), plus uploads, quotes and evidence, and a rule-based fallback. Status: ✅ Done.
-• Planning with an optimizer (the fork's Gurobi draft) – Delivered: OR-Tools CP-SAT (plan.md's locked decision); Gurobi not built (PO decision). Status: ✅ Done, with CP-SAT.
+• Keep the AI intake work – Delivered: Included (the first commit on the integration branch), plus uploads, quotes and evidence, and a rule-based fallback. Status: ✅ Done.
+• Planning with an optimizer (the Gurobi draft) – Delivered: OR-Tools CP-SAT (plan.md's locked decision); Gurobi not built (PO decision). Status: ✅ Done, with CP-SAT.
 • Mid-project changes (the PO's priority scenarios) – Delivered: Edit requirements, bring in a specialist, remove a person, change hours, move the deadline, change the budget, record progress, approve / reject / compare / versions: all work. Status: ✅ Done.
 • Pass the PO's QA pack – Delivered: Both parts run; every P0 fixed; BLOCKED results explained (section 5). Status: ✅ Done.
 • Stay within the token budget – Delivered: QA and seeding used 0 Claude tokens; AI-only checks skipped by PO decision. Status: ✅ Done.
-• Follow the production rules (AGENTS.md) – Delivered: Every merge passed ruff, mypy, pytest, pgTAP, tsc and the build; RLS on all 25 tables. Status: ✅ Done locally; 🟡 not yet through GitHub CI on a pull request.
+• Follow the team engineering guidelines (CONTRIBUTING.md) – Delivered: Every merge passed ruff, mypy, pytest, pgTAP, tsc and the build; RLS on all 25 tables; two code-standards sweeps. Status: ✅ Done locally; 🟡 the CI workflow is currently disabled, so the checks run locally before each push.
 
 3. Timeline (PST)
 
-• Nov 13, morning: Starting point assessed: production down, PR #18 and the fork's draft open. Goal set: a free, hosted demo within about a day.
-• Nov 13, early afternoon: A Docker-free local stand-in for Supabase (Postgres 17, GoTrue, a Caddy gateway on :54321) on the shared 1-CPU box. First backend and database commits (WBS endpoints, AI plumbing, applying a run, uploads).
-• Nov 13, 15:18: Backend work merged into the new integration branch demo/mockup.
-• Nov 13, ~15:10: The PO's approved mockup (NirnAIn_demo_handoff_2026-11-13.zip) unpacked. The first shared contract was written, and parallel helpers started porting screens and building backend slices.
-• Nov 13, 17:04–18:39: Ten merges into demo/mockup: app frame, sign-in and create project with intake, scope / WBS / constraints, the Constraints screen on live data, optimization results, changes and versions, plan versions and exports, optimizer inputs and remedies, uploads and evidence, 100 MB transcripts. A chat-session restart at 17:55 cancelled one helper; it was replaced.
+• Nov 13, morning: Starting point assessed: nothing running publicly, the AI-intake work and the Gurobi draft left open. Goal set: a free, hosted demo within about a day.
+• Nov 13, early afternoon: A Docker-free local stand-in for Supabase (Postgres 17, GoTrue, a Caddy gateway on :54321) on the team's shared 1-CPU build machine. First backend and database commits (WBS endpoints, AI plumbing, applying a run, uploads).
+• Nov 13, ~15:10: The PO's approved mockup (NirnAIn_demo_handoff_2026-11-13.zip) unpacked. The round-1 specification written (API shapes, schema, owners), and one feature branch started per screen and backend slice.
+• Nov 13, 15:18: The first backend branches merged into the new integration branch.
+• Nov 13, 17:04–18:39: Ten merges into the integration branch: app frame, sign-in and create project with intake, scope / WBS / constraints, the Constraints screen on live data, optimization results, changes and versions, plan versions and exports, optimizer inputs and remedies, uploads and evidence, 100 MB transcripts.
 • Nov 13, 18:55–19:35: QA round 1. API suite (18:55): 194 PASS / 13 FAIL. Browser click-through: 144 PASS / 31 FAIL of 179 checks.
 • Nov 13, 20:05: Round-1 fixes merged (assignment-dependent durations, $85/h default rate, adding and removing people on step 7).
-• Nov 13, evening: PO decisions D1–D8 (D8 "remove skills" reversed at 20:39). The PO added a Claude key (kept in a private env file).
+• Nov 13, evening: PO decisions D1–D8 (D8 "remove skills" reversed at 20:39). A Claude key added to the live preview for the AI features (kept in a private environment file).
 • Nov 13, 20:56–21:09: Round 2 (D1–D6, UI fixes) merged. API suite 233 PASS / 3 FAIL at 21:13. The browser re-test fixed 25 of 33.
-• Nov 13, 21:45: Round-3 contract written from the QA pack's first part (journey and solver).
-• Overnight: Pause until 10:22 on Nov 14.
-• Nov 14, 10:31–11:18: Round 3 merged and live: the P0 stale apply, the reserve, every blocker named, done work, booked hours, export hours, notes detection, seven UI issues.
-• Nov 14, 11:22: The lead fixed the apply fingerprint bug found while merging.
+• Nov 13, 21:45: Round-3 specification written from the QA pack's first part (journey and solver).
+• Nov 14, 10:31–11:18: Round 3 merged and live on the preview: the P0 stale apply, the reserve, every blocker named, done work, booked hours, export hours, notes detection, seven UI issues.
+• Nov 14, 11:22: The inputs-hash bug on apply, found while merging, fixed.
 • Nov 14, 11:47–12:06: Hosting guide written and merged (Render + Supabase).
 • Nov 14, 11:57: Demo seed: Jane Doe's workspace with five projects; Enterprise Data Platform Plan v1 → v2.
 • Nov 14, ~12:00: QA pack part 2 (screens, intake, security, NFR) finished: two more P0s.
-• Nov 14, 12:03–12:39: Round 4 merged: the two P0s, logging hygiene, run races and solver polish, plus the approve-fingerprint fix. Last integration commit be8a334.
+• Nov 14, 12:03–12:39: Round 4 merged: the two P0s, logging hygiene, run races and solver polish, plus the inputs-hash fix on approval.
 • Nov 14, ~12:45–12:50: Final walkthrough as Jane Doe: no crashes, no console errors, no failed calls. Final API suite 236 PASS / 1 FAIL; 511 backend tests passing.
-• Nov 14, afternoon: In progress: WBS live checks (helper 23, branch nirnain/wbs-live-checks, not merged yet). This documentation package.
+• Nov 14, 13:29–13:59: WBS live checks: the built-in checks rerun after every edit (521 backend tests).
+• Nov 14, 13:46–14:48: This documentation package, the API scenario suite (tests/e2e/api/) and the demo seed (scripts/seed_demo/) added to the repository.
+• Nov 14, 14:28–16:29: Code-standards sweeps: frontend (merged 15:15) and backend (merged 16:21 and 16:29): file headers, docstrings, descriptive names, long test modules split by concern. The code published to GitHub (Dogiparthi-Sharada/NirnAIn, branch main).
+• Nov 14, 17:45–18:07: INDEX.txt (the feature-to-code map), the daily keep-alive pointed at the live demo, the API's /health version taken from the deployed commit, and the team engineering guidelines in CONTRIBUTING.md.
+• Nov 14, evening: The demo live on Render and Supabase, seeded with Jane Doe's five projects.
 
 4. Scope delivered, by step
 
@@ -86,8 +87,8 @@ Test numbers, before → after
 
 • API scenario suite (~240 checks, fresh workspace, no-key API, counts Claude calls) – Before fixes: 194 PASS / 13 FAIL. Final: 236 PASS / 1 FAIL (B7, low) + 2 informational.
 • Browser click-through (179 checks in the first run) – Before fixes: 144 PASS / 31 FAIL. Final: Round-2 re-test fixed 25 of 33; the remaining screen issues were fixed in round 3; final walkthrough of all 8 screens with no crashes, console errors or failed calls.
-• Backend automated tests (pytest) – Before fixes: 358. Final: 511 passing.
-• Database tests (pgTAP) – Before fixes: 3 test files on main. Final: 12 test files (numbered 001–014), run inside rolled-back transactions.
+• Backend automated tests (pytest) – Before fixes: 358. Final: 521 passing (511 at the end of round 4, 521 with the WBS live checks).
+• Database tests (pgTAP) – Before fixes: 3 test files at the October baseline. Final: 12 test files (numbered 001–014), run inside rolled-back transactions.
 • P0 defects – Before fixes: 4 found. Final: 0 open.
 • Claude tokens used by QA – Final: 0.
 
@@ -107,7 +108,7 @@ Part 1's failures were fixed in round 3, and part 2 confirmed those fixes. Part 
 
 P0 defects found and fixed
 
-Four P0 defects were found in total (QA pack and the lead's tests). All are fixed. The three from the QA pack:
+Four P0 defects were found in total (the QA pack and the team's own test suites). All are fixed. The three from the QA pack:
 
 • A plan solved before an input change could still be applied – Found by: QA pack part 1. Fix: Apply (and step-7 approve) refused with 409 when the inputs fingerprint changed; step 6 disables Apply with the reason and offers "Run again" (round 3).
 • Another workspace could file dependencies on your work packages (SEC-001) – Found by: QA pack part 2. Fix: API check plus database rule: SECURITY DEFINER triggers for every link, the same error for unknown and foreign ids; pgTAP test 014 (round 4).
@@ -128,7 +129,7 @@ Other notable fixes:
 • Double-click protection.
 • Two fingerprint bugs found while merging.
 
-The full list is in the decision log and in the QA test log (appendix).
+The full list is in the decision log (ARCHITECTURE_AND_DESIGN_DECISIONS.txt) and in the team's QA reports.
 
 6. Known limitations and items not supported
 
@@ -141,7 +142,6 @@ Open items (low or medium):
 • B7 (low): Without Claude, "Project: … Sponsor: …" on one line isn't read when creating a project from notes. Claude handles it.
 • B8 (low): Applying an already applied plan answers 422 (approving twice answers 409).
 • Fingerprints after a deploy: A plan saved before a solver-logic change looks "out of date" once after the deploy. Run the optimizer again once.
-• WBS validation card: Can show stale warnings after edits. The fix (live built-in checks after each edit) is on nirnain/wbs-live-checks, not merged yet.
 • Small screens (NFR-003): At 390 px or 200% zoom the sidebar keeps its width and content is cut off.
 • Create form (CREATE-009): A half-filled Create Project form is lost on navigation or refresh.
 • A pending step-7 change (P2): It doesn't stop another run from being applied; approving the stale change afterwards is refused (409), so the review starts again.
@@ -151,47 +151,34 @@ Open items (low or medium):
 • Contractor already on the team: By design, "outside specialist: No" stops new specialists only. Remove a contractor from the team to stop them.
 • Costs: Labor only (people × hours × rate). Infrastructure isn't modelled; "spent to date" isn't tracked; employees without a company rate use the standard $85/h.
 • Version history: Step 7 lists Plan v1 (superseded) and v2 (in force), but not which change created v2, and an approved change isn't listed again after a reload.
-• Claude path: Not covered by QA (by decision). One small hand-run intake with the key was planned "on request" and isn't recorded as done.
-• Free hosting: The Render API sleeps after 15 minutes idle (about a minute to wake). A Supabase free project pauses after a week without activity.
+• Claude path: Not covered by QA (by decision). The hosted API now has a key, so the AI features run on Claude there; a recorded check of one small intake is still to do.
+• Free hosting: The Render API sleeps after 15 minutes idle (about a minute to wake). A Supabase free project pauses after a week without activity; the daily keep-alive prevents that, but GitHub disables the keep-alive after 60 days without commits.
 
 7. Risks and next steps
 
-• Next step 1: Host the demo. Why it matters: Nothing is publicly reachable yet. Owner / how: PO, about 1 hour: HOSTING_QUICKSTART.txt, then DEPLOY_DEMO.txt.
-• Next step 2: Update CI's database deploy before the first merge to main. Why it matters: deploy-db runs supabase db push --password … --include-all with CLI latest. The current CLI pushes to the local database unless --remote is given, and asks for confirmation before changing a hosted database (--yes skips it). The production environment's SUPABASE_ACCESS_TOKEN, SUPABASE_DB_PASSWORD and SUPABASE_PROJECT_REF must point at the new Supabase project. Owner / how: Repository admin: change the step to supabase db push --remote --yes … (or pin a CLI version) and update the secrets.
-• Next step 3: Open the pull request demo/mockup → main. Why it matters: main is protected: CI must pass and the CODEOWNER (@SRILEKHA-BUDITHI) must approve. The pull request is large (155 commits, 287 files), touches every area, and adds 10 migrations. Owner / how: PO: GITHUB_UPLOAD_STEPS.txt. Use the repository's pull request template.
-• Next step 4: Retire Railway in the docs and CI. Why it matters: The README's architecture table, plan.md §0 and the CI comments still describe Railway. Owner / how: A small docs / CI pull request after the main one.
-• Next step 5: Merge nirnain/wbs-live-checks, then re-run the API suite and the walkthrough. Why it matters: The last open product fix. Owner / how: Lead, after its merge gates.
-• Next step 6: Fix B7 (low). Why it matters: Better create-from-notes without Claude. Owner / how: Backend.
-• Next step 7: Smoke-test the Claude path once. Why it matters: The AI path wasn't exercised by QA (0 tokens by design). Owner / how: PO with the key: one small intake (costs a few cents).
-• Next step 8: Roles and invitations. Why it matters: A team can't share a workspace yet. Owner / how: Product + backend + frontend.
-• Next step 9: Holidays and leave, effective-dated availability, actual hours / spend (EAC), fixed costs, audio transcription. Why it matters: The main features ruled out for the demo. Owner / how: Roadmap (plan.md).
-• Next step 10: Small screens, keeping a half-filled form, clearing local storage on sign-out, landing copy. Why it matters: Polish from QA part 2. Owner / how: Frontend.
-• Next step 11: Archive the QA evidence. Why it matters: The QA reports, screenshots and seed script live outside git, in the lead's session folder. Owner / how: Copy them (never the localstack/ folder or any .env file) to a shared drive or a docs pull request.
+• Next step 1: Set a monthly spend limit for the Claude key. Why it matters: The hosted API has ANTHROPIC_API_KEY, so every AI intake, WBS generation or review, step-7 notes reading and assistant answer costs tokens. Owner / how: Team Lead: Anthropic Console → Settings → Limits. Without a key the AI features fall back to the rules (the assistant is then unavailable).
+• Next step 2: Keep the free demo awake. Why it matters: The keep-alive workflow (.github/workflows/keepalive.yml, daily at 13:17 UTC) stops the Supabase project from pausing. GitHub disables scheduled workflows in a public repository after 60 days without commits. Owner / how: Anyone with admin rights: after a quiet spell, Actions → the keep-alive workflow → Enable workflow. Its failures are emailed to the repository owner.
+• Next step 3: Turn the CI workflow back on. Why it matters: ci.yml is disabled, so the checks run only locally before each push. Its database deploy step runs supabase db push with CLI latest, which pushes to the local database unless --remote is given and asks for confirmation before changing a hosted one. Owner / how: Repository admin: change the step to supabase db push --remote --yes … (or pin a CLI version), set the production environment's SUPABASE_ACCESS_TOKEN, SUPABASE_DB_PASSWORD and SUPABASE_PROJECT_REF, then enable the workflow.
+• Next step 4: Fix B7 (low). Why it matters: Better create-from-notes without Claude. Owner / how: Backend.
+• Next step 5: Record one check of the Claude path. Why it matters: The AI path wasn't exercised by QA (0 tokens by design). Owner / how: One small intake on the live demo (costs a few cents); compare it with the rules.
+• Next step 6: Roles and invitations. Why it matters: A team can't share a workspace yet. Owner / how: Product + backend + frontend.
+• Next step 7: Holidays and leave, effective-dated availability, actual hours / spend (EAC), fixed costs, audio transcription. Why it matters: The main features ruled out for the demo. Owner / how: Roadmap (plan.md).
+• Next step 8: Small screens, keeping a half-filled form, clearing local storage on sign-out, landing copy. Why it matters: Polish from QA part 2. Owner / how: Frontend.
+• Next step 9: Keep INDEX.txt current. Why it matters: The feature-to-code map goes stale when code moves. Owner / how: python3.12 scripts/build_code_index.py after a refactor.
 
 Appendix: where everything is
 
-In the repository (branch demo/mockup; this package also on nirnain/project-documentation):
+Everything is in the repository, https://github.com/Dogiparthi-Sharada/NirnAIn, branch main:
 
-• docs/project/: This documentation package, each document as .docx (Word) and .txt (plain text): README, this report, architecture and decisions, lessons learned, hosting quick start, GitHub upload steps and the full hosting guide (DEPLOY_DEMO); plus the presentation NirnAIn_Project_Overview.pptx.
-• docs/DEPLOY_DEMO.md: Full hosting guide (Render + Supabase, free tiers); the same guide as DEPLOY_DEMO.docx and .txt in docs/project/.
-• AGENTS.md, plan.md, README.md: Team rules, original architecture and roadmap, quick start.
-• backend/README.md, backend/app/: API guide; the code (module docstrings explain each part; the optimizer formulation is in app/optimization/solver.py).
+• docs/project/: This documentation package, each document as .docx (Word) and .txt (plain text): README, this report, architecture and decisions, lessons learned, hosting quick start, how the code is kept on GitHub (GITHUB_UPLOAD_STEPS) and the full hosting guide (DEPLOY_DEMO); the applied research report FINAL_PROJECT_REPORT_v2 (.docx, .pdf, .txt); and the presentation NirnAIn_Project_Overview.pptx.
+• docs/DEPLOY_DEMO.md, docs/images/: Full hosting guide (Render + Supabase, free plans); the screenshots used in the README.
+• README.md, CONTRIBUTING.md, plan.md: The GitHub front page (live demo, screenshots, diagrams), the team engineering guidelines, the original architecture and roadmap.
+• INDEX.txt, scripts/build_code_index.py: The feature-to-code map ("where is the code for …?") and its generator.
+• tests/README.md, tests/e2e/api/: Every test suite and its command; the API end-to-end scenario suite (~240 checks, 0 Claude tokens).
+• scripts/seed_demo/: The demo seed (Jane Doe, five projects, Enterprise Data Platform Plan v1 → v2) and its README.
+• backend/README.md, backend/app/, backend/tests/: API guide; the code (module docstrings explain each part; the optimizer formulation is in app/optimization/solver.py); 521 automated tests.
 • supabase/README.md, supabase/migrations/, supabase/tests/database/: Database rules, 17 migrations, pgTAP tests.
 • src/screens/, src/lib/: The screens and their data hooks.
-• .github/workflows/ci.yml, .github/CODEOWNERS, .github/pull_request_template.md: CI, code owners, the pull request template.
+• .github/workflows/ci.yml, .github/workflows/keepalive.yml, .github/CODEOWNERS, .github/pull_request_template.md: The check suite (currently disabled), the daily keep-alive, code owners, the pull request template.
 
-Outside the repository, in the lead's session folder on the build machine ($S = /home/dog107433/.copilot/session-state/1b7b123c-9557-406e-ae5a-a34ef23b5362/files):
-
-• $S/project-history-brief.md: The lead's project history (source for these documents).
-• $S/nirnain-contract.md, $S/round2-contract.md, $S/round3-contract.md: The shared contracts per round.
-• $S/qa/TEST-LOG.md, $S/qa/findings.md: QA summary: final status, decisions, bugs B1–B18.
-• $S/qa/results-api-final.md, $S/qa/results-api-before-fixes.md, $S/qa/results-ui.md: API suite and browser results.
-• $S/qa/qa-pack-results/: The QA pack results (journey and solver; screens and security) and their defect lists.
-• $S/qa/shots/: Screenshots: final-*.png (last walkthrough), seed-*.png (demo seed), h13*, h18* (fix rounds).
-• $S/demo-seed/: Demo seed script and its README (Jane Doe, five projects).
-• $S/handoff/mockup/, $S/mockshots/: The approved mockup and its screenshots.
-• $S/helpers/STATUS.md, $S/helpers/monitor.py: Helper status board and monitor.
-• $S/docs-build/: The scripts that build this package: build_deck.py (presentation), build_docs.py (Word and text files), nirnain_diagrams.py (diagrams), check_deck.py; the document sources are in $S/docs-build/sources/.
-• $S/localstack/: The local Supabase stand-in. Contains secrets: never upload or share it.
-
-Branches: demo/mockup (integration), preview/live (served at http://localhost:54321 on the build machine), nirnain/* (one per helper), nirnain/wbs-live-checks (in progress).
+QA evidence: the QA reports and screenshots are archived by the team.
