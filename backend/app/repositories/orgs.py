@@ -1,3 +1,12 @@
+"""Repository of organizations and their memberships.
+
+Purpose: Tell whether the caller belongs to an organization and list its members and the caller's
+own memberships; RLS hides organizations the caller is not in.
+How it fits: Used by app/api/deps.py (org access checks), app/api/v1/orgs.py and app/api/v1/me.py;
+layer: repositories.
+Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+"""
+
 from __future__ import annotations
 
 import uuid
@@ -14,6 +23,7 @@ class OrgRepository:
     """Organization and membership queries. All run under the caller's RLS context."""
 
     def __init__(self, conn: AsyncConnection) -> None:
+        """Use the caller's RLS-scoped connection."""
         self._conn = conn
 
     async def is_visible(self, org_id: uuid.UUID) -> bool:
@@ -24,6 +34,7 @@ class OrgRepository:
         return (await self._conn.execute(stmt)).first() is not None
 
     async def is_member(self, org_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+        """Tell whether the user is a member of the organization."""
         stmt = sa.select(sa.literal(1)).where(
             organization_members.c.org_id == org_id,
             organization_members.c.user_id == user_id,
@@ -31,31 +42,40 @@ class OrgRepository:
         return (await self._conn.execute(stmt)).first() is not None
 
     async def list_members(self, org_id: uuid.UUID) -> list[OrgMember]:
-        m, p = organization_members, profiles
+        """List the organization's members with their profile details, by name."""
+        members, member_profiles = organization_members, profiles
         stmt = (
             sa.select(
-                m.c.user_id,
-                m.c.role,
-                m.c.created_at.label("joined_at"),
-                p.c.email,
-                p.c.full_name,
-                p.c.avatar_url,
-                p.c.job_title,
+                members.c.user_id,
+                members.c.role,
+                members.c.created_at.label("joined_at"),
+                member_profiles.c.email,
+                member_profiles.c.full_name,
+                member_profiles.c.avatar_url,
+                member_profiles.c.job_title,
             )
-            .select_from(m.outerjoin(p, p.c.id == m.c.user_id))
-            .where(m.c.org_id == org_id)
-            .order_by(sa.func.lower(sa.func.coalesce(p.c.full_name, p.c.email)), m.c.user_id)
+            .select_from(
+                members.outerjoin(member_profiles, member_profiles.c.id == members.c.user_id)
+            )
+            .where(members.c.org_id == org_id)
+            .order_by(
+                sa.func.lower(
+                    sa.func.coalesce(member_profiles.c.full_name, member_profiles.c.email)
+                ),
+                members.c.user_id,
+            )
         )
         rows = (await self._conn.execute(stmt)).all()
-        return [OrgMember.model_validate(dict(r._mapping)) for r in rows]
+        return [OrgMember.model_validate(dict(row._mapping)) for row in rows]
 
     async def memberships_for(self, user_id: uuid.UUID) -> list[OrganizationMembership]:
-        o, m = organizations, organization_members
+        """List the organizations the user belongs to, with their role, by name."""
+        orgs, members = organizations, organization_members
         stmt = (
-            sa.select(o.c.id, o.c.name, o.c.slug, m.c.role)
-            .select_from(o.join(m, m.c.org_id == o.c.id))
-            .where(m.c.user_id == user_id)
-            .order_by(o.c.name, o.c.id)
+            sa.select(orgs.c.id, orgs.c.name, orgs.c.slug, members.c.role)
+            .select_from(orgs.join(members, members.c.org_id == orgs.c.id))
+            .where(members.c.user_id == user_id)
+            .order_by(orgs.c.name, orgs.c.id)
         )
         rows = (await self._conn.execute(stmt)).all()
-        return [OrganizationMembership.model_validate(dict(r._mapping)) for r in rows]
+        return [OrganizationMembership.model_validate(dict(row._mapping)) for row in rows]

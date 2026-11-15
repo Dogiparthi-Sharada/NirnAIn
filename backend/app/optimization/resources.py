@@ -1,35 +1,24 @@
 """Who can do the work: the team as priced resources, plus contractor profiles.
 
-Modelling rules (round-2 decisions D1, D2 and D6):
-
-* Team members are priced at their own rate (an employee's company rate, a
-  contractor's contracted one); a contractor without one at the project's
-  contractor rate; anyone else at the standard rate. Overtime is billed at
-  1.5x an employee's cost and at a contractor's own rate.
-* Skill gaps: with contractors allowed and a contractor rate (the specialist
-  answer Yes plus a confirmed rate), each group of work packages needing
-  skills nobody on the team fully has gets one specialist profile, e.g.
-  "Contractor: Okta SSO specialist", with proficiency 5 in those skills.
-* Late work: the "Bring in a contractor" option
-  (`Constraints.contractor_any_work`) adds one generic contractor who may
-  take any other work package, skill-agnostic.
-* A contractor profile stands for as many people as needed: no capacity
-  limit. Each work package has at most one contractor candidate
-  (`contractor_for`), so the solver never chooses between equal profiles.
+Purpose: Apply round-2 decisions D1, D2 and D6 to the people the solver may assign:
+    * team members are priced at their own rate, a contractor without one at the project's
+      contractor rate, anyone else at the standard rate; overtime at 1.5x an employee's cost;
+    * skill gaps: with contractors allowed and a rate, each group of packages needing skills
+      nobody on the team has gets one specialist profile ("Contractor: Okta SSO specialist");
+    * late work: "Bring in a contractor" adds one generic contractor for any other package;
+    * a contractor profile stands for as many people as needed (no capacity limit), and each
+      package has at most one contractor candidate, so the solver never chooses between equals.
+How it fits: `build_resources` is called by problem.py; costing.py prices their hours;
+layer: optimization.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 
-from app.optimization.model import (
-    DEFAULT_HOURLY_RATE_CENTS,
-    Employee,
-    PlanningInput,
-    Resource,
-    Task,
-    qualified,
-)
+from app.optimization.model import DEFAULT_HOURLY_RATE_CENTS, Employee, PlanningInput, Task
+from app.optimization.outcome import Resource, qualified
 
 EMPLOYEE_OVERTIME_MULTIPLIER = 1.5
 CONTRACTOR_WEEKLY_HOURS = 40.0
@@ -74,10 +63,11 @@ def contractor_for(task: Task, team: Sequence[Resource]) -> str:
     return CONTRACTOR_ID
 
 
-def _team(inp: PlanningInput) -> list[Resource]:
-    rate_default = inp.constraints.contractor_rate_cents
+def _team(planning_input: PlanningInput) -> list[Resource]:
+    """Return the project team as priced employee resources."""
+    rate_default = planning_input.constraints.contractor_rate_cents
     team = []
-    for employee in inp.employees:
+    for employee in planning_input.employees:
         rate = planned_rate_cents(employee, rate_default)
         team.append(
             Resource(
@@ -95,6 +85,7 @@ def _team(inp: PlanningInput) -> list[Resource]:
 
 
 def _contractor(resource_id: str, name: str, rate: int, skills: dict[str, int]) -> Resource:
+    """Return a contractor profile resource: no capacity limit, overtime at its own rate."""
     return Resource(
         id=resource_id,
         name=name,
@@ -106,18 +97,18 @@ def _contractor(resource_id: str, name: str, rate: int, skills: dict[str, int]) 
     )
 
 
-def build_resources(inp: PlanningInput) -> tuple[Resource, ...]:
+def build_resources(planning_input: PlanningInput) -> tuple[Resource, ...]:
     """The team, then the specialist profiles for skill gaps, then the generic contractor.
 
     Contractor profiles exist only with `allow_contractors` and a contractor
     rate; the generic one also needs `contractor_any_work`.
     """
-    constraints = inp.constraints
-    team = _team(inp)
+    constraints = planning_input.constraints
+    team = _team(planning_input)
     rate = constraints.contractor_rate_cents
     if not constraints.allow_contractors or rate is None:
         return tuple(team)
-    work = [task for task in inp.tasks if not task.done]
+    work = [task for task in planning_input.tasks if not task.done]
     specialists: dict[str, dict[str, str]] = {}  # profile id -> skill id -> skill name
     for task in work:
         if uncovered(task, team):

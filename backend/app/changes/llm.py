@@ -1,10 +1,11 @@
 """Claude reading of new meeting notes (when ANTHROPIC_API_KEY is set).
 
-The model only proposes changes; every one is checked against the notes and the project
-before it is kept: the quote must appear in the notes verbatim, the work package or
-person must exist (a newcomer must not), and the value must parse. Questions are always
-derived by rules (`app.changes.derive`), so answering them maps to overrides
-deterministically.
+Purpose: The model only proposes changes; each is kept only if its quote appears verbatim in the
+notes, its work package or person exists (a newcomer must not) and its value parses. Questions are
+always derived by rules, so answering them maps to overrides deterministically.
+How it fits: `ChangeDetector` is used by app/api/v1/changes.py and falls back to the rules in
+detect.py when Claude is off, slow or fails; layer: changes.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -105,6 +106,7 @@ def build_prompt(notes: str, context: ChangeContext) -> str:
 
 
 def _normalized(value: str) -> str:
+    """Return the text with single spaces and in lower case, for quote matching."""
     return " ".join(value.split()).lower()
 
 
@@ -237,6 +239,7 @@ class ChangeDetector:
     """Claude when configured, else (or when the call fails) the deterministic rules."""
 
     def __init__(self, llm: LLM | None) -> None:
+        """Keep the Claude client (None or unconfigured: rules only)."""
         self._llm = llm
 
     async def detect(self, notes: str, context: ChangeContext) -> tuple[list[DetectedChange], str]:

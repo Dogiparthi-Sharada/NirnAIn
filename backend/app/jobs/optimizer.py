@@ -1,19 +1,12 @@
 """In-process optimization worker (plan.md §0: no Redis yet).
 
-The API commits a `queued` run and then calls `OptimizationRunner.submit`.
-The run is solved on a worker thread (`asyncio.to_thread`, CP-SAT is
-CPU-bound) and its outcome written on a service connection, which bypasses
-RLS: this is a trusted system job, and `planned_assignments` /
-`recommendations` have no user write policies.
-
-Infeasible runs, and plans that finish after their target date, also get
-priced remedies (ways to keep the date, round-2 D2): relaxed copies of the
-input re-solved on the same worker thread budget. The API stores how runs
-are solved (`run_settings`) in each run's `options.solverSettings`.
-
-Railway restarts the process on every deploy, so runs can be orphaned:
-`recover_stale` (on startup) and the API (before answering 409) mark runs
-stuck in queued/running for longer than `OPTIMIZER_STALE_AFTER_S` as failed.
+Purpose: Solve a queued run on a worker thread (CP-SAT is CPU-bound) and store its outcome;
+infeasible or late plans also get priced remedies. Railway restarts the process on every deploy, so
+runs stuck longer than `OPTIMIZER_STALE_AFTER_S` are failed on startup and before a 409.
+How it fits: The API (app/api/v1/optimization.py) commits a queued run and calls
+`OptimizationRunner.submit`; writes go through app/repositories/optimization_store.py on a service
+connection (bypasses RLS); lifecycle from app/jobs/background.py; layer: jobs.
+Created: 2026-10-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -21,20 +14,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
 from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncEngine
-
 from app.core.config import Settings
+from app.jobs.background import BackgroundRunner, RunnerMessages
 from app.optimization.explain import Report, build_report
-from app.optimization.model import PlanningInput, SnapshotError, SolveOutcome
+from app.optimization.model import PlanningInput, SnapshotError
+from app.optimization.outcome import SolveOutcome
 from app.optimization.remedies import price_remedies
 from app.optimization.runtime import solver_settings
 from app.optimization.solver import SolveControl, SolveOptions, solve
-from app.repositories.optimization import OptimizationJobStore
+from app.repositories.optimization_store import OptimizationJobStore
 
 logger = logging.getLogger("app.jobs.optimizer")
 
@@ -45,15 +38,6 @@ SNAPSHOT_ERROR = "The project's planning data couldn't be read. Please run again
 StoreFactory = Callable[[], AbstractAsyncContextManager[OptimizationJobStore]]
 
 
-def engine_store(engine: AsyncEngine) -> StoreFactory:
-    @asynccontextmanager
-    async def factory() -> AsyncIterator[OptimizationJobStore]:
-        async with engine.begin() as conn:
-            yield OptimizationJobStore(conn)
-
-    return factory
-
-
 def solve_options(settings: Settings) -> SolveOptions:
     """How every run is solved (`OPTIMIZER_TIME_LIMIT_S`, `OPTIMIZER_WORKERS`)."""
     return SolveOptions(
@@ -61,9 +45,9 @@ def solve_options(settings: Settings) -> SolveOptions:
     )
 
 
-def run_settings(settings: Settings, inp: PlanningInput) -> dict[str, Any]:
-    """`options.solverSettings` of a run of `inp` (round 3, R7)."""
-    return solver_settings(solve_options(settings), inp.constraints)
+def run_settings(settings: Settings, planning_input: PlanningInput) -> dict[str, Any]:
+    """`options.solverSettings` of a run of `planning_input` (round 3, R7)."""
+    return solver_settings(solve_options(settings), planning_input.constraints)
 
 
 def _slips(report: Report) -> bool:
@@ -72,34 +56,32 @@ def _slips(report: Report) -> bool:
     return bool(summary.get("slipDays"))
 
 
-class OptimizationRunner:
+class OptimizationRunner(BackgroundRunner[OptimizationJobStore]):
+    """Solves queued optimization runs in the background, then prices remedies when needed."""
+
+    logger = logger
+    messages = RunnerMessages(
+        unavailable="optimizer unavailable; run left queued",
+        mark_failed="could not mark optimization run failed",
+        recovery_failed="optimizer startup recovery failed",
+        recovered="marked orphaned optimization runs failed",
+    )
+    task_prefix = "opt"
+    id_key = "run_id"
+    restart_error = RESTART_ERROR
+
     def __init__(self, store: StoreFactory | None, settings: Settings) -> None:
-        self._store = store
+        """Keep the store factory, the solve options and the stale-run timeout."""
+        super().__init__(store)
         self._options = solve_options(settings)
         self._stale_after_s = settings.optimizer_stale_after_s
-        # Strong references: the event loop only keeps weak ones to tasks.
-        self._tasks: set[asyncio.Task[None]] = set()
         self._controls: dict[uuid.UUID, SolveControl] = {}
-        self._closing = False
-
-    @property
-    def active(self) -> int:
-        return len(self._tasks)
-
-    async def submit(self, run_id: uuid.UUID) -> None:
-        """Start solving a committed, queued run in the background.
-
-        Async on purpose: Starlette runs sync background tasks in a thread
-        pool, where there is no event loop to schedule the job on.
-        """
-        if self._store is None or self._closing:
-            logger.warning("optimizer unavailable; run left queued", extra={"run_id": str(run_id)})
-            return
-        task = asyncio.get_running_loop().create_task(self._run(run_id), name=f"opt-{run_id}")
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
 
     async def _run(self, run_id: uuid.UUID) -> None:
+        """Claim a queued run, solve its frozen input, add remedies if needed and store the report.
+
+        Failures end the run with a user-facing error; a shutdown records the restart error.
+        """
         assert self._store is not None  # noqa: S101 - guarded by submit()
         extra = {"run_id": str(run_id)}
         control = SolveControl()
@@ -110,15 +92,19 @@ class OptimizationRunner:
             if snapshot is None:
                 logger.info("optimization run not queued; skipping", extra=extra)
                 return
-            inp = PlanningInput.from_snapshot(snapshot)
+            planning_input = PlanningInput.from_snapshot(snapshot)
             logger.info(
                 "optimization started",
-                extra={**extra, "tasks": len(inp.tasks), "employees": len(inp.employees)},
+                extra={
+                    **extra,
+                    "tasks": len(planning_input.tasks),
+                    "employees": len(planning_input.employees),
+                },
             )
-            outcome = await asyncio.to_thread(solve, inp, self._options, control)
-            report = build_report(inp, outcome)
+            outcome = await asyncio.to_thread(solve, planning_input, self._options, control)
+            report = build_report(planning_input, outcome)
             if outcome.status == "infeasible" or _slips(report):
-                report = await self._with_remedies(inp, outcome, report, control, extra)
+                report = await self._with_remedies(planning_input, outcome, report, control, extra)
             async with self._store() as store:
                 await store.finish(run_id, report)
             logger.info(
@@ -126,20 +112,20 @@ class OptimizationRunner:
                 extra={**extra, "status": report.status, "runtime_ms": report.runtime_ms},
             )
         except asyncio.CancelledError:
-            await self._fail(run_id, RESTART_ERROR)
+            await self.fail(run_id, RESTART_ERROR)
             raise
         except SnapshotError:
             logger.exception("optimization snapshot invalid", extra=extra)
-            await self._fail(run_id, SNAPSHOT_ERROR)
+            await self.fail(run_id, SNAPSHOT_ERROR)
         except Exception:
             logger.exception("optimization run failed", extra=extra)
-            await self._fail(run_id, FAILED_ERROR)
+            await self.fail(run_id, FAILED_ERROR)
         finally:
             self._controls.pop(run_id, None)
 
     async def _with_remedies(
         self,
-        inp: PlanningInput,
+        planning_input: PlanningInput,
         outcome: SolveOutcome,
         report: Report,
         control: SolveControl,
@@ -151,45 +137,22 @@ class OptimizationRunner:
         """
         current = outcome if outcome.plan is not None else None
         try:
-            remedies = await asyncio.to_thread(price_remedies, inp, self._options, control, current)
+            remedies = await asyncio.to_thread(
+                price_remedies, planning_input, self._options, control, current
+            )
         except Exception:
             logger.exception("pricing remedies failed", extra=extra)
             return report
         result = {**(report.result or {}), "remedies": [remedy.to_json() for remedy in remedies]}
         return replace(report, result=result)
 
-    async def _fail(self, run_id: uuid.UUID, error: str) -> None:
-        assert self._store is not None  # noqa: S101
-        try:
-            async with self._store() as store:
-                await store.fail(run_id, error)
-        except Exception:
-            # Startup recovery will mark it failed once it goes stale.
-            logger.exception(
-                "could not mark optimization run failed", extra={"run_id": str(run_id)}
-            )
+    async def recover_stale(self, stale_after_s: int | None = None) -> int:
+        """Fail runs orphaned by a previous process (after `OPTIMIZER_STALE_AFTER_S`)."""
+        return await super().recover_stale(
+            self._stale_after_s if stale_after_s is None else stale_after_s
+        )
 
-    async def recover_stale(self) -> int:
-        """Fail runs orphaned by a previous process. Never raises."""
-        if self._store is None:
-            return 0
-        try:
-            async with self._store() as store:
-                count = await store.fail_stale(self._stale_after_s, RESTART_ERROR)
-        except Exception:
-            logger.exception("optimizer startup recovery failed")
-            return 0
-        if count:
-            logger.warning("marked orphaned optimization runs failed", extra={"count": count})
-        return count
-
-    async def shutdown(self, timeout_s: float = 10.0) -> None:
-        """Stop solvers, cancel running jobs (they record RESTART_ERROR) and wait."""
-        self._closing = True
+    def _stop_blocking_work(self) -> None:
+        """Stop the CP-SAT solves running on worker threads."""
         for control in list(self._controls.values()):
             control.stop()
-        tasks = list(self._tasks)
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.wait(tasks, timeout=timeout_s)

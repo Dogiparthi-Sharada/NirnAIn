@@ -1,13 +1,11 @@
-"""Timeline rows and plain-number summary of a solved plan.
+"""Timeline rows and the plain-number summary of a solved plan.
 
-`explain.build_report` adds these to `optimization_runs.result` as
-`schedule` (one row per work package, for the Gantt grouped by deliverable)
-and `summary` (completion, cost, deadline, the target date and the slip
-after it, the peak utilization: the busiest day of anyone on the team,
-specialists and the soft constraints the plan bends). The Optimization
-Results screen and the dashboard build their headline and advice from
-them, so everything here is a fact read off the plan: nothing is estimated
-or invented.
+Purpose: The Optimization Results screen and the dashboard build their headline and advice from
+these facts read off the plan (completion, cost, deadline, target and slip, peak utilization,
+specialists and the soft constraints it bends); nothing is estimated or invented.
+How it fits: `explain.build_report` adds them to `optimization_runs.result` as `schedule` and
+`summary`; layer: optimization.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -18,7 +16,8 @@ from typing import TYPE_CHECKING, Any
 from app.optimization import formatting as fmt
 from app.optimization.calendar import workdays_late, workdays_through
 from app.optimization.costing import spend_limit_cents
-from app.optimization.model import Task, qualified, target_of
+from app.optimization.model import Task, target_of
+from app.optimization.outcome import qualified
 
 if TYPE_CHECKING:
     from app.optimization.report_context import ReportContext
@@ -30,11 +29,11 @@ def deliverable_code(code: str) -> str:
     return ".".join(parts[:2]) if len(parts) >= 3 else code
 
 
-def timeline(ctx: ReportContext, ordered: list[Task]) -> list[dict[str, Any]]:
+def timeline(context: ReportContext, ordered: list[Task]) -> list[dict[str, Any]]:
     """Every work package with its planned and baseline dates (both inclusive)."""
     rows = []
     for task in ordered:
-        planned, baseline = ctx.plan.tasks[task.id], ctx.baseline.tasks[task.id]
+        planned, baseline = context.plan.tasks[task.id], context.baseline.tasks[task.id]
         group = deliverable_code(task.code)
         rows.append(
             {
@@ -42,14 +41,14 @@ def timeline(ctx: ReportContext, ordered: list[Task]) -> list[dict[str, Any]]:
                 "code": task.code,
                 "name": task.name,
                 "deliverableCode": group,
-                "deliverableName": ctx.inp.deliverables.get(group)
+                "deliverableName": context.planning_input.deliverables.get(group)
                 or (task.name if group == task.code else group),
-                "start": ctx.date_of(planned.start).isoformat(),
+                "start": context.date_of(planned.start).isoformat(),
                 # Working-day ends are exclusive; the screen shows the last day worked.
-                "end": ctx.date_of(max(planned.end - 1, planned.start)).isoformat(),
-                "baselineStart": ctx.date_of(baseline.start).isoformat(),
-                "baselineEnd": ctx.date_of(max(baseline.end - 1, baseline.start)).isoformat(),
-                "assignee": ctx.name(planned.resource_id) if planned.resource_id else None,
+                "end": context.date_of(max(planned.end - 1, planned.start)).isoformat(),
+                "baselineStart": context.date_of(baseline.start).isoformat(),
+                "baselineEnd": context.date_of(max(baseline.end - 1, baseline.start)).isoformat(),
+                "assignee": context.name(planned.resource_id) if planned.resource_id else None,
                 # Finished work, shown at the dates of the plan in force.
                 "done": task.done,
             }
@@ -57,22 +56,24 @@ def timeline(ctx: ReportContext, ordered: list[Task]) -> list[dict[str, Any]]:
     return rows
 
 
-def soft_violations(ctx: ReportContext, cost: int, finish: date) -> list[str]:
+def soft_violations(context: ReportContext, cost: int, finish: date) -> list[str]:
     """Soft constraints this plan bends, in plain English (hard ones always hold)."""
-    constraints, plan = ctx.inp.constraints, ctx.plan
+    constraints, plan = context.planning_input.constraints, context.plan
     violations = []
     if constraints.must_finish_by is not None and finish > constraints.must_finish_by:
         late_days = (finish - constraints.must_finish_by).days
         violations.append(
             f"Go-live {fmt.plural(late_days, 'day')} after {fmt.day(constraints.must_finish_by)}"
         )
-    for milestone in ctx.inp.milestones:
+    for milestone in context.planning_input.milestones:
         ends = [plan.tasks[task_id].end for task_id in milestone.task_ids if task_id in plan.tasks]
         if not ends:
             continue
-        due_index = workdays_through(ctx.inp.start_date, milestone.due_date, ctx.per_week)
+        due_index = workdays_through(
+            context.planning_input.start_date, milestone.due_date, context.per_week
+        )
         if max(ends) > due_index:
-            lands = ctx.date_of(max(ends) - 1)
+            lands = context.date_of(max(ends) - 1)
             late_days = (lands - milestone.due_date).days
             violations.append(
                 f"{milestone.name} lands {fmt.day(lands)} ({fmt.plural(late_days, 'day')} late)"
@@ -91,20 +92,20 @@ def soft_violations(ctx: ReportContext, cost: int, finish: date) -> list[str]:
         )
     overbooked = [
         resource.name
-        for resource in ctx.resources.values()
-        if resource.kind == "employee" and ctx.over_allocated(plan, resource.id)
+        for resource in context.resources.values()
+        if resource.kind == "employee" and context.over_allocated(plan, resource.id)
     ]
     if overbooked:
         violations.append(f"{', '.join(overbooked)} scheduled above their hours")
     for scheduled in plan.tasks.values():
-        resource = ctx.resources.get(scheduled.resource_id) if scheduled.resource_id else None
-        task = ctx.tasks[scheduled.task_id]
+        resource = context.resources.get(scheduled.resource_id) if scheduled.resource_id else None
+        task = context.tasks[scheduled.task_id]
         if resource is not None and not qualified(resource, task):
             violations.append(f"{task.label} given to {resource.name} without the required skill")
     return violations
 
 
-def peak_utilization(ctx: ReportContext) -> dict[str, Any] | None:
+def peak_utilization(context: ReportContext) -> dict[str, Any] | None:
     """The busiest working day of anyone with work left in the plan: their load that day,
     other projects' bookings included, as a percent of their daily hours, and who it is.
 
@@ -113,26 +114,26 @@ def peak_utilization(ctx: ReportContext) -> dict[str, Any] | None:
     """
     working = {
         scheduled.resource_id
-        for scheduled in ctx.plan.tasks.values()
-        if not ctx.tasks[scheduled.task_id].done
+        for scheduled in context.plan.tasks.values()
+        if not context.tasks[scheduled.task_id].done
     }
     peaks = [
-        (resource.name, ctx.peak_percent(ctx.plan, resource))
-        for resource in ctx.resources.values()
+        (resource.name, context.peak_percent(context.plan, resource))
+        for resource in context.resources.values()
         if resource.kind == "employee" and resource.id in working
     ]
     busiest = max(peaks, key=lambda peak: peak[1], default=None)
     return None if busiest is None else {"name": busiest[0], "percent": busiest[1]}
 
 
-def run_summary(ctx: ReportContext, cost: int, finish: date) -> dict[str, Any]:
+def run_summary(context: ReportContext, cost: int, finish: date) -> dict[str, Any]:
     """Plain numbers the results screen builds its headline and advice from."""
-    constraints = ctx.inp.constraints
+    constraints = context.planning_input.constraints
     specialists = []
-    for resource in ctx.resources.values():
+    for resource in context.resources.values():
         if resource.kind != "contractor":
             continue
-        hours = ctx.hours(ctx.plan, resource.id)
+        hours = context.hours(context.plan, resource.id)
         if hours > 0:
             specialists.append(
                 {
@@ -148,9 +149,9 @@ def run_summary(ctx: ReportContext, cost: int, finish: date) -> dict[str, Any]:
         else constraints.labor_cap_cents
     )
     deadline = constraints.must_finish_by
-    target = target_of(ctx.inp)
+    target = target_of(context.planning_input)
     return {
-        "startDate": ctx.date_of(0).isoformat(),
+        "startDate": context.date_of(0).isoformat(),
         "completionDate": finish.isoformat(),
         "deadline": deadline.isoformat() if deadline else None,
         "deadlineMode": constraints.deadline_mode,
@@ -159,11 +160,13 @@ def run_summary(ctx: ReportContext, cost: int, finish: date) -> dict[str, Any]:
         # deadline) and how many working days this plan finishes after it (D2).
         "targetDate": target.isoformat() if target else None,
         "slipDays": (
-            workdays_late(ctx.inp.start_date, target, finish, ctx.per_week) if target else 0
+            workdays_late(context.planning_input.start_date, target, finish, context.per_week)
+            if target
+            else 0
         ),
         "costCents": cost,
         "budgetCents": budget,
-        "peakUtilization": peak_utilization(ctx),
+        "peakUtilization": peak_utilization(context),
         "specialists": specialists,
-        "softViolations": soft_violations(ctx, cost, finish),
+        "softViolations": soft_violations(context, cost, finish),
     }

@@ -1,15 +1,15 @@
-"""Per-project dashboard overview.
+"""Per-project dashboard overview: response models and how they are derived from facts.
 
-The repository gathers plain facts (`OverviewFacts`) under the caller's RLS session;
-`build_overview` turns them into what the dashboard shows. Nothing is invented: values
-that are not tracked stay null and the client labels them ("Not tracked yet").
-Milestone status comes from each milestone's own work (`overview_milestones.py`).
+Purpose: Nothing is invented: values that are not tracked stay null and the client labels them ("Not
+tracked yet"). Risks, findings, milestone status and the next step all come from facts.
+How it fits: `build_overview` turns the `OverviewFacts` that app/repositories/overview.py gathers
+under RLS into the `ProjectOverview` app/api/v1/overview.py returns; layer: domain.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -18,13 +18,18 @@ from pydantic import ValidationError
 from app.domain.common import CamelModel, ConstraintMode, ProjectStatus, ScopeStatus
 from app.domain.notifications import Notification
 from app.domain.optimization import RunKpi
+from app.domain.overview_facts import (
+    AppliedRunFacts,
+    OverviewFacts,
+    PolicyFacts,
+    ProgressFacts,
+    ScopeRisk,
+)
 from app.domain.overview_milestones import (
-    MilestoneFact,
     MilestoneSummary,
     milestone_summary,
     planned_finishes,
 )
-from app.domain.projects import Project
 
 PolicyKey = Literal["budget", "deadline", "capacity", "skills"]
 StepKey = Literal["intake", "scope", "wbs", "constraints", "optimization", "changes"]
@@ -44,59 +49,10 @@ POLICY_LABELS: dict[ConstraintMode, str] = {
 MAX_FINDINGS_PER_SOURCE = 3
 
 
-# ------------------------------------------------------------------- facts (from the repository)
-@dataclass(frozen=True, slots=True)
-class PolicyFacts:
-    """The project's `constraint_sets` row; None fields mean "not answered yet"."""
-
-    budget_mode: ConstraintMode = ConstraintMode.HARD
-    capacity_mode: ConstraintMode = ConstraintMode.SOFT
-    skill_mode: ConstraintMode = ConstraintMode.HARD
-    deadline_answer: str | None = None
-    specialist_answer: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class AppliedRunFacts:
-    run_id: uuid.UUID
-    version: int
-    applied_at: datetime | None
-    expected_cost_cents: int | None
-    completion_date: date | None
-    result: dict[str, Any] | None
-
-
-@dataclass(frozen=True, slots=True)
-class ScopeRisk:
-    text: str
-    status: ScopeStatus
-
-
-@dataclass(frozen=True, slots=True)
-class ProgressFacts:
-    scope_items: int = 0
-    pending_scope_items: int = 0
-    wbs_nodes: int = 0
-    unconfirmed_ai_estimates: int = 0
-    has_successful_run: bool = False
-
-
-@dataclass(slots=True)
-class OverviewFacts:
-    project: Project
-    policy: PolicyFacts | None = None
-    progress: ProgressFacts = field(default_factory=ProgressFacts)
-    milestones: list[MilestoneFact] = field(default_factory=list)
-    applied_run: AppliedRunFacts | None = None
-    scope_risks: list[ScopeRisk] = field(default_factory=list)
-    notifications: list[Notification] = field(default_factory=list)
-    notification_total: int = 0
-    validation_issues: list[str] = field(default_factory=list)
-    recommendation_reasons: list[str] = field(default_factory=list)
-
-
 # --------------------------------------------------------------------------- response
 class OverviewProject(CamelModel):
+    """The project header of the overview."""
+
     id: uuid.UUID
     code: str
     name: str
@@ -109,11 +65,15 @@ class OverviewProject(CamelModel):
 
 
 class PlanViolations(CamelModel):
+    """How many hard and soft constraints the applied plan misses."""
+
     hard: int
     soft: int
 
 
 class AppliedPlan(CamelModel):
+    """The plan in force: its version, KPIs, peak load and constraint misses."""
+
     version: int
     run_id: uuid.UUID
     applied_at: datetime | None
@@ -125,6 +85,8 @@ class AppliedPlan(CamelModel):
 
 
 class ConstraintChoice(CamelModel):
+    """A constraint's policy as the PM chose it: must hold or can flex."""
+
     key: PolicyKey
     name: str
     mode: ConstraintMode
@@ -132,22 +94,30 @@ class ConstraintChoice(CamelModel):
 
 
 class OverviewRisk(CamelModel):
+    """A risk shown on the overview and where it comes from."""
+
     level: RiskLevel
     text: str
     source: str
 
 
 class OverviewFinding(CamelModel):
+    """An AI validation or optimizer finding shown on the overview."""
+
     text: str
     source: FindingSource
 
 
 class NextStep(CamelModel):
+    """The next workflow step to take and the screen it is on."""
+
     label: str
     step: StepKey
 
 
 class ProjectOverview(CamelModel):
+    """Everything the per-project dashboard shows."""
+
     project: OverviewProject
     applied_version: int | None
     plan: AppliedPlan | None
@@ -164,6 +134,10 @@ class ProjectOverview(CamelModel):
 
 # --------------------------------------------------------------------------- derivations
 def _utilization(result: dict[str, Any] | None) -> list[tuple[str, int]]:
+    """Return (name, after-%) per person from a run result's utilization rows.
+
+    Malformed rows are skipped, so an old or partial result never breaks the overview.
+    """
     rows = (result or {}).get("utilization")
     out: list[tuple[str, int]] = []
     if not isinstance(rows, list):
@@ -207,6 +181,7 @@ def soft_violations(result: dict[str, Any] | None) -> int:
 
 
 def run_kpis(result: dict[str, Any] | None) -> list[RunKpi]:
+    """Return the run's KPI cards, skipping any that no longer match the KPI model."""
     rows = (result or {}).get("kpis")
     kpis: list[RunKpi] = []
     if not isinstance(rows, list):
@@ -221,13 +196,15 @@ def run_kpis(result: dict[str, Any] | None) -> list[RunKpi]:
 
 def constraint_choices(policy: PolicyFacts | None) -> list[ConstraintChoice]:
     """Must hold / Can flex per constraint; the deadline follows the PM's answer."""
-    p = policy or PolicyFacts()
-    deadline = ConstraintMode.SOFT if p.deadline_answer == "soft" else ConstraintMode.HARD
+    policy_facts = policy or PolicyFacts()
+    deadline = (
+        ConstraintMode.SOFT if policy_facts.deadline_answer == "soft" else ConstraintMode.HARD
+    )
     modes: dict[PolicyKey, ConstraintMode] = {
-        "budget": p.budget_mode,
+        "budget": policy_facts.budget_mode,
         "deadline": deadline,
-        "capacity": p.capacity_mode,
-        "skills": p.skill_mode,
+        "capacity": policy_facts.capacity_mode,
+        "skills": policy_facts.skill_mode,
     }
     return [
         ConstraintChoice(key=key, name=POLICY_NAMES[key], mode=mode, label=POLICY_LABELS[mode])
@@ -245,12 +222,13 @@ def plan_risks(run: AppliedRunFacts | None) -> list[OverviewRisk]:
             text=f"{name} is booked at {after}% in Plan v{run.version}",
             source="From the plan",
         )
-        for name, after in sorted(_utilization(run.result), key=lambda r: -r[1])
+        for name, after in sorted(_utilization(run.result), key=lambda row: -row[1])
         if after > 100
     ]
 
 
 def scope_risks(items: list[ScopeRisk]) -> list[OverviewRisk]:
+    """Return accepted and still-pending risk scope items as medium risks."""
     return [
         OverviewRisk(
             level="Medium",
@@ -266,8 +244,9 @@ def scope_risks(items: list[ScopeRisk]) -> list[OverviewRisk]:
     ]
 
 
-def _plural(n: int, word: str) -> str:
-    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+def _plural(count: int, word: str) -> str:
+    """Return `count word` with an English plural `s` when the count is not one."""
+    return f"{count} {word}" if count == 1 else f"{count} {word}s"
 
 
 def _setup_todo(progress: ProgressFacts, policy: PolicyFacts | None) -> str | None:
@@ -310,7 +289,11 @@ def next_step(progress: ProgressFacts, policy: PolicyFacts | None, applied: bool
 
 
 def build_overview(facts: OverviewFacts, today: date) -> ProjectOverview:
-    p, run = facts.project, facts.applied_run
+    """Build the dashboard overview from the repository's facts.
+
+    `today` decides which milestone is next; values that are not tracked stay null.
+    """
+    project, run = facts.project, facts.applied_run
     plan = None
     if run is not None:
         plan = AppliedPlan(
@@ -333,15 +316,15 @@ def build_overview(facts: OverviewFacts, today: date) -> ProjectOverview:
     ]
     return ProjectOverview(
         project=OverviewProject(
-            id=p.id,
-            code=p.code,
-            name=p.name,
-            status=p.status,
-            due_date=p.target_end_date,
-            pm_name=p.pm_name,
-            budget_cents=p.budget_cents,
-            currency=p.currency,
-            progress_pct=p.progress_pct,
+            id=project.id,
+            code=project.code,
+            name=project.name,
+            status=project.status,
+            due_date=project.target_end_date,
+            pm_name=project.pm_name,
+            budget_cents=project.budget_cents,
+            currency=project.currency,
+            progress_pct=project.progress_pct,
         ),
         applied_version=run.version if run else None,
         plan=plan,

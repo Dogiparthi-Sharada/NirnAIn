@@ -1,4 +1,10 @@
-"""The optimizer's confirmation sheet: facts, rows, sources and blockers."""
+"""Tests of the optimizer's confirmation sheet: facts, rows, sources and blockers.
+
+Purpose: Before a run the PM sees every input with where it came from; missing answers and
+unconfirmed estimates block the run, and the inputs hash tells when a plan is outdated.
+How it fits: Pure tests of app/optimization/inputs.py and input_sheet.py; layer: tests.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -16,10 +22,11 @@ from app.optimization.inputs import (
     quote_states_amount,
 )
 from app.optimization.model import Allocation, Employee, Task
-from tests.test_optimization_solver import SAP, make_input, with_constraints
+from tests.support.solver_inputs import SAP, make_input, with_constraints
 
 
 def _ready_facts(**changes: Any) -> InputFacts:
+    """Return the facts of a project ready to run, changed by `changes`."""
     facts = InputFacts(
         work_packages=15,
         effort_days=225,
@@ -43,6 +50,7 @@ def _ready_facts(**changes: Any) -> InputFacts:
 
 
 def test_ready_sheet_rows_and_sources() -> None:
+    """A ready project's sheet lists every input with its value, source and origin."""
     sheet = build_sheet(_ready_facts())
     assert sheet.ready
     assert (sheet.blocking, sheet.missing) == ([], [])
@@ -85,10 +93,12 @@ def test_ready_sheet_rows_and_sources() -> None:
 
 
 def test_a_required_skill_no_package_uses_is_a_warning_not_a_blocker() -> None:
-    inp = make_input(tasks=(Task("a", "1.1.1", "SAP setup", 5, skills=(SAP,)),))
+    """A required skill no package uses is a warning row under the skills, not a blocker."""
+    planning_input = make_input(tasks=(Task("a", "1.1.1", "SAP setup", 5, skills=(SAP,)),))
     okta = SkillFact("Okta SSO", True, False)
     facts = facts_from_input(
-        inp, skills=[SkillFact("sap", True, True), okta, SkillFact("Figma", False, False)]
+        planning_input,
+        skills=[SkillFact("sap", True, True), okta, SkillFact("Figma", False, False)],
     )
     assert facts.unlinked_skills == ["Okta SSO"]  # SAP is used; Figma is optional
     sheet = build_sheet(dataclasses.replace(_ready_facts(), **_skills_of(facts)))
@@ -105,10 +115,12 @@ def test_a_required_skill_no_package_uses_is_a_warning_not_a_blocker() -> None:
 
 
 def _skills_of(facts: InputFacts) -> dict[str, Any]:
+    """Return the skill fields of `facts` to copy into other facts."""
     return {"skills": facts.skills, "linked_skills": facts.linked_skills}
 
 
 def test_unconfirmed_estimates_block_the_run() -> None:
+    """Unconfirmed AI estimates block the run and say how many."""
     sheet = build_sheet(_ready_facts(unconfirmed_estimates=3))
     assert not sheet.ready
     assert sheet.missing == ["estimates"]
@@ -119,6 +131,7 @@ def test_unconfirmed_estimates_block_the_run() -> None:
 
 
 def test_unanswered_questions_and_empty_team_block() -> None:
+    """Missing work, answers and team block the run in one sentence; no gap, no question."""
     sheet = build_sheet(
         _ready_facts(deadline_answer=None, specialist_answer=None, team=[], work_packages=0)
     )
@@ -134,15 +147,18 @@ def test_unanswered_questions_and_empty_team_block() -> None:
 
 
 def test_facts_from_input_and_org_fallback_team() -> None:
-    inp = make_input(
+    """Facts come from the input; without a project team everyone active is the team."""
+    planning_input = make_input(
         tasks=(
             Task("a", "1.1.1", "Design", 5, owner_id="e1"),
             Task("b", "1.1.2", "SAP setup", 10, skills=(SAP,)),
         ),
         employees=make_input().employees[:1],
     )
-    inp = with_constraints(inp, budget_total_cents=2_000_000, working_days_per_week=6)
-    facts = facts_from_input(inp, deadline_answer="hard", contingency_pct=10.0)
+    planning_input = with_constraints(
+        planning_input, budget_total_cents=2_000_000, working_days_per_week=6
+    )
+    facts = facts_from_input(planning_input, deadline_answer="hard", contingency_pct=10.0)
     assert (facts.work_packages, facts.effort_days) == (2, 15)
     assert facts.dependency_types == {"FS": 1}
     assert facts.task_skill_gaps == ["SAP"]
@@ -161,6 +177,7 @@ def test_facts_from_input_and_org_fallback_team() -> None:
 
 
 def test_employees_without_a_company_rate_are_shown_at_the_standard_rate() -> None:
+    """Employees without a company rate are shown at the standard rate, contractors aside."""
     team = ["Priya Raman", "Leo Martins", "Ana Souza", "Dana Lee"]
     staff = team[:3]
     facts = _ready_facts(team=team, employees=staff, standard_rate_employees=staff)
@@ -183,14 +200,14 @@ def test_employees_without_a_company_rate_are_shown_at_the_standard_rate() -> No
     row = next(row for row in build_sheet(rated).rows if row.key == "employeeCost")
     assert (row.value, row.source) == ("3 employees at their company rate", "confirmed")
 
-    inp = make_input(
+    planning_input = make_input(
         employees=(
             Employee("e1", "Mark Chen", hourly_rate_cents=10_000),
             Employee("e2", "Ana Souza"),
             Employee("e3", "Dana Lee", hourly_rate_cents=15_000, is_contractor=True),
         )
     )
-    facts = facts_from_input(inp)
+    facts = facts_from_input(planning_input)
     assert (facts.employees, facts.standard_rate_employees) == (
         ["Mark Chen", "Ana Souza"],
         ["Ana Souza"],
@@ -198,6 +215,7 @@ def test_employees_without_a_company_rate_are_shown_at_the_standard_rate() -> No
 
 
 def test_quote_must_name_the_amount() -> None:
+    """A budget quote counts only when it states the amount."""
     assert quote_states_amount("Budget approved at $375K", 37_500_000)
     assert quote_states_amount("a budget of $375,000 total", 37_500_000)
     assert quote_states_amount("up to $1.2 million", 120_000_000)
@@ -206,41 +224,52 @@ def test_quote_must_name_the_amount() -> None:
 
 
 def test_inputs_hash_ignores_other_projects_bookings() -> None:
-    inp = make_input()
-    booked = dataclasses.replace(inp, allocations=(Allocation("e1", date(2026, 10, 12), 8),))
-    assert inputs_hash(inp) == inputs_hash(booked)
-    assert inputs_hash(inp) != inputs_hash(with_constraints(inp, budget_total_cents=1))
-    assert inputs_hash(inp) != inputs_hash(with_constraints(inp, contingency_pct=10))
-    first, second = inp.employees
-    repriced = dataclasses.replace(
-        inp, employees=(dataclasses.replace(first, hourly_rate_cents=None), second)
+    """The hash ignores other projects' bookings but changes with budgets, reserve and rates."""
+    planning_input = make_input()
+    booked = dataclasses.replace(
+        planning_input, allocations=(Allocation("e1", date(2026, 10, 12), 8),)
     )
-    assert inputs_hash(inp) != inputs_hash(repriced)  # editing a rate invalidates the sheet
-    assert len(inputs_hash(inp)) == 64
+    assert inputs_hash(planning_input) == inputs_hash(booked)
+    assert inputs_hash(planning_input) != inputs_hash(
+        with_constraints(planning_input, budget_total_cents=1)
+    )
+    assert inputs_hash(planning_input) != inputs_hash(
+        with_constraints(planning_input, contingency_pct=10)
+    )
+    first, second = planning_input.employees
+    repriced = dataclasses.replace(
+        planning_input, employees=(dataclasses.replace(first, hourly_rate_cents=None), second)
+    )
+    assert inputs_hash(planning_input) != inputs_hash(
+        repriced
+    )  # editing a rate invalidates the sheet
+    assert len(inputs_hash(planning_input)) == 64
 
 
 def test_applying_a_plan_does_not_change_the_inputs_hash() -> None:
     """Apply writes the plan's assignees as owners and done work's dates; the plan stays current."""
-    inp = make_input()
-    first_task, *other_tasks = inp.tasks
+    planning_input = make_input()
+    first_task, *other_tasks = planning_input.tasks
     after_apply = dataclasses.replace(
-        inp,
+        planning_input,
         tasks=(
             dataclasses.replace(
                 first_task,
-                owner_id=inp.employees[-1].id,
+                owner_id=planning_input.employees[-1].id,
                 applied_start=date(2026, 10, 12),
                 applied_end=date(2026, 10, 16),
             ),
             *other_tasks,
         ),
     )
-    assert inputs_hash(inp) == inputs_hash(after_apply)
+    assert inputs_hash(planning_input) == inputs_hash(after_apply)
     longer = dataclasses.replace(
-        inp,
+        planning_input,
         tasks=(
             dataclasses.replace(first_task, duration_days=first_task.duration_days + 5),
             *other_tasks,
         ),
     )
-    assert inputs_hash(inp) != inputs_hash(longer)  # a real input edit still invalidates the plan
+    assert inputs_hash(planning_input) != inputs_hash(
+        longer
+    )  # a real input edit still invalidates the plan

@@ -1,15 +1,12 @@
 """Rules reading of a new budget or deadline in meeting notes (step 7, no AI key).
 
-What: money in a sentence about the budget → a budget change; a date next to a deadline
-word → a deadline change; "go-live slips two weeks" → the deadline moves by that span. Each
-carries the policy the notes state with it ("a $200,000 hard budget", "2027-01-22 and must
-hold" → hard; "a $350,000 soft target" → soft).
-Why: values must come only from what the notes decide (QA pack M02/M03): actual costs,
-hourly rates, the reserve, fixed costs and replaced values ("instead of $375,000") are not
-a new budget, and a "must hold" deadline must be re-planned as hard, not as "can flex".
-How it fits: `app.changes.detect.detect` calls these per sentence; questions then confirm
-each value (`app.changes.questions`) and `app.changes.derive` maps the answer and its mode
-to the re-plan overrides.
+Purpose: Values must come only from what the notes decide (QA pack M02/M03): actual costs, rates,
+the reserve, fixed costs and replaced values are not a new budget, and a "must hold" deadline is
+re-planned as hard. Money in a budget sentence becomes a budget change, a date next to a deadline
+word a deadline change, and "go-live slips two weeks" moves the deadline by that span.
+How it fits: `app.changes.detect.detect` calls these per sentence; questions then confirm each value
+and derive.py maps the answer and its mode to the re-plan overrides; layer: changes.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -146,6 +143,7 @@ def stated_policy(sentence: parsing.Sentence, kind: ChangeKind) -> ChangeMode | 
 
 
 def _add_workdays(current: date, days: int) -> date:
+    """Return the date `days` working days (Mon-Fri) after `current`, or before it when negative."""
     step = 1 if days >= 0 else -1
     left = abs(days)
     while left:

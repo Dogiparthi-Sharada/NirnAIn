@@ -1,17 +1,15 @@
-"""What the WBS checks (`app.ai.wbs_validate.check_structure`) read: the WBS, its links,
-the dates, the required skills and the project team with its skills.
+"""What the built-in WBS checks read: the WBS, its links, the dates, needed skills and the team.
 
-Shared by the free `GET …/wbs/checks` (caller's RLS session) and the `wbs_validate` AI
-job (service connection, which bypasses RLS), so both check the same data the same way.
-Every query names the project explicitly. Rules applied while reading:
-
-* Dates: the constraint set's start and deadline, else the project's own (as the
-  optimizer); the caller's `today` moves a past start forward (D4).
-* People: only the project team (step 5). Until it is set, step 4 names the skills the
-  WBS needs instead of checking them against the whole organization.
-* Specialists: allowed when step 5 answered 'yes' (as `planning_input.build_constraints`
-  reads it). Their rate counts only once the PM confirmed it; a confirmed rate without a
-  stored amount is the $175/h estimate, as the step 6 inputs sheet shows it.
+Purpose: The free `GET …/wbs/checks` (caller's RLS session) and the `wbs_validate` AI job (service
+connection) must check the same data the same way, so every query names the project explicitly.
+Dates: the constraint set's start and deadline, else the project's own, with `today` moving a past
+start forward (D4). People: only the project team; until step 5 sets one, step 4 names the skills
+the WBS needs instead of checking them. Specialists: allowed when step 5 answered 'yes' (as
+`constraint_input.build_constraints` reads it); their rate counts only once confirmed, the $175/h
+estimate when no amount is stored.
+How it fits: Called by app/repositories/wbs.py and app/repositories/ai_jobs.py; feeds
+`app.ai.wbs_validate.check_structure`; layer: repositories.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -42,10 +40,12 @@ from app.repositories.tables import (
 
 
 def _skill_key(name: str) -> str:
+    """Return a skill name normalised for comparison (single spaces, casefolded)."""
     return " ".join(name.split()).casefold()
 
 
 async def _nodes(conn: AsyncConnection, project_id: uuid.UUID) -> tuple[NodeInfo, ...]:
+    """Return the project's WBS nodes in tree order, with owner names."""
     tree, people = wbs_nodes_with_code, employees
     stmt = (
         sa.select(
@@ -66,6 +66,7 @@ async def _nodes(conn: AsyncConnection, project_id: uuid.UUID) -> tuple[NodeInfo
 
 
 async def _dependencies(conn: AsyncConnection, project_id: uuid.UUID) -> tuple[DependencyInfo, ...]:
+    """Return the project's dependency links."""
     links = dependencies
     stmt = sa.select(
         links.c.predecessor_id, links.c.successor_id, links.c.type, links.c.lag_days
@@ -77,7 +78,7 @@ async def _dependencies(conn: AsyncConnection, project_id: uuid.UUID) -> tuple[D
 
 
 async def _required_skills(conn: AsyncConnection, project_id: uuid.UUID) -> tuple[str, ...]:
-    """Skills a work package is tagged with, plus the project's Required skills."""
+    """Return the skills work packages are tagged with plus the project's Required skills."""
     needed, listed, skill, node = task_skill_requirements, project_skills, skills, wbs_nodes
     tagged = (
         sa.select(skill.c.name)
@@ -102,8 +103,10 @@ async def _required_skills(conn: AsyncConnection, project_id: uuid.UUID) -> tupl
 async def project_team(
     conn: AsyncConnection, project_id: uuid.UUID
 ) -> tuple[frozenset[uuid.UUID], frozenset[str]]:
-    """(The project team's employee ids, the skills they hold, casefolded); both empty until
-    step 5 sets a team. A skill counts at any proficiency above 0."""
+    """Return the project team's employee ids and the skills they hold (casefolded).
+
+    Both are empty until step 5 sets a team; a skill counts at any proficiency above 0.
+    """
     member = project_team_members
     people: Sequence[Any] = (
         (
@@ -130,7 +133,7 @@ async def project_team(
 async def read_validation_input(
     conn: AsyncConnection, project_id: uuid.UUID, today: date | None
 ) -> ValidationInput | None:
-    """The checks' input for a project (None when it doesn't exist or isn't visible).
+    """Return the checks' input for a project (None when it doesn't exist or isn't visible).
 
     The scope items are left out: only the AI review reads them (`AiJobStore` adds them).
     """

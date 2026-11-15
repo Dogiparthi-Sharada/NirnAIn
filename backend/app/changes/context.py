@@ -1,4 +1,11 @@
-"""What a change is read against: the project's current inputs and the plan in force."""
+"""What a change is read against: the project's current inputs and the plan in force.
+
+Purpose: Give the change readers, questions and impact one immutable view of the budget, deadline,
+work packages, team, links, skills and the plan in force they measure against.
+How it fits: Built by `ChangePlanReads.context` (app/repositories/change_plans.py) and passed to
+app/changes detect, llm, questions and derive; layer: changes.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 

@@ -1,10 +1,11 @@
-"""Exports state the planned work (round 3, R4).
+"""Tests that the exports state the planned work (round 3, R4).
 
-What: the MS Project export and the PDF give each work package the plan's own dates, its
-planned working days and the effort the plan books (weekly rate over those days).
-Why: QA's PACK-D-EXPORT-WORK: a package stretched for a part-timer was exported at its WBS
-duration, so W09 showed 25.6 h of work instead of 64 h and a one-day 8 h task 4 h.
-How it fits: pure functions of app/export on a hand-built run header and assignments.
+Purpose: QA's PACK-D-EXPORT-WORK: a package stretched for a part-timer was exported at its WBS
+duration (W09 showed 25.6 h instead of 64 h). The MS Project export and the PDF must give each
+package the plan's dates, its planned working days and the effort the plan books.
+How it fits: Pure tests of app/export (model, msproject, pdf) on a hand-built run header and
+assignments; layer: tests.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -58,6 +59,7 @@ def _plan() -> PlanExport:
 
 
 def test_export_tasks_carry_the_planned_days_and_effort() -> None:
+    """Each exported task has the plan's dates, working days and booked hours."""
     tasks = {task.name: task for task in _plan().tasks}
     assert (tasks["W09"].start, tasks["W09"].finish) == (date(2027, 1, 4), date(2027, 1, 29))
     assert (tasks["W09"].duration_days, tasks["W09"].work_hours) == (20, 64.0)
@@ -65,6 +67,7 @@ def test_export_tasks_carry_the_planned_days_and_effort() -> None:
 
 
 def test_ms_project_work_is_the_planned_effort() -> None:
+    """MS Project durations are the planned days and work is the booked effort."""
     root = ET.fromstring(render_msproject(_plan()))  # noqa: S314 (our own export, not input)
     work = {
         task.findtext("project:Name", namespaces=NAMESPACE): (
@@ -83,6 +86,7 @@ def test_ms_project_work_is_the_planned_effort() -> None:
 
 
 def test_pdf_schedule_agrees_with_ms_project() -> None:
+    """The PDF schedule shows the same dates, days and hours."""
     rows = {row[1]: row for row in schedule_rows(_plan())}
     assert rows["W09"][3:7] == ("Jan 4, 2027", "Jan 29, 2027", "20", "64 h")
     assert rows["W01"][5:7] == ("2", "8 h")

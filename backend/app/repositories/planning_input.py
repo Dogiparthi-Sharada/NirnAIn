@@ -1,31 +1,11 @@
 """Read a project's planning data and freeze it into the optimizer's input.
 
-Runs under the caller's RLS session (`OptimizationRepository` delegates
-here), so a user can only plan with data they can see. Business rules
-applied while reading (approved NirnAIn workflow, step 5):
-
-* Capacity: when the project has a team (`project_team_members`) only those
-  people plan, at the hours per week they give this project; otherwise every
-  active employee of the organization, at their default weekly capacity.
-* Deadline policy follows the PM's answer: 'soft' -> can move, anything else
-  (hard, Don't know, not answered) -> hard.
-* Outside specialists only when the PM answered 'yes', at the contractor
-  rate or the $175/h estimate: they take the work packages needing skills
-  nobody on the team has.
-* Skills: the project's Required skills reach the work packages they are
-  linked to, by WBS tag or else by keyword (`optimization/skill_links.py`).
-* Planning starts today: unfinished work never starts before `today` (the
-  caller's date, injectable for tests), even when the start date has passed.
-* Hourly rates are read as stored; people without one are planned at the
-  $85/h default (`model.DEFAULT_HOURLY_RATE_CENTS`) and the confirmation
-  sheet says so.
-* Budget, capacity and skill policies are used as stored. The contingency
-  reserve is held back from the budget: the plan may spend the rest.
-* Done work stays done (round 3, R2): a 0-day package an applied plan scheduled is
-  finished work, loaded as done at its applied dates and needing no skills
-  (`finished_work.py`).
-
-`input_facts.py` gathers what the confirmation sheet needs beyond the input.
+Purpose: A run must plan with exactly the data the caller can see, frozen at queue time, so the
+approved step-5 business rules are applied while reading (see `PlanningInputReader`).
+How it fits: Runs under the caller's RLS session (`OptimizationRepository.load_input` and the
+step-7 re-plan delegate here); constraints come from app/repositories/constraint_input.py and
+`input_facts.py` gathers what the confirmation sheet needs beyond the input; layer: repositories.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -33,7 +13,6 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
@@ -42,7 +21,6 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.optimization.model import (
     Allocation,
-    Constraints,
     Dependency,
     Employee,
     Milestone,
@@ -50,12 +28,12 @@ from app.optimization.model import (
     SkillRequirement,
     Task,
 )
-from app.optimization.remedies import DEFAULT_SPECIALIST_RATE_CENTS
 from app.optimization.skill_links import PackageText, ProjectSkill, link_skills
+from app.repositories.access import ProjectRef
+from app.repositories.constraint_input import build_constraints, read_constraint_set
 from app.repositories.finished_work import finished_work
 from app.repositories.tables import (
     allocations,
-    constraint_sets,
     dependencies,
     employee_skills,
     employees,
@@ -68,183 +46,77 @@ from app.repositories.tables import (
 )
 from app.repositories.work_packages import DELIVERABLE_LEVEL, work_packages
 
-
-@dataclass(frozen=True, slots=True)
-class ProjectContext:
-    id: uuid.UUID
-    org_id: uuid.UUID
-    name: str
-    start_date: date | None
-    target_end_date: date | None
-    budget_cents: int | None
+# The project fields the optimizer input needs: the same lookup as `access.visible_project`.
+ProjectContext = ProjectRef
 
 
 def _monday(day: date) -> date:
+    """Return the Monday of the week the day falls in."""
     return day - timedelta(days=day.weekday())
 
 
-def build_constraints(
-    constraint_set: sa.Row[Any] | None, project: ProjectContext, today: date
-) -> tuple[Constraints, date]:
-    """Constraint set with fallbacks to the project's own dates and budget; and the start."""
-    start = (constraint_set.start_date if constraint_set else None) or project.start_date or today
-    if constraint_set is None:
-        # Nothing answered yet: hard deadline, no outside specialists.
-        return (
-            Constraints(
-                budget_total_cents=project.budget_cents,
-                must_finish_by=project.target_end_date,
-                allow_contractors=False,
-            ),
-            start,
-        )
-    specialists_allowed = constraint_set.specialist_answer == "yes"
-    rate = constraint_set.contractor_rate_cents
-    if specialists_allowed and rate is None:
-        rate = DEFAULT_SPECIALIST_RATE_CENTS
-    budget = constraint_set.budget_total_cents
-    return (
-        Constraints(
-            budget_total_cents=budget if budget is not None else project.budget_cents,
-            labor_cap_cents=constraint_set.labor_cap_cents,
-            budget_mode=str(constraint_set.budget_mode),  # type: ignore[arg-type]
-            budget_penalty=float(constraint_set.budget_penalty),
-            contingency_pct=float(constraint_set.contingency_pct),
-            must_finish_by=constraint_set.must_finish_by or project.target_end_date,
-            deadline_mode="soft" if constraint_set.deadline_answer == "soft" else "hard",
-            deadline_penalty_per_day=float(constraint_set.deadline_penalty_per_day),
-            working_days_per_week=int(constraint_set.working_days_per_week),
-            capacity_mode=str(constraint_set.capacity_mode),  # type: ignore[arg-type]
-            capacity_penalty=float(constraint_set.capacity_penalty),
-            skill_mode=str(constraint_set.skill_mode),  # type: ignore[arg-type]
-            allow_contractors=specialists_allowed,
-            contractor_rate_cents=rate,
-        ),
-        start,
-    )
+class _WorkTree:
+    """The WBS's parent/child links and which nodes are plannable work packages."""
 
+    def __init__(self, nodes: Sequence[sa.Row[Any]], work_ids: set[uuid.UUID]) -> None:
+        """Index the children of every node and remember the work package ids."""
+        self._children: dict[uuid.UUID, list[uuid.UUID]] = defaultdict(list)
+        for node in nodes:
+            if node.parent_id is not None:
+                self._children[node.parent_id].append(node.id)
+        self._work_ids = work_ids
 
-async def read_constraint_set(conn: AsyncConnection, project_id: uuid.UUID) -> sa.Row[Any] | None:
-    """The project's constraint set row (None until step 5 is saved)."""
-    return (
-        await conn.execute(
-            sa.select(constraint_sets).where(constraint_sets.c.project_id == project_id)
-        )
-    ).first()
+    def leaves(self, node_id: uuid.UUID) -> list[uuid.UUID]:
+        """Return the work packages at or under a node, in WBS order.
+
+        Links and milestones set on a summary node apply to every package beneath it.
+        """
+        if node_id in self._work_ids:
+            return [node_id]
+        return [leaf for child in self._children.get(node_id, []) for leaf in self.leaves(child)]
 
 
 class PlanningInputReader:
-    """Queries behind `load_input` and the confirmation sheet."""
+    """Queries behind `load_input` and the confirmation sheet.
+
+    Business rules applied while reading (approved NirnAIn workflow, step 5):
+    capacity: with a project team only those people plan, at the hours they give this project;
+    otherwise every active employee at their default weekly capacity. Skills: the project's
+    Required skills reach the packages they are linked to, by WBS tag or else by keyword
+    (`optimization/skill_links.py`). Planning starts today: unfinished work never starts before
+    `today`. Hourly rates are read as stored; people without one are planned at the $85/h default.
+    Budget, capacity and skill policies are used as stored, the contingency reserve held back from
+    the budget. Done work stays done (round 3, R2): a 0-day package an applied plan scheduled is
+    loaded as done at its applied dates and needs no skills (`finished_work.py`).
+    """
 
     def __init__(self, conn: AsyncConnection) -> None:
+        """Use the caller's RLS-scoped connection."""
         self._conn = conn
 
     async def load(self, project: ProjectContext, today: date) -> PlanningInput:
         """Read the planning data the caller can see and freeze it into a model input.
 
-        Work packages are level-3 nodes and level-2 nodes without children,
-        with a positive duration, plus finished work (0 days left, scheduled by an
-        applied plan). The others block the run (`work_packages.packages_without_duration`).
-        Dependencies and milestones on summary nodes are expanded to the work packages
-        underneath them.
+        Work packages are level-3 nodes and level-2 nodes without children, with a positive
+        duration, plus finished work (0 days left, scheduled by an applied plan). The others block
+        the run (`work_packages.packages_without_duration`).
         """
         project_id = project.id
-        view = wbs_nodes_with_code
-        nodes = (
-            await self._conn.execute(
-                sa.select(
-                    view.c.id,
-                    view.c.parent_id,
-                    view.c.level,
-                    view.c.name,
-                    view.c.description,
-                    view.c.duration_days,
-                    view.c.effort_hours,
-                    view.c.owner_employee_id,
-                    view.c.code,
-                )
-                .where(view.c.project_id == project_id)
-                .order_by(view.c.path)
-            )
-        ).all()
-        children: dict[uuid.UUID, list[uuid.UUID]] = defaultdict(list)
-        for node in nodes:
-            if node.parent_id is not None:
-                children[node.parent_id].append(node.id)
+        nodes = await self._wbs_nodes(project_id)
         packages = work_packages(nodes)
         finished = await finished_work(
             self._conn, project_id, [node.id for node in packages if node.duration_days == 0]
         )
         work = [node for node in packages if (node.duration_days or 0) > 0 or node.id in finished]
-        work_ids = {node.id for node in work}
-
-        def leaves(node_id: uuid.UUID) -> list[uuid.UUID]:
-            if node_id in work_ids:
-                return [node_id]
-            return [leaf for child in children.get(node_id, []) for leaf in leaves(child)]
-
+        tree = _WorkTree(nodes, {node.id for node in work})
         requirements = await self._requirements(
             project_id, [node for node in work if node.id not in finished]
         )
         team, proficiencies = await self._team(project)
-
-        dependency_rows = (
-            await self._conn.execute(
-                sa.select(
-                    dependencies.c.predecessor_id,
-                    dependencies.c.successor_id,
-                    dependencies.c.type,
-                    dependencies.c.lag_days,
-                )
-                .where(dependencies.c.project_id == project_id)
-                .order_by(dependencies.c.predecessor_id, dependencies.c.successor_id)
-            )
-        ).all()
-        links: dict[tuple[str, str], Dependency] = {}
-        for row in dependency_rows:
-            for predecessor in leaves(row.predecessor_id):
-                for successor in leaves(row.successor_id):
-                    if predecessor != successor:
-                        links.setdefault(
-                            (str(predecessor), str(successor)),
-                            Dependency(
-                                str(predecessor),
-                                str(successor),
-                                str(row.type),  # type: ignore[arg-type]
-                                int(row.lag_days),
-                            ),
-                        )
-
+        links = await self._dependencies(project_id, tree)
         constraint_set = await read_constraint_set(self._conn, project_id)
         constraints, start = build_constraints(constraint_set, project, today)
-
-        milestone_list = []
-        for row in (
-            await self._conn.execute(
-                sa.select(
-                    milestones.c.id,
-                    milestones.c.name,
-                    milestones.c.due_date,
-                    milestones.c.wbs_node_id,
-                    milestones.c.mode,
-                )
-                .where(milestones.c.project_id == project_id)
-                .order_by(milestones.c.due_date, milestones.c.id)
-            )
-        ).all():
-            covered = leaves(row.wbs_node_id) if row.wbs_node_id is not None else []
-            # A milestone without work packages under it has nothing to check.
-            if covered:
-                milestone_list.append(
-                    Milestone(
-                        id=str(row.id),
-                        name=row.name,
-                        due_date=row.due_date,
-                        mode=str(row.mode),  # type: ignore[arg-type]
-                        task_ids=tuple(str(task_id) for task_id in covered),
-                    )
-                )
-
+        milestone_list = await self._milestones(project_id, tree)
         bookings = await self._allocations([row.id for row in team], project_id, start)
 
         return PlanningInput(
@@ -279,7 +151,7 @@ class PlanningInputReader:
                 )
                 for row in team
             ),
-            dependencies=tuple(links.values()),
+            dependencies=tuple(links),
             constraints=constraints,
             milestones=tuple(milestone_list),
             allocations=tuple(bookings),
@@ -289,11 +161,99 @@ class PlanningInputReader:
             today=today,
         )
 
+    async def _wbs_nodes(self, project_id: uuid.UUID) -> Sequence[sa.Row[Any]]:
+        """Return the project's WBS nodes in WBS order."""
+        view = wbs_nodes_with_code
+        return (
+            await self._conn.execute(
+                sa.select(
+                    view.c.id,
+                    view.c.parent_id,
+                    view.c.level,
+                    view.c.name,
+                    view.c.description,
+                    view.c.duration_days,
+                    view.c.effort_hours,
+                    view.c.owner_employee_id,
+                    view.c.code,
+                )
+                .where(view.c.project_id == project_id)
+                .order_by(view.c.path)
+            )
+        ).all()
+
+    async def _dependencies(self, project_id: uuid.UUID, tree: _WorkTree) -> list[Dependency]:
+        """Return the project's links expanded to work packages, without duplicates or self-links.
+
+        A link between summary nodes links every package under one to every package under the
+        other; the first link found for a pair wins.
+        """
+        dependency_rows = (
+            await self._conn.execute(
+                sa.select(
+                    dependencies.c.predecessor_id,
+                    dependencies.c.successor_id,
+                    dependencies.c.type,
+                    dependencies.c.lag_days,
+                )
+                .where(dependencies.c.project_id == project_id)
+                .order_by(dependencies.c.predecessor_id, dependencies.c.successor_id)
+            )
+        ).all()
+        links: dict[tuple[str, str], Dependency] = {}
+        for row in dependency_rows:
+            for predecessor in tree.leaves(row.predecessor_id):
+                for successor in tree.leaves(row.successor_id):
+                    if predecessor != successor:
+                        links.setdefault(
+                            (str(predecessor), str(successor)),
+                            Dependency(
+                                str(predecessor),
+                                str(successor),
+                                str(row.type),  # type: ignore[arg-type]
+                                int(row.lag_days),
+                            ),
+                        )
+        return list(links.values())
+
+    async def _milestones(self, project_id: uuid.UUID, tree: _WorkTree) -> list[Milestone]:
+        """Return the milestones that cover work packages, by due date."""
+        milestone_list = []
+        for row in (
+            await self._conn.execute(
+                sa.select(
+                    milestones.c.id,
+                    milestones.c.name,
+                    milestones.c.due_date,
+                    milestones.c.wbs_node_id,
+                    milestones.c.mode,
+                )
+                .where(milestones.c.project_id == project_id)
+                .order_by(milestones.c.due_date, milestones.c.id)
+            )
+        ).all():
+            covered = tree.leaves(row.wbs_node_id) if row.wbs_node_id is not None else []
+            # A milestone without work packages under it has nothing to check.
+            if covered:
+                milestone_list.append(
+                    Milestone(
+                        id=str(row.id),
+                        name=row.name,
+                        due_date=row.due_date,
+                        mode=str(row.mode),  # type: ignore[arg-type]
+                        task_ids=tuple(str(task_id) for task_id in covered),
+                    )
+                )
+        return milestone_list
+
     async def _requirements(
         self, project_id: uuid.UUID, work: Sequence[sa.Row[Any]]
     ) -> dict[str, list[SkillRequirement]]:
-        """Work package id -> the skills it needs: tagged on step 4 (never an Optional one),
-        plus the project's Required skills linked by keyword (`skill_links.link_skills`)."""
+        """Return the skills each work package needs, by package id.
+
+        Skills tagged on step 4 (never an Optional one), plus the project's Required skills
+        linked by keyword (`skill_links.link_skills`).
+        """
         if not work:
             return {}
         required = task_skill_requirements
@@ -332,7 +292,11 @@ class PlanningInputReader:
     async def _team(
         self, project: ProjectContext
     ) -> tuple[Sequence[sa.Row[Any]], dict[uuid.UUID, dict[str, int]]]:
-        """The project team at its hours on this project, else every active employee."""
+        """Return the people who plan and their skill proficiencies.
+
+        The project team at its hours on this project, else every active employee at their
+        default weekly capacity.
+        """
         member = project_team_members
         columns = (
             employees.c.id,
@@ -374,7 +338,7 @@ class PlanningInputReader:
     async def _allocations(
         self, employee_ids: list[uuid.UUID], project_id: uuid.UUID, start: date
     ) -> list[Allocation]:
-        """Hours the team is already booked on other projects from the start week on."""
+        """Return the hours the team is already booked on other projects from the start week."""
         if not employee_ids:
             return []
         rows = (

@@ -1,3 +1,12 @@
+"""API models and pure rules of the planning steps: constraints, resources and dependencies.
+
+Purpose: Validate the constraint set (budget, deadline, policies, answers to the plan-changing
+questions), describe the resource pool and dependencies, and compute the planning window, average
+load, skill coverage and dependency cycles.
+How it fits: Used by app/api/v1/planning.py and app/repositories/planning.py; layer: domain.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
+
 from __future__ import annotations
 
 import math
@@ -35,6 +44,8 @@ ANSWER_FIELDS = (
 
 
 class Milestone(CamelModel):
+    """A dated milestone, optionally tied to a WBS node, with its policy."""
+
     id: uuid.UUID
     name: str
     due_date: date
@@ -43,6 +54,8 @@ class Milestone(CamelModel):
 
 
 class ConstraintSet(CamelModel):
+    """The project's saved constraints and answers to the plan-changing questions."""
+
     budget_total_cents: int | None
     contingency_pct: float
     labor_cap_cents: int | None
@@ -63,6 +76,8 @@ class ConstraintSet(CamelModel):
 
 
 class MilestoneInput(InputModel):
+    """A milestone in the constraints body; without `id` it is new."""
+
     id: uuid.UUID | None = None
     name: MilestoneName
     due_date: date
@@ -71,6 +86,8 @@ class MilestoneInput(InputModel):
 
 
 class ConstraintSetInput(InputModel):
+    """Body of `PUT …/constraints`: the whole constraint set."""
+
     budget_total_cents: BudgetCents | None
     contingency_pct: Pct
     labor_cap_cents: BudgetCents | None
@@ -92,13 +109,14 @@ class ConstraintSetInput(InputModel):
 
     @model_validator(mode="after")
     def _validate(self) -> ConstraintSetInput:
+        """Reject a deadline before the start date and duplicate milestone ids."""
         if (
             self.start_date is not None
             and self.must_finish_by is not None
             and self.must_finish_by < self.start_date
         ):
             raise ValueError("mustFinishBy must be on or after startDate")
-        ids = [m.id for m in self.milestones if m.id is not None]
+        ids = [milestone.id for milestone in self.milestones if milestone.id is not None]
         if len(ids) != len(set(ids)):
             raise ValueError("Milestone ids must be unique")
         return self
@@ -124,12 +142,16 @@ class ConstraintSetInput(InputModel):
 
 # --------------------------------------------------------------------------- resources
 class EmployeeSkill(CamelModel):
+    """A skill an employee holds and at which proficiency."""
+
     skill_id: uuid.UUID
     name: str
     proficiency: int
 
 
 class PoolEmployee(CamelModel):
+    """An employee of the organization that the project can draw on."""
+
     employee_id: uuid.UUID
     full_name: str
     role_title: str | None
@@ -140,10 +162,14 @@ class PoolEmployee(CamelModel):
 
 
 class CapacityEntry(PoolEmployee):
+    """A pool employee with the hours already allocated to them."""
+
     allocated_hours: float
 
 
 class SkillCoverage(CamelModel):
+    """Whether a skill the project needs is held by someone on the team."""
+
     skill_id: uuid.UUID
     name: str
     required: bool
@@ -152,6 +178,8 @@ class SkillCoverage(CamelModel):
 
 # --------------------------------------------------------------------------- dependencies
 class Dependency(CamelModel):
+    """A link between two work packages, with readable labels."""
+
     id: uuid.UUID
     predecessor_id: uuid.UUID
     successor_id: uuid.UUID
@@ -163,6 +191,8 @@ class Dependency(CamelModel):
 
 
 class DependencyCreate(InputModel):
+    """Body to add a dependency between two work packages."""
+
     predecessor_id: uuid.UUID
     successor_id: uuid.UUID
     type: DependencyType = DependencyType.FS
@@ -170,31 +200,39 @@ class DependencyCreate(InputModel):
 
     @model_validator(mode="after")
     def _validate(self) -> DependencyCreate:
+        """Reject a work package that depends on itself."""
         if self.predecessor_id == self.successor_id:
             raise ValueError("A task cannot depend on itself")
         return self
 
 
 class DependencyUpdate(InputModel):
+    """Body to change a dependency's type or lag."""
+
     type: DependencyType | None = None
     lag_days: LagDays | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> DependencyUpdate:
+        """Reject an empty body and nulls."""
         if not self.model_fields_set:
             raise ValueError("Provide at least one field to update")
-        nulls = sorted(f for f in self.model_fields_set if getattr(self, f) is None)
+        nulls = sorted(
+            field_name for field_name in self.model_fields_set if getattr(self, field_name) is None
+        )
         if nulls:
             raise ValueError(f"Fields cannot be null: {', '.join(nulls)}")
         return self
 
     def changes(self) -> dict[str, Any]:
+        """Return the columns the body sets."""
         return self.model_dump(exclude_unset=True, by_alias=False)
 
 
 # --------------------------------------------------------------------------- computations
-def _monday(d: date) -> date:
-    return d - timedelta(days=d.weekday())
+def _monday(day: date) -> date:
+    """Return the Monday of the week the day falls in."""
+    return day - timedelta(days=day.weekday())
 
 
 def planning_weeks(start: date | None, end: date | None, today: date) -> list[date]:
@@ -239,7 +277,13 @@ def skill_coverage(
         for skill_id, (name, _) in held.items()
         if skill_id not in required
     ]
-    out.sort(key=lambda c: (not c.required, c.name.casefold(), str(c.skill_id)))
+    out.sort(
+        key=lambda coverage: (
+            not coverage.required,
+            coverage.name.casefold(),
+            str(coverage.skill_id),
+        )
+    )
     return out
 
 

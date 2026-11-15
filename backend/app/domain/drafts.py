@@ -1,8 +1,10 @@
-"""Project drafts: details read from a transcript, document or pasted notes.
+"""API models of project drafts: details read from a transcript, document or pasted notes.
 
-A draft is never stored. Every field carries where it came from so the PM can
-check it before creating the project: `stated` (with the verbatim quote),
-`inferred` (worked out from a quote, needs confirming) or `missing`.
+Purpose: A draft is never stored. Every field carries where it came from so the PM can check it
+before creating the project: `stated` (with the verbatim quote), `inferred` or `missing`.
+How it fits: Returned by app/api/v1/drafts.py; filled by app/drafts (Claude or the rule-based
+reader); layer: domain.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations

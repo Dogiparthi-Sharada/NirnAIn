@@ -1,3 +1,12 @@
+"""AI job endpoints: generate or validate the WBS in the background, and poll the latest job.
+
+Purpose: Start long AI work without blocking the request, one job per project and kind, and let the
+client poll for the result.
+How it fits: Rows via app/repositories/ai_jobs.py; the job runs in app/jobs/ai_jobs.py after the
+response (and so after the transaction commits); layer: api.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
+
 from __future__ import annotations
 
 from typing import Annotated
@@ -28,6 +37,11 @@ async def _start(
     jobs: AiJobs,
     runner: AiRunner,
 ) -> AiJob:
+    """Queue an AI job of `kind` for the project and schedule it to run after the response.
+
+    Returns 404/403 for a hidden or read-only project, 409 when a job is already running (or a WBS
+    exists for generation); a stale job orphaned by a restart is failed first.
+    """
     if not await jobs.project_exists(project_id):
         raise NotFoundError("Project not found")
     if not await jobs.can_write(project_id):
@@ -70,6 +84,7 @@ async def generate_wbs(
     jobs: AiJobs,
     runner: AiRunner,
 ) -> AiJob:
+    """Start generating the WBS from the accepted scope; 409 when the project already has one."""
     return await _start(
         AiJobKind.WBS_GENERATE, project_id, request, response, background, jobs, runner
     )
@@ -89,6 +104,7 @@ async def validate_wbs(
     jobs: AiJobs,
     runner: AiRunner,
 ) -> AiJob:
+    """Start an AI review of the WBS for structural problems and missing work."""
     return await _start(
         AiJobKind.WBS_VALIDATE, project_id, request, response, background, jobs, runner
     )
@@ -102,6 +118,7 @@ async def validate_wbs(
 async def latest_job(
     project_id: ProjectId, kind: Annotated[AiJobKind, Query()], jobs: AiJobs
 ) -> AiJob:
+    """Return the newest AI job of a kind; 404 when there is none."""
     job = await jobs.latest(project_id, kind)
     if job is None:
         raise NotFoundError("No AI jobs of this kind yet")

@@ -1,7 +1,11 @@
-"""AI intake, user side: runs and scope items under the caller's RLS session.
+"""AI intake, user side: intake runs and scope items under the caller's RLS session.
 
-The background worker's writes live in `app.repositories.intake_jobs`
-(service connection), mirroring `app.repositories.optimization`.
+Purpose: Queue one intake run at a time per project, store the pasted notes with it and let the PM
+review, edit, add and remove scope items, with the evidence rules ("never invent") applied when the
+PM takes the quoted version of a flagged item.
+How it fits: Used by app/api/v1/intake.py; the background worker's writes live in
+app/repositories/intake_jobs.py (service connection); layer: repositories.
+Created: 2026-10-21 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -25,30 +29,29 @@ from app.domain.common import (
     ScopeStatus,
 )
 from app.domain.intake import IntakeRun, ScopeItem
+from app.repositories import access
+from app.repositories.job_rows import started_before
 from app.repositories.tables import intake_runs, projects, scope_items, source_documents
 
 ACTIVE = (JobStatus.QUEUED, JobStatus.RUNNING)
 RUN_HISTORY_LIMIT = 20
-run_t = intake_runs
-item_t = scope_items
-doc_t = source_documents
 
 _ITEM_COLUMNS = (
-    item_t.c.id,
-    item_t.c.project_id,
-    item_t.c.category,
-    item_t.c.text,
-    item_t.c.status,
-    item_t.c.origin,
-    item_t.c.confidence,
-    item_t.c.source_quote,
-    item_t.c.evidence,
-    item_t.c.evidence_note,
-    item_t.c.suggested_text,
-    item_t.c.source_document_id,
-    item_t.c.sort_order,
-    item_t.c.created_at,
-    item_t.c.updated_at,
+    scope_items.c.id,
+    scope_items.c.project_id,
+    scope_items.c.category,
+    scope_items.c.text,
+    scope_items.c.status,
+    scope_items.c.origin,
+    scope_items.c.confidence,
+    scope_items.c.source_quote,
+    scope_items.c.evidence,
+    scope_items.c.evidence_note,
+    scope_items.c.suggested_text,
+    scope_items.c.source_document_id,
+    scope_items.c.sort_order,
+    scope_items.c.created_at,
+    scope_items.c.updated_at,
 )
 
 
@@ -58,6 +61,8 @@ class ActiveRunExistsError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class ActiveRun:
+    """A queued or running intake run and whether it has been active for too long (orphaned)."""
+
     id: uuid.UUID
     stale: bool
 
@@ -65,74 +70,75 @@ class ActiveRun:
 def readable_uploads(project_id: uuid.UUID) -> sa.ColumnElement[bool]:
     """Uploaded documents of the project whose text was read."""
     return sa.and_(
-        doc_t.c.project_id == project_id,
-        doc_t.c.kind != DocumentKind.TEXT,
-        doc_t.c.extraction_status == JobStatus.SUCCEEDED,
-        doc_t.c.content_text.is_not(None),
+        source_documents.c.project_id == project_id,
+        source_documents.c.kind != DocumentKind.TEXT,
+        source_documents.c.extraction_status == JobStatus.SUCCEEDED,
+        source_documents.c.content_text.is_not(None),
     )
 
 
 def _run_select() -> sa.Select[Any]:
+    """Return the select of the intake run columns the API shows."""
     return sa.select(
-        run_t.c.id,
-        run_t.c.project_id,
-        run_t.c.status,
-        run_t.c.model,
-        run_t.c.items_extracted,
-        run_t.c.error,
-        run_t.c.created_at,
-        run_t.c.started_at,
-        run_t.c.finished_at,
+        intake_runs.c.id,
+        intake_runs.c.project_id,
+        intake_runs.c.status,
+        intake_runs.c.model,
+        intake_runs.c.items_extracted,
+        intake_runs.c.error,
+        intake_runs.c.created_at,
+        intake_runs.c.started_at,
+        intake_runs.c.finished_at,
     )
 
 
 def _to_run(row: sa.Row[Any]) -> IntakeRun:
+    """Turn an intake run row into the API model."""
     return IntakeRun.model_validate(dict(row._mapping))
 
 
 def _to_item(row: sa.Row[Any]) -> ScopeItem:
+    """Turn a scope item row into the API model."""
     return ScopeItem.model_validate(dict(row._mapping))
-
-
-def older_than(seconds: int) -> sa.ColumnElement[bool]:
-    """Active runs started (or queued) more than `seconds` ago: orphaned by a restart."""
-    cutoff = sa.func.now() - sa.func.make_interval(0, 0, 0, 0, 0, 0, seconds)
-    return sa.func.coalesce(run_t.c.started_at, run_t.c.created_at) < cutoff
 
 
 class IntakeRepository:
     """User-facing queries: everything runs under the caller's RLS session."""
 
     def __init__(self, conn: AsyncConnection) -> None:
+        """Use the caller's RLS-scoped connection."""
         self._conn = conn
 
     async def project_exists(self, project_id: uuid.UUID) -> bool:
+        """Tell whether the caller can see the project."""
         stmt = sa.select(projects.c.id).where(projects.c.id == project_id)
         return (await self._conn.execute(stmt)).first() is not None
 
     async def can_write(self, project_id: uuid.UUID) -> bool:
-        stmt = sa.select(sa.func.private.can_write_project(project_id))
-        return bool((await self._conn.execute(stmt)).scalar())
+        """Tell whether the caller may change the project."""
+        return await access.can_write_project(self._conn, project_id)
 
     async def active_run(self, project_id: uuid.UUID, stale_after_s: int) -> ActiveRun | None:
+        """Return the project's active intake run, flagged stale after `stale_after_s`, or None."""
         stmt = (
-            sa.select(run_t.c.id, older_than(stale_after_s).label("stale"))
-            .where(run_t.c.project_id == project_id, run_t.c.status.in_(ACTIVE))
+            sa.select(intake_runs.c.id, started_before(intake_runs, stale_after_s).label("stale"))
+            .where(intake_runs.c.project_id == project_id, intake_runs.c.status.in_(ACTIVE))
             .limit(1)
         )
         row = (await self._conn.execute(stmt)).first()
         return ActiveRun(id=row.id, stale=bool(row.stale)) if row else None
 
     async def fail_run(self, run_id: uuid.UUID, error: str) -> None:
+        """Mark an active intake run failed with the error shown to the user."""
         await self._conn.execute(
-            sa.update(run_t)
-            .where(run_t.c.id == run_id, run_t.c.status.in_(ACTIVE))
+            sa.update(intake_runs)
+            .where(intake_runs.c.id == run_id, intake_runs.c.status.in_(ACTIVE))
             .values(status=JobStatus.FAILED, error=error, finished_at=sa.func.now())
         )
 
     async def has_readable_upload(self, project_id: uuid.UUID) -> bool:
         """Whether an upload's text was read, so a run can start without pasted notes."""
-        stmt = sa.select(doc_t.c.id).where(readable_uploads(project_id)).limit(1)
+        stmt = sa.select(source_documents.c.id).where(readable_uploads(project_id)).limit(1)
         return (await self._conn.execute(stmt)).first() is not None
 
     async def create(self, project_id: uuid.UUID, text: str) -> uuid.UUID:
@@ -145,7 +151,9 @@ class IntakeRepository:
         run_id = uuid.uuid4()
         try:
             await self._conn.execute(
-                sa.insert(run_t).values(id=run_id, project_id=project_id, status=JobStatus.QUEUED)
+                sa.insert(intake_runs).values(
+                    id=run_id, project_id=project_id, status=JobStatus.QUEUED
+                )
             )
         except IntegrityError as exc:
             if pg_error_info(exc).sqlstate == "23505":
@@ -153,7 +161,7 @@ class IntakeRepository:
             raise
         if text:
             await self._conn.execute(
-                sa.insert(doc_t).values(
+                sa.insert(source_documents).values(
                     id=uuid.uuid4(),
                     project_id=project_id,
                     kind=DocumentKind.TEXT,
@@ -165,7 +173,10 @@ class IntakeRepository:
         return run_id
 
     async def get(self, project_id: uuid.UUID, run_id: uuid.UUID) -> IntakeRun | None:
-        stmt = _run_select().where(run_t.c.project_id == project_id, run_t.c.id == run_id)
+        """Return one of the project's intake runs, or None."""
+        stmt = _run_select().where(
+            intake_runs.c.project_id == project_id, intake_runs.c.id == run_id
+        )
         row = (await self._conn.execute(stmt)).first()
         return _to_run(row) if row else None
 
@@ -173,17 +184,18 @@ class IntakeRepository:
         """The project's most recent runs, newest first ("Previous Intakes")."""
         stmt = (
             _run_select()
-            .where(run_t.c.project_id == project_id)
-            .order_by(run_t.c.created_at.desc(), run_t.c.id.desc())
+            .where(intake_runs.c.project_id == project_id)
+            .order_by(intake_runs.c.created_at.desc(), intake_runs.c.id.desc())
             .limit(RUN_HISTORY_LIMIT)
         )
         return [_to_run(row) for row in (await self._conn.execute(stmt)).all()]
 
     async def latest(self, project_id: uuid.UUID) -> IntakeRun | None:
+        """Return the project's newest intake run, or None."""
         stmt = (
             _run_select()
-            .where(run_t.c.project_id == project_id)
-            .order_by(run_t.c.created_at.desc(), run_t.c.id.desc())
+            .where(intake_runs.c.project_id == project_id)
+            .order_by(intake_runs.c.created_at.desc(), intake_runs.c.id.desc())
             .limit(1)
         )
         row = (await self._conn.execute(stmt)).first()
@@ -196,11 +208,11 @@ class IntakeRepository:
         (Scope Review lists them under "Removed" with Undo)."""
         stmt = (
             sa.select(*_ITEM_COLUMNS)
-            .where(item_t.c.project_id == project_id)
-            .order_by(item_t.c.category, item_t.c.sort_order)
+            .where(scope_items.c.project_id == project_id)
+            .order_by(scope_items.c.category, scope_items.c.sort_order)
         )
         if not include_removed:
-            stmt = stmt.where(item_t.c.status != ScopeStatus.REMOVED)
+            stmt = stmt.where(scope_items.c.status != ScopeStatus.REMOVED)
         return [_to_item(row) for row in (await self._conn.execute(stmt)).all()]
 
     async def create_item(
@@ -212,12 +224,12 @@ class IntakeRepository:
         """
         item_id = uuid.uuid4()
         next_order = (
-            sa.select(sa.func.coalesce(sa.func.max(item_t.c.sort_order) + 1, 0))
-            .where(item_t.c.project_id == project_id, item_t.c.category == category)
+            sa.select(sa.func.coalesce(sa.func.max(scope_items.c.sort_order) + 1, 0))
+            .where(scope_items.c.project_id == project_id, scope_items.c.category == category)
             .scalar_subquery()
         )
         await self._conn.execute(
-            sa.insert(item_t).values(
+            sa.insert(scope_items).values(
                 id=item_id,
                 project_id=project_id,
                 category=category,
@@ -227,7 +239,7 @@ class IntakeRepository:
                 sort_order=next_order,
             )
         )
-        stmt = sa.select(*_ITEM_COLUMNS).where(item_t.c.id == item_id)
+        stmt = sa.select(*_ITEM_COLUMNS).where(scope_items.c.id == item_id)
         row = (await self._conn.execute(stmt)).first()
         return _to_item(row) if row else None
 
@@ -242,19 +254,20 @@ class IntakeRepository:
             values: dict[str, Any] = {**patch, "updated_at": sa.func.now()}
             new_text = patch.get("text")
             if new_text is not None:
-                takes_suggestion = item_t.c.suggested_text == new_text
+                takes_suggestion = scope_items.c.suggested_text == new_text
                 values["evidence"] = sa.case(
-                    (takes_suggestion, sa.literal(Evidence.STATED.value)), else_=item_t.c.evidence
+                    (takes_suggestion, sa.literal(Evidence.STATED.value)),
+                    else_=scope_items.c.evidence,
                 )
                 values["evidence_note"] = sa.case(
-                    (takes_suggestion, sa.null()), else_=item_t.c.evidence_note
+                    (takes_suggestion, sa.null()), else_=scope_items.c.evidence_note
                 )
                 values["suggested_text"] = sa.case(
-                    (takes_suggestion, sa.null()), else_=item_t.c.suggested_text
+                    (takes_suggestion, sa.null()), else_=scope_items.c.suggested_text
                 )
             await self._conn.execute(
-                sa.update(item_t).where(item_t.c.id == item_id).values(**values)
+                sa.update(scope_items).where(scope_items.c.id == item_id).values(**values)
             )
-        stmt = sa.select(*_ITEM_COLUMNS).where(item_t.c.id == item_id)
+        stmt = sa.select(*_ITEM_COLUMNS).where(scope_items.c.id == item_id)
         row = (await self._conn.execute(stmt)).first()
         return _to_item(row) if row else None

@@ -1,19 +1,14 @@
 """Optimization endpoints: the inputs sheet, queueing a run and reading runs.
 
-`GET …/optimization/inputs` is the confirmation sheet ("Check the inputs the
-solver will use"). `POST …/optimization/runs` freezes the inputs (with the
-body's overrides, remedy and baseline applied) into a queued run that the
-in-process worker (`app/jobs/optimizer.py`) solves after the response. The
-run's `options` are the body as sent plus `inputsHash`: the hash the inputs
-sheet showed for the saved inputs, so the screen can tell when the latest
-plan is out of date (the sheet's `appliedHash` is that hash for the plan in
-force), and `solverSettings`: how the worker solves it (solver, version,
-time limit, workers, seed, objective weights). With `changeRequestId` this
-is also the re-plan of a change on step 7. With `reviewedHash` (the hash the
-sheet showed when the PM approved it) the run is refused with 409 when the
-inputs changed since that review. Inputs stay editable after a
-plan is applied; a run then starts from the plan in force (its baseline)
-unless the body names another `baselineRunId`.
+Purpose: `GET …/optimization/inputs` is the "Check the inputs the solver will use" sheet with the
+inputs hash; `POST …/optimization/runs` freezes the inputs (with the body's overrides, remedy and
+baseline) into a queued run. A run while a plan is in force starts from that plan unless the body
+names another `baselineRunId`; with `reviewedHash` it is refused (409) when the inputs changed since
+the PM's review; with `changeRequestId` it is the re-plan of a step-7 change. The run's `options`
+are the body as sent plus `inputsHash` and `solverSettings`.
+How it fits: Uses app/repositories/optimization.py and the pure app/optimization modules; the
+in-process worker (app/jobs/optimizer.py) solves the run after the response; layer: api.
+Created: 2026-10-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -60,6 +55,7 @@ class AppliedInputs(OptimizationInputs):
 
 
 async def _project(runs: OptimizationRuns, project_id: uuid.UUID) -> ProjectContext:
+    """Return the project; 404 when it is hidden."""
     project = await runs.project(project_id)
     if project is None:
         raise NotFoundError("Project not found")
@@ -95,6 +91,7 @@ def _with_unplanned_work(sheet: Sheet, packages: list[str]) -> Sheet:
         message = f"{', '.join(names[:-1])} and {names[-1]} have no duration: enter them on step 4"
 
     def flagged(row: Row) -> Row:
+        """Mark the work packages row as needing the PM when some package has no duration."""
         if row.key != "workPackages":
             return row
         return replace(
@@ -108,9 +105,12 @@ def _with_unplanned_work(sheet: Sheet, packages: list[str]) -> Sheet:
 
 
 async def _sheet(runs: OptimizationRuns, project: ProjectContext) -> tuple[PlanningInput, Sheet]:
-    inp = await runs.load_input(project, datetime.now(UTC).date())
-    sheet = build_sheet(await runs.input_facts(project, inp))
-    return inp, _with_unplanned_work(sheet, await runs.packages_without_duration(project.id))
+    """Load the saved inputs and build the confirmation sheet, unplanned work included."""
+    planning_input = await runs.load_input(project, datetime.now(UTC).date())
+    sheet = build_sheet(await runs.input_facts(project, planning_input))
+    return planning_input, _with_unplanned_work(
+        sheet, await runs.packages_without_duration(project.id)
+    )
 
 
 async def _from_baseline(
@@ -147,7 +147,7 @@ async def get_inputs(project_id: ProjectId, runs: OptimizationRuns) -> AppliedIn
     """The confirmation sheet shown before a run (`ready` false while `blocking` is
     non-empty), with `appliedHash`: the inputs hash of the plan in force, if any."""
     project = await _project(runs, project_id)
-    inp, sheet = await _sheet(runs, project)
+    planning_input, sheet = await _sheet(runs, project)
     applied = await runs.applied_run(project_id)
     return AppliedInputs(
         rows=[
@@ -159,7 +159,7 @@ async def get_inputs(project_id: ProjectId, runs: OptimizationRuns) -> AppliedIn
         ready=sheet.ready,
         blocking=sheet.blocking,
         missing=sheet.missing,
-        hash=inputs_hash(inp),
+        hash=inputs_hash(planning_input),
         applied_hash=applied.inputs_hash if applied else None,
     )
 
@@ -195,10 +195,10 @@ async def create_run(
             raise ConflictError(ACTIVE_RUN_DETAIL)
         await runs.fail_run(active.id, RESTART_ERROR)  # orphaned by a restart
 
-    inp, sheet = await _sheet(runs, project)
+    planning_input, sheet = await _sheet(runs, project)
     # Fingerprint of the saved inputs, before this run's baseline, overrides and
     # remedy: exactly the `hash` GET …/optimization/inputs returns for the same data.
-    saved_inputs_hash = inputs_hash(inp)
+    saved_inputs_hash = inputs_hash(planning_input)
     # CON-019: the PM approved the sheet showing `reviewedHash`; never run other inputs.
     if body.reviewed_hash is not None and body.reviewed_hash != saved_inputs_hash:
         raise ConflictError(STALE_REVIEW_DETAIL)
@@ -216,16 +216,18 @@ async def create_run(
             raise NotFoundError("Change request not found")
         if change_status in DECIDED_CHANGE_STATUSES:
             raise ConflictError(DECIDED_CHANGE_DETAIL)
-    inp = await _from_baseline(runs, project_id, inp, body.baseline_run_id)
+    planning_input = await _from_baseline(runs, project_id, planning_input, body.baseline_run_id)
 
     # The body exactly as sent (camelCase, ids and dates as strings): the run's setup.
     options = body.model_dump(mode="json", by_alias=True, exclude_none=True)
-    inp = apply_remedy(apply_overrides(inp, options.get("overrides")), body.remedy)
+    planning_input = apply_remedy(
+        apply_overrides(planning_input, options.get("overrides")), body.remedy
+    )
     options["inputsHash"] = saved_inputs_hash
-    options["solverSettings"] = run_settings(request.app.state.settings, inp)
+    options["solverSettings"] = run_settings(request.app.state.settings, planning_input)
 
     try:
-        run_id = await runs.create(project_id, inp.to_snapshot(), options)
+        run_id = await runs.create(project_id, planning_input.to_snapshot(), options)
     except ActiveRunExistsError as exc:  # lost a race with a concurrent request
         raise ConflictError(ACTIVE_RUN_DETAIL) from exc
     if body.change_request_id is not None:

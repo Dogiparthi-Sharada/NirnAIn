@@ -1,11 +1,10 @@
 """Facts behind the optimizer's confirmation sheet, and the inputs fingerprint.
 
-`facts_from_input` reads what the frozen planning input already holds; the
-repository adds what only the database knows (estimate confirmations, the
-answers to the step-5 questions, the project's skill list, where the budget
-came from). `app/optimization/input_sheet.py` turns the facts into rows.
-`inputs_hash` fingerprints exactly what the solver will use, so the screen
-can show "Inputs locked · hash 3f9a1c…".
+Purpose: `inputs_hash` fingerprints exactly what the solver will use, so the screen can show "Inputs
+locked · hash 3f9a1c…" and a run or an apply can be refused when the inputs changed.
+How it fits: `facts_from_input` reads the frozen input; app/repositories/input_facts.py adds what
+only the database knows; input_sheet.py turns the facts into rows; layer: optimization.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -95,10 +94,13 @@ class InputFacts:
         ]
 
 
-def _task_skill_gaps(inp: PlanningInput) -> list[str]:
+def _task_skill_gaps(planning_input: PlanningInput) -> list[str]:
+    """Return the skills some work package needs that nobody on the team covers, once each."""
     gaps: list[str] = []
-    for task in inp.tasks:
-        if not task.skills or any(covers(employee.skills, task) for employee in inp.employees):
+    for task in planning_input.tasks:
+        if not task.skills or any(
+            covers(employee.skills, task) for employee in planning_input.employees
+        ):
             continue
         gaps += [
             requirement.skill_name
@@ -108,35 +110,41 @@ def _task_skill_gaps(inp: PlanningInput) -> list[str]:
     return gaps
 
 
-def facts_from_input(inp: PlanningInput, **database_facts: Any) -> InputFacts:
+def facts_from_input(planning_input: PlanningInput, **database_facts: Any) -> InputFacts:
     """Facts the planning input already holds, plus the ones the repository looked up."""
-    constraints = inp.constraints
+    constraints = planning_input.constraints
     facts = InputFacts(
-        work_packages=len(inp.tasks),
-        effort_days=sum(task.duration_days for task in inp.tasks),
-        dependency_types=dict(Counter(dependency.type for dependency in inp.dependencies)),
+        work_packages=len(planning_input.tasks),
+        effort_days=sum(task.duration_days for task in planning_input.tasks),
+        dependency_types=dict(
+            Counter(dependency.type for dependency in planning_input.dependencies)
+        ),
         budget_cents=constraints.budget_total_cents,
         budget_mode=constraints.budget_mode,
         contingency_pct=constraints.contingency_pct,
         must_finish_by=constraints.must_finish_by,
         contractor_rate_cents=constraints.contractor_rate_cents,
-        team=[employee.name for employee in inp.employees],
-        employees=[employee.name for employee in inp.employees if not employee.is_contractor],
+        team=[employee.name for employee in planning_input.employees],
+        employees=[
+            employee.name for employee in planning_input.employees if not employee.is_contractor
+        ],
         standard_rate_employees=[
             employee.name
-            for employee in inp.employees
+            for employee in planning_input.employees
             if not employee.is_contractor and employee.hourly_rate_cents is None
         ],
         capacity_mode=constraints.capacity_mode,
-        task_skill_gaps=_task_skill_gaps(inp),
+        task_skill_gaps=_task_skill_gaps(planning_input),
         linked_skills=frozenset(
-            requirement.skill_name.casefold() for task in inp.tasks for requirement in task.skills
+            requirement.skill_name.casefold()
+            for task in planning_input.tasks
+            for requirement in task.skills
         ),
         skill_mode=constraints.skill_mode,
         working_days_per_week=constraints.working_days_per_week,
         milestones=[
             MilestoneFact(milestone.name, milestone.due_date, milestone.mode)
-            for milestone in inp.milestones
+            for milestone in planning_input.milestones
         ],
     )
     return replace(facts, **database_facts)
@@ -152,13 +160,13 @@ def quote_states_amount(quote: str, cents: int) -> bool:
     )
 
 
-def inputs_hash(inp: PlanningInput) -> str:
+def inputs_hash(planning_input: PlanningInput) -> str:
     """SHA-256 of what the solver will use (other projects' bookings and today excluded).
 
     Hours, type, rates and skills of every person are part of it, so editing
     any of them invalidates a confirmed sheet.
     """
-    snapshot = inp.to_snapshot()
+    snapshot = planning_input.to_snapshot()
     snapshot.pop("allocations", None)
     # The day it is computed isn't an input: the hash must not change overnight.
     snapshot.pop("today", None)
@@ -170,7 +178,7 @@ def inputs_hash(inp: PlanningInput) -> str:
             task.pop(plan_written_field, None)
     # No reserve changes nothing the solver does: such inputs keep the hash they had
     # before the reserve reached the solver.
-    if not inp.constraints.contingency_pct:
+    if not planning_input.constraints.contingency_pct:
         snapshot["constraints"].pop("contingency_pct", None)
     canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode()).hexdigest()

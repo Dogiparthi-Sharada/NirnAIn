@@ -1,7 +1,10 @@
-"""AI intake endpoints: start / poll analysis runs and review the extracted scope items.
+"""AI intake endpoints: start and poll analysis runs and review the extracted scope items.
 
-All queries run under the caller's RLS session; only the background worker
-(`app.jobs.intake`) writes results on a service connection.
+Purpose: Let the PM turn notes and documents into scope items and review each one against its
+evidence; only one run per project at a time.
+How it fits: All queries run under the caller's RLS session via app/repositories/intake.py; only the
+background worker (app/jobs/intake.py) writes results on a service connection; layer: api.
+Created: 2026-10-21 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations

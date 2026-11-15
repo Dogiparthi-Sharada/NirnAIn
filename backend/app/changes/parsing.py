@@ -1,4 +1,11 @@
-"""Text helpers for reading meeting notes: sentences, money, dates, durations, hours, names."""
+"""Text helpers for reading meeting notes: sentences, money, dates, durations, hours, names.
+
+Purpose: Give every rules reader the same, tested way of finding values in free text, and the same
+way of formatting them back for questions and comparisons.
+How it fits: Used by detect*.py, statements.py, questions.py, compare.py and team.py; pure;
+layer: changes.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -162,6 +169,7 @@ def sentences(text: str) -> list[Sentence]:
 
 
 def _number(raw: str) -> float | None:
+    """Return a number written as digits or as a word ("two"), or None."""
     key = raw.lower()
     if key in _WORDS:
         return float(_WORDS[key])
@@ -325,6 +333,21 @@ def format_hours(value: float | int | None) -> str:
     if value is None:
         return "—"
     return f"{float(value):g}h"
+
+
+def as_number(value: object) -> float | None:
+    """Return a stored int or float as a float; anything else (text, None) as None."""
+    return float(value) if isinstance(value, int | float) else None
+
+
+def days_text(value: object) -> str:
+    """Format a stored duration (working days) like `format_days`; non-numbers read "—"."""
+    return format_days(as_number(value))
+
+
+def hours_text(value: object) -> str:
+    """Format stored weekly hours like `format_hours`; non-numbers read "—"."""
+    return format_hours(as_number(value))
 
 
 def unique(items: Iterable[str]) -> list[str]:

@@ -1,9 +1,10 @@
 """Turns source text into a `ProjectDraft`: Claude when configured, else the rules.
 
-A failed AI call falls back to the rules too, so "Read it" always answers; the
-draft's `model` says which reader filled it in ("rules" for the fallback), and the
-web app labels such drafts. The endpoint `app.api.v1.drafts` gets one shared
-reader per app from `get_draft_reader`.
+Purpose: "Read it" always answers: a failed AI call falls back to the rules too, and the draft's
+`model` says which reader filled it in ("rules" for the fallback) so the web app can label it.
+How it fits: app/api/v1/drafts.py gets one shared reader per app from `get_draft_reader`; it calls
+app/drafts/ai.py or app/drafts/rules.py; layer: drafts.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ class DraftReader:
     """Reads drafts with `llm` when it is configured (key set), else with the rules."""
 
     def __init__(self, llm: LLM | None, timeout_s: float) -> None:
+        """Keep the Claude client (None or unconfigured: rules only) and the call's timeout."""
         self._llm = llm
         self._timeout_s = timeout_s
 

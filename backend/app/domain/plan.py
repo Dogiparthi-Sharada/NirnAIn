@@ -1,11 +1,10 @@
 """API model of a project's applied plan versions (Plan v1, v2, ...).
 
-Applying a successful optimization run (`public.apply_optimization_run`) gives it the
-project's next version number. `GET /projects/{projectId}/plan-versions` (app/api/v1/plan.py)
-lists them through app/repositories/plan.py, and the frontend mirrors the model in
-src/lib/changes.ts for Changes & Versions. The apply endpoint answers with the run itself
-(`app.domain.optimization.OptimizationRun`) and exports are files, so neither needs a model
-here. JSON is camelCase (CamelModel).
+Purpose: Applying a successful optimization run (`public.apply_optimization_run`) gives it the
+project's next version number; this model lists those versions for Changes & Versions.
+How it fits: `GET /projects/{projectId}/plan-versions` (app/api/v1/plan.py) lists them through
+app/repositories/plan.py; the frontend mirrors it in src/lib/changes.ts; layer: domain.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations

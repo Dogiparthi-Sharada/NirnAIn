@@ -1,14 +1,11 @@
 """Document uploads for AI intake: upload, list and delete.
 
-Every endpoint runs under the caller's RLS session (`Documents` is built from
-`UserDB`), so the database itself enforces who may see, add or delete a
-project's documents; the explicit checks only turn RLS outcomes into clear
-404 / 403 responses.
-
-`uploaded_file` is the shared multipart reader for uploads (also used by
-`POST /orgs/{orgId}/project-drafts/extract`): it enforces the 100 MB limit
-while the body streams in, so an oversized file is refused early instead of
-being spooled in full.
+Purpose: Keep the text of the PM's source documents for intake while RLS enforces who may see, add
+or delete them; uploads are capped at 100 MB while the body streams in, so an oversized file is
+refused early instead of being spooled in full.
+How it fits: Uses app/repositories/documents.py and app/ai/documents.py; `uploaded_file` is also
+used by the project-draft endpoint (app/api/v1/drafts.py); layer: api.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -71,6 +68,7 @@ def _capped_receive(receive: Receive, limit_bytes: int) -> Receive:
     received_bytes = 0
 
     async def receive_within_limit() -> Message:
+        """Pass the next ASGI message through, counting body bytes against the limit."""
         nonlocal received_bytes
         message = await receive()
         if message["type"] == "http.request":

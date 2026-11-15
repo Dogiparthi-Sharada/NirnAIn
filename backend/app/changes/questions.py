@@ -1,15 +1,11 @@
 """The questions a change raises (step 7) and checking the answers.
 
-Business rule ("never invent"): a value from meeting notes that conflicts with one you
-confirmed (budget, deadline, an effort estimate, someone's hours) is asked, never
-overwritten. A change whose work package or person the notes don't name exactly asks
-which one it means. Someone the notes bring in without saying their hours is asked about
-(16, 24 or 40 h a week, or not at all); a contractor the notes bring in when the project has
-no contractor rate is asked for their hourly rate. Your own edits and progress updates need
-no questions.
-
-Questions are always built here by rules, also when Claude read the notes, so that each
-answer maps to an override deterministically (see `app.changes.derive`).
+Purpose: "Never invent": a value from the notes that conflicts with one you confirmed is asked,
+never overwritten; a work package or person the notes don't name exactly is asked about; so are a
+newcomer's hours and a contractor's rate when the project has none. Edits need no questions.
+How it fits: Built by rules here even when Claude read the notes, so each answer maps to an override
+deterministically (derive.py); validated by `validate_answers` in the API; layer: changes.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -96,13 +92,13 @@ def build_questions(
                     change_id=change.id,
                     tier="blocking",
                     text=f"Effort for {change.target_label}",
-                    why=f"{context.plan_label} uses {_weeks(change.from_)}. The notes change "
-                    "it; confirm before it is used.",
+                    why=f"{context.plan_label} uses {parsing.days_text(change.from_)}. "
+                    "The notes change it; confirm before it is used.",
                     options=[
-                        QuestionOption(value=NEW, label=f"Confirm {_weeks(change.to)}"),
+                        QuestionOption(value=NEW, label=f"Confirm {parsing.days_text(change.to)}"),
                         QuestionOption(
                             value=KEEP,
-                            label=f"Keep {_weeks(change.from_)}",
+                            label=f"Keep {parsing.days_text(change.from_)}",
                         ),
                     ],
                 )
@@ -112,20 +108,11 @@ def build_questions(
     return questions
 
 
-def _weeks(value: object) -> str:
-    return parsing.format_days(_as_number(value))
-
-
-def _hours(value: object) -> str:
-    return parsing.format_hours(_as_number(value))
-
-
-def _as_number(value: object) -> float | None:
-    return float(value) if isinstance(value, int | float) else None
-
-
 def _target_question(change: DetectedChange) -> ChangeQuestion:
+    """Ask which work package or person an ambiguous change refers to."""
+
     def format_value(value: int | float | None) -> str:
+        """Format a candidate's value as days (durations) or hours (capacity)."""
         return (
             parsing.format_days(value) if change.kind == "duration" else parsing.format_hours(value)
         )
@@ -189,6 +176,7 @@ def _group_question(
 
 
 def _capacity_question(change: DetectedChange, context: ChangeContext) -> ChangeQuestion:
+    """Ask whether to take someone off the plan, or which weekly hours to plan them at."""
     name = change.target_label or "this person"
     if change.to == 0:
         return ChangeQuestion(
@@ -211,10 +199,10 @@ def _capacity_question(change: DetectedChange, context: ChangeContext) -> Change
         change_id=change.id,
         tier="high",
         text=f"Hours per week for {name}",
-        why=f"{context.plan_label} uses {_hours(change.from_)} a week.",
+        why=f"{context.plan_label} uses {parsing.hours_text(change.from_)} a week.",
         options=[
-            QuestionOption(value=NEW, label=f"Use {_hours(change.to)}"),
-            QuestionOption(value=KEEP, label=f"Keep {_hours(change.from_)}"),
+            QuestionOption(value=NEW, label=f"Use {parsing.hours_text(change.to)}"),
+            QuestionOption(value=KEEP, label=f"Keep {parsing.hours_text(change.from_)}"),
         ],
     )
 

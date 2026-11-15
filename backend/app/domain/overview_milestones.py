@@ -1,16 +1,11 @@
 """Milestone status on the per-project dashboard (QA pack VIEW-001).
 
-A milestone is checked against its own work, as the plan in force schedules it
-(`optimization_runs.result.schedule`):
-
-* a milestone on a WBS node covers the work packages under that node. It is "On
-  track" when the last of them finishes on or before its date and "At risk" when
-  one finishes after it, whatever the rest of the project does. Finished work
-  counts at the dates it was done;
-* a milestone without a WBS node marks the whole project, so the plan's completion
-  date decides;
-* without a plan in force, or when that plan schedules none of its packages, it is
-  "Not planned yet".
+Purpose: A milestone is checked against its own work as the plan in force schedules it: a milestone
+on a WBS node is on track when the last package under that node finishes by its date; one without a
+node follows the plan's completion; without a plan it is "Not planned yet".
+How it fits: Called by app/domain/overview.py; app/repositories/overview.py builds the
+`MilestoneFact`s; layer: domain.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -67,7 +62,13 @@ def planned_finishes(result: Mapping[str, Any] | None) -> dict[str, date]:
 def milestone_status(
     milestone: MilestoneFact, completion: date | None, finishes: Mapping[str, date]
 ) -> MilestoneStatus:
-    """On track / At risk from the milestone's own packages (module docstring)."""
+    """Return a milestone's status in the plan in force.
+
+    On a WBS node: "On track" when the last package under it finishes by the due date (finished work
+    counts at the dates it was done), else "At risk", whatever the rest of the project does. Without
+    a node the plan's completion decides; with no plan or none of its packages planned, "Not planned
+    yet".
+    """
     if completion is None:
         return "Not planned yet"
     if milestone.node_ids:

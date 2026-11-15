@@ -1,4 +1,11 @@
-"""FastAPI application factory."""
+"""FastAPI application factory and the ASGI `app` that uvicorn serves.
+
+Purpose: Assemble one API process: settings, logging, database engine, token verifier, the three
+in-process job runners, error handlers, middleware and the versioned routers.
+How it fits: Entry point for uvicorn (`app.main:app`) and for tests via `create_app(settings)`;
+wires `app.core`, `app.api.v1` and `app.jobs` together; layer: core.
+Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -23,20 +30,28 @@ from app.core.middleware import (
 )
 from app.core.security import TokenVerifier
 from app.jobs.ai_jobs import AiJobRunner
-from app.jobs.ai_jobs import engine_store as ai_engine_store
+from app.jobs.background import service_stores
 from app.jobs.intake import IntakeRunner
-from app.jobs.intake import engine_store as intake_engine_store
-from app.jobs.optimizer import OptimizationRunner, engine_store
+from app.jobs.optimizer import OptimizationRunner
+from app.repositories.ai_jobs import AiJobStore
+from app.repositories.intake_jobs import IntakeJobStore
+from app.repositories.optimization_store import OptimizationJobStore
 
 logger = logging.getLogger("app")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    """Build a fully wired FastAPI app for the given settings (or the environment's settings).
+
+    Stores the engine, token verifier, job runners and assistant client on `app.state`; the
+    lifespan recovers stale jobs at start-up and shuts runners and the engine down at exit.
+    """
     settings = settings or get_settings()
     configure_logging(settings.log_level)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        """Recover orphaned jobs at start-up; stop the workers and the engine at shutdown."""
         logger.info(
             "starting",
             extra={"environment": settings.environment, "version": settings.version},
@@ -71,14 +86,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.engine = create_engine(settings)
     app.state.token_verifier = TokenVerifier.from_settings(settings)
+    engine = app.state.engine
     app.state.optimizer = OptimizationRunner(
-        engine_store(app.state.engine) if app.state.engine is not None else None, settings
+        service_stores(engine, OptimizationJobStore) if engine is not None else None, settings
     )
     app.state.intaker = IntakeRunner(
-        intake_engine_store(app.state.engine) if app.state.engine is not None else None, settings
+        service_stores(engine, IntakeJobStore) if engine is not None else None, settings
     )
     app.state.ai_runner = AiJobRunner(
-        ai_engine_store(app.state.engine) if app.state.engine is not None else None, settings
+        service_stores(engine, AiJobStore) if engine is not None else None, settings
     )
     app.state.assistant_llm = LLM(make_client(settings), settings.ai_model)
     if app.state.engine is None:

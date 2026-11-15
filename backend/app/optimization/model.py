@@ -1,9 +1,11 @@
-"""Planning input/output types and the frozen `input_snapshot` format.
+"""Planning input types and the frozen `input_snapshot` format.
 
-The snapshot is what the API freezes into `optimization_runs.input_snapshot`
-when a run is queued, so a run is reproducible even if the WBS or team
-changes while it is solving. `PlanningInput.to_snapshot()` and
-`PlanningInput.from_snapshot()` are exact inverses.
+Purpose: A run must be reproducible even if the WBS or team changes while it is solving, so the API
+freezes the input into `optimization_runs.input_snapshot`; `PlanningInput.to_snapshot()` and
+`PlanningInput.from_snapshot()` are exact inverses and reject malformed snapshots.
+How it fits: Built by app/repositories/planning_input.py, adjusted by overrides.py and remedies.py,
+read by every other optimizer module; layer: optimization.
+Created: 2026-10-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -18,8 +20,6 @@ SNAPSHOT_VERSION = 1
 
 DependencyType = Literal["FS", "SS", "FF", "SF"]
 ConstraintMode = Literal["hard", "soft"]
-RunStatus = Literal["optimal", "feasible", "infeasible", "timeout", "failed"]
-ResourceKind = Literal["employee", "contractor"]
 
 DEFAULT_HOURS_PER_DAY = 8.0
 # Employees are costed at the rate on their company record. Without one they are
@@ -36,6 +36,8 @@ class SnapshotError(ValueError):
 # --------------------------------------------------------------------------- input
 @dataclass(frozen=True, slots=True)
 class SkillRequirement:
+    """A skill a work package needs, at a minimum proficiency (1..5)."""
+
     skill_id: str
     skill_name: str
     min_proficiency: int
@@ -60,6 +62,7 @@ class Task:
 
     @property
     def label(self) -> str:
+        """Return `code name`, as the screens show a work package."""
         return f"{self.code} {self.name}"
 
     @property
@@ -75,6 +78,8 @@ class Task:
 
 @dataclass(frozen=True, slots=True)
 class Employee:
+    """A person who can take work: weekly hours, rate, worker type and skill levels."""
+
     id: str
     name: str
     weekly_capacity_hours: float = 40.0
@@ -85,6 +90,8 @@ class Employee:
 
 @dataclass(frozen=True, slots=True)
 class Dependency:
+    """A link between two work packages: type (FS/SS/FF/SF) and lag in working days."""
+
     predecessor_id: str
     successor_id: str
     type: DependencyType = "FS"
@@ -93,6 +100,8 @@ class Dependency:
 
 @dataclass(frozen=True, slots=True)
 class Milestone:
+    """A dated milestone over the work packages under its WBS node, hard or soft."""
+
     id: str
     name: str
     due_date: date
@@ -111,6 +120,8 @@ class Allocation:
 
 @dataclass(frozen=True, slots=True)
 class Constraints:
+    """The project's limits and policies as the solver applies them."""
+
     budget_total_cents: int | None = None
     labor_cap_cents: int | None = None
     budget_mode: ConstraintMode = "hard"
@@ -137,6 +148,8 @@ class Constraints:
 
 @dataclass(frozen=True, slots=True)
 class PlanningInput:
+    """Everything one optimization run plans with, frozen when the run is queued."""
+
     project_id: str
     project_name: str
     start_date: date
@@ -249,6 +262,7 @@ class PlanningInput:
 
     @classmethod
     def from_snapshot(cls, data: Mapping[str, Any]) -> PlanningInput:
+        """Rebuild the input from a stored snapshot; raises `SnapshotError` when it is malformed."""
         try:
             return _parse_snapshot(data)
         except SnapshotError:
@@ -258,24 +272,29 @@ class PlanningInput:
 
 
 def _mode(value: Any) -> ConstraintMode:
+    """Return a constraint mode, rejecting anything but 'hard' and 'soft'."""
     if value not in ("hard", "soft"):
         raise SnapshotError(f"Invalid constraint mode {value!r}")
     return cast(ConstraintMode, value)
 
 
 def _opt_int(value: Any) -> int | None:
+    """Return the value as an int, keeping None."""
     return None if value is None else int(value)
 
 
 def _opt_date(value: Any) -> date | None:
+    """Return the ISO date string as a date, keeping None."""
     return None if value is None else date.fromisoformat(value)
 
 
 def _iso(value: date | None) -> str | None:
+    """Return the date as an ISO string, keeping None."""
     return None if value is None else value.isoformat()
 
 
 def _penalty(value: Any, default: float) -> float:
+    """Return a non-negative finite objective weight, else the default."""
     # The columns are unconstrained `real`s: a negative or NaN weight would turn
     # a penalty into a reward, so fall back to the default.
     number = default if value is None else float(value)
@@ -283,6 +302,7 @@ def _penalty(value: Any, default: float) -> float:
 
 
 def _parse_task(entry: Mapping[str, Any]) -> Task:
+    """Rebuild one task from its snapshot entry."""
     return Task(
         id=str(entry["id"]),
         code=str(entry["code"]),
@@ -305,6 +325,7 @@ def _parse_task(entry: Mapping[str, Any]) -> Task:
 
 
 def _parse_snapshot(data: Mapping[str, Any]) -> PlanningInput:
+    """Rebuild the input from a snapshot, validating version, modes, days and link types."""
     if data.get("version") != SNAPSHOT_VERSION:
         raise SnapshotError(f"Unsupported input snapshot version {data.get('version')!r}")
     stored = data.get("constraints") or {}
@@ -392,88 +413,7 @@ def _parse_snapshot(data: Mapping[str, Any]) -> PlanningInput:
     )
 
 
-def target_of(inp: PlanningInput) -> date | None:
+def target_of(planning_input: PlanningInput) -> date | None:
     """The date a plan tries to keep: the plan in force's completion for a re-plan,
     else the must-finish-by date (round-2 D2)."""
-    return inp.target_date or inp.constraints.must_finish_by
-
-
-# --------------------------------------------------------------------------- resources
-@dataclass(frozen=True, slots=True)
-class Resource:
-    """Something a task can be assigned to: a team member or a contractor profile.
-
-    A contractor resource stands for "as many people of this profile as
-    needed", so it has no capacity limit (`resources.build_resources`).
-    """
-
-    id: str
-    name: str
-    kind: ResourceKind
-    weekly_capacity_hours: float
-    rate_cents: int
-    skills: Mapping[str, int]
-    employee_id: str | None = None
-    # Billed per hour worked above their capacity (= rate_cents for contractors).
-    overtime_rate_cents: int = 0
-
-    def proficiency(self, skill_id: str) -> int:
-        return self.skills.get(skill_id, 0)
-
-    def skill_gap(self, task: Task) -> int:
-        """Total proficiency levels missing to do `task` (0 = fully qualified)."""
-        return sum(max(0, r.min_proficiency - self.proficiency(r.skill_id)) for r in task.skills)
-
-
-def qualified(resource: Resource, task: Task) -> bool:
-    return resource.skill_gap(task) == 0
-
-
-# --------------------------------------------------------------------------- output
-@dataclass(frozen=True, slots=True)
-class ScheduledTask:
-    task_id: str
-    start: int  # working-day index from the project start (inclusive)
-    end: int  # exclusive
-    resource_id: str | None  # None = unassigned (baseline only)
-
-
-@dataclass(frozen=True, slots=True)
-class Conflict:
-    """One hard constraint in an infeasible core, in plain English."""
-
-    name: str
-    explanation: str
-
-
-@dataclass(frozen=True, slots=True)
-class Plan:
-    tasks: Mapping[str, ScheduledTask]
-
-    @property
-    def makespan(self) -> int:
-        return max((s.end for s in self.tasks.values()), default=0)
-
-
-@dataclass(frozen=True, slots=True)
-class SolveOutcome:
-    status: RunStatus
-    solver: str  # e.g. "OR-Tools CP-SAT 9.15.6755"
-    solver_version: str
-    wall_seconds: float
-    resources: tuple[Resource, ...]
-    baseline: Plan
-    plan: Plan | None = None
-    objective: float | None = None
-    best_bound: float | None = None
-    hit_time_limit: bool = False
-    conflicts: tuple[Conflict, ...] = ()
-    message: str | None = None  # user-readable, for timeout / failed
-
-    @property
-    def gap(self) -> float | None:
-        if self.objective is None or self.best_bound is None:
-            return None
-        if self.objective == 0:
-            return 0.0
-        return max(0.0, abs(self.objective - self.best_bound) / abs(self.objective))
+    return planning_input.target_date or planning_input.constraints.must_finish_by

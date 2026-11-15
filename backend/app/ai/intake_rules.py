@@ -1,25 +1,18 @@
 """Rule-based intake: the clearly labelled fallback when Claude is not available.
 
-Used when no Claude API key is set, and when a Claude call fails. Runs record
-`model = 'rules'`. The extractor only copies what the notes say, so every item
-is 'stated' and quotes the notes verbatim. Two paths read each source:
-
-- headings and bullets (structured notes): a heading picks the category of the
-  bullets below it (case-insensitive, singular or plural; a heading is a short,
-  non-bullet line that ends with ':', starts with '#', is bold, or is written
-  in capitals or Title Case): OBJECTIVES / GOALS -> objective, REQUIREMENTS ->
-  requirement, DELIVERABLES -> deliverable, CONSTRAINTS / BUDGET / TIMELINE ->
-  constraint, RISKS / CONCERNS -> risk, OPEN ITEMS / UNKNOWNS / QUESTIONS ->
-  missing_info; any other heading ends the current category. Every bullet line
-  (•, -, *, or numbered "1." / "1)") under a known heading becomes one item, and
-  also a constraint item when it names a budget / money amount or a deadline;
-- sentences (`app.ai.intake_sentences`): prose paragraphs and bullets outside a
-  known heading are split into sentences and classified by keyword
-  (`app.ai.intake_keywords`). Meeting transcripts are read this way only, one
-  speaker turn at a time, without the speaker labels.
-
-Near-duplicates in a category count once, and a run keeps at most `MAX_ITEMS`
-items, shared fairly between the categories.
+Purpose: Without a key, or when a Claude call fails, still extract scope items, copying only
+what the notes say: every item is 'stated' and quotes the notes verbatim (`model = 'rules'`).
+- headings and bullets: a heading (short line ending with ':', '#', bold, capitals or Title
+  Case) picks the category of the bullets below it (OBJECTIVES -> objective, REQUIREMENTS ->
+  requirement, DELIVERABLES -> deliverable, CONSTRAINTS / BUDGET / TIMELINE -> constraint,
+  RISKS -> risk, OPEN ITEMS / QUESTIONS -> missing_info); a bullet naming money or a deadline
+  also becomes a constraint;
+- sentences: prose and bullets outside a known heading are classified by keyword
+  (intake_sentences.py, intake_keywords.py); transcripts only this way, one turn at a time.
+Near-duplicates in a category count once, and a run keeps at most `MAX_ITEMS` items, shared
+fairly between the categories.
+How it fits: Called by the intake job (app/jobs/intake.py); layer: ai.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -109,6 +102,7 @@ def _as_heading(line: str) -> _Heading | None:
 
 
 def _stated(category: ScopeCategory, bullet: str, source: Source) -> ScopeSuggestion:
+    """Return a 'stated' scope item that quotes the bullet verbatim."""
     return ScopeSuggestion(
         category=category,
         text=bullet[:TEXT_LIMIT],
@@ -145,6 +139,7 @@ def _note_items(source: Source, text: str) -> list[ScopeSuggestion]:
     previous_line = ""
 
     def read_paragraph() -> None:
+        """Add the sentence items of the paragraph read so far."""
         if paragraph is not None:
             items.extend(sentence_items(text, paragraph, source.document_id, NOTES_MIN_WORDS))
 
@@ -201,6 +196,7 @@ def _source_items(source: Source) -> list[ScopeSuggestion]:
 
 
 def _words(text: str) -> tuple[str, ...]:
+    """Return the lower-cased words of a text, for near-duplicate checks."""
     return tuple(_WORD.findall(text.lower()))
 
 

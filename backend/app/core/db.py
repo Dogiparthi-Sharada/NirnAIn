@@ -1,9 +1,11 @@
 """Database engine and request-scoped connections.
 
-Security model: authorization lives in Postgres RLS. For every user request we
-open a transaction, publish the verified JWT claims the way PostgREST does and
-switch to the `authenticated` role, so `auth.uid()` and every policy behave
-exactly as they do for that user through the Supabase API.
+Purpose: Authorization lives in Postgres RLS: for every user request we open a transaction, publish
+the verified JWT claims the way PostgREST does and switch to the `authenticated` role, so
+`auth.uid()` and every policy behave exactly as they do for that user through the Supabase API.
+How it fits: `app.main` creates the engine; API routes depend on `UserDB` (RLS enforced) and only
+trusted system checks on `ServiceDB`; layer: core.
+Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -34,11 +36,16 @@ _SET_ROLE = text("set local role authenticated")
 
 
 def _statement_name() -> str:
+    """Return a unique prepared-statement name for asyncpg."""
     # Unique names keep prepared statements safe behind Supavisor transaction mode.
     return f"__asyncpg_{uuid.uuid4().hex}__"
 
 
 def create_engine(settings: Settings) -> AsyncEngine | None:
+    """Create the pooled async engine from settings, or return None when no database is configured.
+
+    Statement caches are off and bound parameters are hidden from error logs.
+    """
     resolved = settings.sqlalchemy_database_url()
     if resolved is None:
         return None
@@ -65,6 +72,7 @@ def create_engine(settings: Settings) -> AsyncEngine | None:
 
 
 def get_engine(request: Request) -> AsyncEngine:
+    """Return the app's engine; raises 503 when the database is not configured."""
     engine: AsyncEngine | None = getattr(request.app.state, "engine", None)
     if engine is None:
         raise ServiceUnavailableError("Database is not configured")

@@ -22,7 +22,7 @@ from app.optimization.model import (
 )
 from app.optimization.remedies import apply_remedy, price_remedies
 from app.optimization.solver import SolveOptions, solve
-from tests.test_optimization_solver import make_input
+from tests.support.solver_inputs import make_input
 
 QUICK = SolveOptions(time_limit_s=10, workers=1)
 

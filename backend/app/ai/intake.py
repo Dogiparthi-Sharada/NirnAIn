@@ -1,9 +1,11 @@
 """AI intake: the project notes the extractor reads.
 
-A run analyzes its own pasted notes (if any) plus every uploaded document whose
-text was read. Transcripts are first reduced to one line per speaker turn
-(`with_spoken_text`), then each source becomes a `<document title="…">` inside
-one `<project_notes>` block. Pure functions; `app.jobs.intake` does the I/O.
+Purpose: A run analyzes its own pasted notes plus every upload whose text was read; transcripts are
+first reduced to one line per speaker turn, then each source becomes a `<document>` inside one
+`<project_notes>` block.
+How it fits: Pure functions used by the intake job (app/jobs/intake.py), which does the I/O;
+layer: ai.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations

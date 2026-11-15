@@ -1,4 +1,11 @@
-"""Facts for the per-project dashboard, read under the caller's RLS session."""
+"""Facts for the per-project dashboard, read under the caller's RLS session.
+
+Purpose: Gather the plain facts the overview is derived from (policy answers, workflow progress,
+milestones, the plan in force, risks, notifications, AI findings) without interpreting them.
+How it fits: Used by app/api/v1/overview.py; fills app/domain/overview_facts.py, which
+app/domain/overview.py turns into the response; layer: repositories.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -19,7 +26,7 @@ from app.domain.common import (
     SolverStatus,
 )
 from app.domain.notifications import Notification
-from app.domain.overview import (
+from app.domain.overview_facts import (
     AppliedRunFacts,
     OverviewFacts,
     PolicyFacts,
@@ -46,10 +53,14 @@ _SUCCESS = (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
 
 
 class OverviewRepository:
+    """Reads everything the per-project dashboard needs, one small query per fact."""
+
     def __init__(self, conn: AsyncConnection) -> None:
+        """Use the caller's RLS-scoped connection."""
         self._conn = conn
 
     async def facts(self, project: Project, user_id: uuid.UUID) -> OverviewFacts:
+        """Gather all overview facts for the project as the given user sees them."""
         applied = await self._applied_run(project.id)
         return OverviewFacts(
             project=project,
@@ -67,57 +78,63 @@ class OverviewRepository:
         )
 
     async def _policy(self, project_id: uuid.UUID) -> PolicyFacts | None:
-        c = constraint_sets
+        """Return the project's constraint policies and answers, or None before step 5 is saved."""
         stmt = sa.select(
-            c.c.budget_mode,
-            c.c.capacity_mode,
-            c.c.skill_mode,
-            c.c.deadline_answer,
-            c.c.specialist_answer,
-        ).where(c.c.project_id == project_id)
+            constraint_sets.c.budget_mode,
+            constraint_sets.c.capacity_mode,
+            constraint_sets.c.skill_mode,
+            constraint_sets.c.deadline_answer,
+            constraint_sets.c.specialist_answer,
+        ).where(constraint_sets.c.project_id == project_id)
         row = (await self._conn.execute(stmt)).first()
         if row is None:
             return None
-        m = row._mapping
+        mapping = row._mapping
         return PolicyFacts(
-            budget_mode=ConstraintMode(m["budget_mode"]),
-            capacity_mode=ConstraintMode(m["capacity_mode"]),
-            skill_mode=ConstraintMode(m["skill_mode"]),
-            deadline_answer=m["deadline_answer"],
-            specialist_answer=m["specialist_answer"],
+            budget_mode=ConstraintMode(mapping["budget_mode"]),
+            capacity_mode=ConstraintMode(mapping["capacity_mode"]),
+            skill_mode=ConstraintMode(mapping["skill_mode"]),
+            deadline_answer=mapping["deadline_answer"],
+            specialist_answer=mapping["specialist_answer"],
         )
 
     async def _progress(self, project_id: uuid.UUID) -> ProgressFacts:
-        s = scope_items
+        """Count scope items, WBS nodes and unconfirmed AI estimates; check for a successful run.
+
+        Unconfirmed estimates count AI-made leaf nodes below the root whose estimate nobody
+        confirmed.
+        """
         scope = (
             await self._conn.execute(
                 sa.select(
-                    sa.func.count().filter(s.c.status != ScopeStatus.REMOVED),
-                    sa.func.count().filter(s.c.status == ScopeStatus.PENDING),
-                ).where(s.c.project_id == project_id)
+                    sa.func.count().filter(scope_items.c.status != ScopeStatus.REMOVED),
+                    sa.func.count().filter(scope_items.c.status == ScopeStatus.PENDING),
+                ).where(scope_items.c.project_id == project_id)
             )
         ).one()
 
-        n, child = wbs_nodes, wbs_nodes.alias("child")
-        is_leaf = ~sa.exists().where(child.c.parent_id == n.c.id)
+        child = wbs_nodes.alias("child")
+        is_leaf = ~sa.exists().where(child.c.parent_id == wbs_nodes.c.id)
         wbs = (
             await self._conn.execute(
                 sa.select(
                     sa.func.count(),
                     sa.func.count().filter(
-                        n.c.origin == ItemOrigin.AI,
-                        n.c.level > 1,
+                        wbs_nodes.c.origin == ItemOrigin.AI,
+                        wbs_nodes.c.level > 1,
                         is_leaf,
-                        n.c.estimate_confirmed_at.is_(None),
+                        wbs_nodes.c.estimate_confirmed_at.is_(None),
                     ),
-                ).where(n.c.project_id == project_id)
+                ).where(wbs_nodes.c.project_id == project_id)
             )
         ).one()
 
-        r = optimization_runs
+        runs = optimization_runs
         succeeded = (
             await self._conn.execute(
-                sa.select(sa.exists().where(r.c.project_id == project_id, r.c.status.in_(_SUCCESS)))
+                sa.select(
+                    sa.exists().where(runs.c.project_id == project_id, runs.c.status.in_(_SUCCESS))
+                )
             )
         ).scalar()
         return ProgressFacts(
@@ -151,6 +168,7 @@ class OverviewRepository:
                 children[node.parent_id].append(node.id)
 
         def subtree(node_id: uuid.UUID) -> frozenset[str]:
+            """Return the node and every node under it, as id strings."""
             found: set[str] = set()
             pending = [node_id]
             while pending:
@@ -169,91 +187,93 @@ class OverviewRepository:
         ]
 
     async def _applied_run(self, project_id: uuid.UUID) -> AppliedRunFacts | None:
-        r = optimization_runs
+        """Return the plan in force (the highest applied version), or None."""
+        runs = optimization_runs
         stmt = (
             sa.select(
-                r.c.id,
-                r.c.version,
-                r.c.applied_at,
-                r.c.expected_cost_cents,
-                r.c.completion_date,
-                r.c.result,
+                runs.c.id,
+                runs.c.version,
+                runs.c.applied_at,
+                runs.c.expected_cost_cents,
+                runs.c.completion_date,
+                runs.c.result,
             )
-            .where(r.c.project_id == project_id, r.c.version.is_not(None))
-            .order_by(r.c.version.desc())
+            .where(runs.c.project_id == project_id, runs.c.version.is_not(None))
+            .order_by(runs.c.version.desc())
             .limit(1)
         )
         row = (await self._conn.execute(stmt)).first()
         if row is None:
             return None
-        m = row._mapping
-        result: Any = m["result"]
+        mapping = row._mapping
+        result: Any = mapping["result"]
         return AppliedRunFacts(
-            run_id=m["id"],
-            version=int(m["version"]),
-            applied_at=m["applied_at"],
-            expected_cost_cents=m["expected_cost_cents"],
-            completion_date=m["completion_date"],
+            run_id=mapping["id"],
+            version=int(mapping["version"]),
+            applied_at=mapping["applied_at"],
+            expected_cost_cents=mapping["expected_cost_cents"],
+            completion_date=mapping["completion_date"],
             result=result if isinstance(result, dict) else None,
         )
 
     async def _scope_risks(self, project_id: uuid.UUID) -> list[ScopeRisk]:
-        s = scope_items
+        """Return the risk scope items that are accepted or still pending review."""
         stmt = (
-            sa.select(s.c.text, s.c.status)
+            sa.select(scope_items.c.text, scope_items.c.status)
             .where(
-                s.c.project_id == project_id,
-                s.c.category == ScopeCategory.RISK,
-                s.c.status.in_([ScopeStatus.ACCEPTED, ScopeStatus.PENDING]),
+                scope_items.c.project_id == project_id,
+                scope_items.c.category == ScopeCategory.RISK,
+                scope_items.c.status.in_([ScopeStatus.ACCEPTED, ScopeStatus.PENDING]),
             )
-            .order_by(s.c.sort_order, s.c.created_at)
+            .order_by(scope_items.c.sort_order, scope_items.c.created_at)
         )
         rows = (await self._conn.execute(stmt)).all()
         return [
-            ScopeRisk(text=r._mapping["text"], status=ScopeStatus(r._mapping["status"]))
-            for r in rows
+            ScopeRisk(text=row._mapping["text"], status=ScopeStatus(row._mapping["status"]))
+            for row in rows
         ]
 
     def _notification_filter(
         self, project_id: uuid.UUID, user_id: uuid.UUID
     ) -> sa.ColumnElement[bool]:
-        n = notifications
+        """Return the filter for the user's notifications about this project."""
         # RLS already limits rows to the caller; the explicit user filter uses the index.
-        return sa.and_(n.c.user_id == user_id, n.c.project_id == project_id)
+        return sa.and_(notifications.c.user_id == user_id, notifications.c.project_id == project_id)
 
     async def _notifications(self, project_id: uuid.UUID, user_id: uuid.UUID) -> list[Notification]:
-        n = notifications
+        """Return the user's latest notifications about this project."""
         stmt = (
             sa.select(
-                n.c.id,
-                n.c.org_id,
-                n.c.project_id,
-                n.c.level,
-                n.c.message,
-                n.c.read_at,
-                n.c.created_at,
+                notifications.c.id,
+                notifications.c.org_id,
+                notifications.c.project_id,
+                notifications.c.level,
+                notifications.c.message,
+                notifications.c.read_at,
+                notifications.c.created_at,
             )
             .where(self._notification_filter(project_id, user_id))
-            .order_by(n.c.created_at.desc(), n.c.id.desc())
+            .order_by(notifications.c.created_at.desc(), notifications.c.id.desc())
             .limit(MAX_NOTIFICATIONS)
         )
         rows = (await self._conn.execute(stmt)).all()
-        return [Notification.model_validate(dict(r._mapping)) for r in rows]
+        return [Notification.model_validate(dict(row._mapping)) for row in rows]
 
     async def _notification_total(self, project_id: uuid.UUID, user_id: uuid.UUID) -> int:
+        """Count all of the user's notifications about this project."""
         stmt = sa.select(sa.func.count()).where(self._notification_filter(project_id, user_id))
         return int((await self._conn.execute(stmt)).scalar() or 0)
 
     async def _validation_issues(self, project_id: uuid.UUID) -> list[str]:
-        j = ai_jobs
+        """Return the first issue texts of the latest successful AI WBS validation."""
         stmt = (
-            sa.select(j.c.result)
+            sa.select(ai_jobs.c.result)
             .where(
-                j.c.project_id == project_id,
-                j.c.kind == AiJobKind.WBS_VALIDATE,
-                j.c.status == JobStatus.SUCCEEDED,
+                ai_jobs.c.project_id == project_id,
+                ai_jobs.c.kind == AiJobKind.WBS_VALIDATE,
+                ai_jobs.c.status == JobStatus.SUCCEEDED,
             )
-            .order_by(j.c.created_at.desc())
+            .order_by(ai_jobs.c.created_at.desc())
             .limit(1)
         )
         result: Any = (await self._conn.execute(stmt)).scalar()
@@ -273,22 +293,21 @@ class OverviewRepository:
         """Top reasons of the applied run, else of the latest successful run."""
         run_id = applied_run_id
         if run_id is None:
-            r = optimization_runs
+            runs = optimization_runs
             run_id = (
                 await self._conn.execute(
-                    sa.select(r.c.id)
-                    .where(r.c.project_id == project_id, r.c.status.in_(_SUCCESS))
-                    .order_by(r.c.created_at.desc())
+                    sa.select(runs.c.id)
+                    .where(runs.c.project_id == project_id, runs.c.status.in_(_SUCCESS))
+                    .order_by(runs.c.created_at.desc())
                     .limit(1)
                 )
             ).scalar()
         if run_id is None:
             return []
-        rec = recommendations
         stmt = (
-            sa.select(rec.c.after_value, rec.c.reason)
-            .where(rec.c.run_id == run_id)
-            .order_by(rec.c.sort_order)
+            sa.select(recommendations.c.after_value, recommendations.c.reason)
+            .where(recommendations.c.run_id == run_id)
+            .order_by(recommendations.c.sort_order)
             .limit(MAX_RECOMMENDATIONS)
         )
         rows = (await self._conn.execute(stmt)).all()

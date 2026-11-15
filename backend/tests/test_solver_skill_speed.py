@@ -13,10 +13,11 @@ from __future__ import annotations
 import pytest
 
 from app.optimization.explain import build_report
-from app.optimization.model import Constraints, Employee, Resource, SkillRequirement, Task
+from app.optimization.model import Constraints, Employee, SkillRequirement, Task
+from app.optimization.outcome import Resource
 from app.optimization.solver import solve
 from app.optimization.speed import pace_level, pace_percent
-from tests.test_optimization_solver import FAST, make_input
+from tests.support.solver_inputs import FAST, make_input
 
 ETL = SkillRequirement("etl", "ETL", 2)
 DESIGN = SkillRequirement("design", "Data modelling", 3)

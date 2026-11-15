@@ -1,14 +1,13 @@
 """In-process worker for AI jobs: WBS generation and validation.
 
-Same pattern as `app.jobs.intake`: the API commits a queued `ai_jobs` row and
-calls `AiJobRunner.submit`. Claude runs on a worker thread (the SDK's sync
-client blocks) and everything is read and written on a service connection —
-a trusted system job, scoped to the job's project explicitly.
-
-Without ANTHROPIC_API_KEY, generation uses a deterministic template (model
-'template': one deliverable per accepted deliverable scope item, each with
-design / build / test work packages) and validation runs only the built-in
+Purpose: Run long AI work after the request: Claude runs on a worker thread (the SDK blocks) and
+results are written on a service connection scoped to the job's project. Without ANTHROPIC_API_KEY,
+generation uses the deterministic template (model 'template') and validation runs only the built-in
 checks (model 'rules').
+How it fits: The API (app/api/v1/ai.py) commits a queued `ai_jobs` row and calls
+`AiJobRunner.submit`; reads and writes go through app/repositories/ai_jobs.py; lifecycle from
+app/jobs/background.py; layer: jobs.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -16,11 +15,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from typing import Any
-
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.ai.llm import LLM, Usage, make_client
 from app.ai.wbs_generate import (
@@ -34,17 +31,17 @@ from app.ai.wbs_generate import (
     suggest_owners,
     template_plan,
 )
-from app.ai.wbs_validate import (
+from app.ai.wbs_review import (
     REVIEW_UNAVAILABLE,
     VALIDATE_SYSTEM,
-    Issue,
     WbsReview,
     build_validation_prompt,
     review_issues,
-    validation_result,
 )
+from app.ai.wbs_validate import Issue, validation_result
 from app.core.config import Settings
 from app.domain.common import AiJobKind
+from app.jobs.background import BackgroundRunner, RunnerMessages
 from app.repositories.ai_jobs import AiJobStore, ClaimedJob
 
 logger = logging.getLogger("app.jobs.ai")
@@ -64,42 +61,34 @@ class JobFailedError(Exception):
     """Ends a job with a user-facing message."""
 
 
-def engine_store(engine: AsyncEngine) -> StoreFactory:
-    @asynccontextmanager
-    async def factory() -> AsyncIterator[AiJobStore]:
-        async with engine.begin() as conn:
-            yield AiJobStore(conn)
+class AiJobRunner(BackgroundRunner[AiJobStore]):
+    """Runs queued WBS generate / validate jobs as background tasks on the API's event loop."""
 
-    return factory
+    logger = logger
+    messages = RunnerMessages(
+        unavailable="AI worker unavailable; job left queued",
+        mark_failed="could not mark AI job failed",
+        recovery_failed="AI job startup recovery failed",
+        recovered="marked orphaned AI jobs failed",
+    )
+    task_prefix = "ai"
+    id_key = "job_id"
+    restart_error = RESTART_ERROR
 
-
-class AiJobRunner:
     def __init__(
         self, store: StoreFactory | None, settings: Settings, llm: LLM | None = None
     ) -> None:
-        self._store = store
+        """Keep the store factory and the Claude client (`AI_MODEL` unless one is given)."""
+        super().__init__(store)
         self._llm = llm or LLM(make_client(settings), settings.ai_model)
-        self._tasks: set[asyncio.Task[None]] = set()
-        self._closing = False
-
-    @property
-    def active(self) -> int:
-        return len(self._tasks)
 
     @property
     def ai_configured(self) -> bool:
+        """Tell whether Claude is configured (else the template and rules run)."""
         return self._llm.configured
 
-    async def submit(self, job_id: uuid.UUID) -> None:
-        """Start a committed, queued job in the background (async: see IntakeRunner.submit)."""
-        if self._store is None or self._closing:
-            logger.warning("AI worker unavailable; job left queued", extra={"job_id": str(job_id)})
-            return
-        task = asyncio.get_running_loop().create_task(self._run(job_id), name=f"ai-{job_id}")
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
-
     async def _run(self, job_id: uuid.UUID) -> None:
+        """Claim a queued job and run it; failures end the job with a user-facing error."""
         assert self._store is not None  # noqa: S101 - guarded by submit()
         extra = {"job_id": str(job_id)}
         try:
@@ -125,18 +114,23 @@ class AiJobRunner:
 
     # ----------------------------------------------------------------- generate
     async def _generate(self, job_id: uuid.UUID, job: ClaimedJob) -> None:
+        """Generate the WBS (Claude, else the template), suggest owners and write it.
+
+        Fails the job when the project is gone, has nothing to plan, Claude returns no packages or a
+        WBS already exists.
+        """
         assert self._store is not None  # noqa: S101
         async with self._store() as store:
-            inp = await store.generation_input(job.project_id)
-        if inp is None:
+            generation_input = await store.generation_input(job.project_id)
+        if generation_input is None:
             raise JobFailedError(GONE_ERROR)
 
         usage: Usage | None = None
         try:
             if self._llm.configured:
-                if not select_scope(inp.scope):
+                if not select_scope(generation_input.scope):
                     raise NothingToPlanError(NO_SCOPE)
-                prompt, refs = build_generation_prompt(inp)
+                prompt, refs = build_generation_prompt(generation_input)
                 generated, usage = await asyncio.to_thread(
                     self._llm.parse, system=GENERATE_SYSTEM, prompt=prompt, output=GeneratedWbs
                 )
@@ -145,12 +139,12 @@ class AiJobRunner:
                     raise JobFailedError(EMPTY_PLAN_ERROR)
                 model = self._llm.model
             else:
-                plan = template_plan(inp)
+                plan = template_plan(generation_input)
                 model = TEMPLATE_MODEL
         except NothingToPlanError as exc:
             raise JobFailedError(str(exc)) from exc
 
-        owners = suggest_owners(plan.packages, inp.team)
+        owners = suggest_owners(plan.packages, generation_input.team)
         async with self._store() as store:
             counts = await store.write_plan(job.project_id, plan, owners)
             if counts is None:
@@ -166,21 +160,25 @@ class AiJobRunner:
 
     # ----------------------------------------------------------------- validate
     async def _validate(self, job_id: uuid.UUID, job: ClaimedJob) -> None:
+        """Run the built-in checks plus, when configured, the Claude review, and store the result.
+
+        A failed review call is reported as a warning; the built-in checks still stand.
+        """
         assert self._store is not None  # noqa: S101
         async with self._store() as store:
-            inp = await store.validation_input(job.project_id)
-        if inp is None:
+            checks_input = await store.validation_input(job.project_id)
+        if checks_input is None:
             raise JobFailedError(GONE_ERROR)
 
         extra: list[Issue] = []
         usage: Usage | None = None
         model = RULES_MODEL
-        if self._llm.configured and inp.nodes:
+        if self._llm.configured and checks_input.nodes:
             try:
                 review, usage = await asyncio.to_thread(
                     self._llm.parse,
                     system=VALIDATE_SYSTEM,
-                    prompt=build_validation_prompt(inp),
+                    prompt=build_validation_prompt(checks_input),
                     output=WbsReview,
                     max_tokens=4000,
                 )
@@ -190,7 +188,7 @@ class AiJobRunner:
                 # The built-in checks still stand; say honestly that the review didn't run.
                 logger.exception("WBS review call failed", extra={"job_id": str(job_id)})
                 extra = [Issue("warning", REVIEW_UNAVAILABLE)]
-        result = validation_result(inp, extra)
+        result = validation_result(checks_input, extra)
         async with self._store() as store:
             await store.finish(
                 job_id,
@@ -199,36 +197,3 @@ class AiJobRunner:
                 usage.input_tokens if usage else None,
                 usage.output_tokens if usage else None,
             )
-
-    # ----------------------------------------------------------------- lifecycle
-    async def fail(self, job_id: uuid.UUID, error: str) -> None:
-        """Mark a queued/running job failed (also used for jobs orphaned by a restart)."""
-        if self._store is None:
-            return
-        try:
-            async with self._store() as store:
-                await store.fail(job_id, error)
-        except Exception:
-            logger.exception("could not mark AI job failed", extra={"job_id": str(job_id)})
-
-    async def recover_stale(self, stale_after_s: int) -> int:
-        """Fail jobs orphaned by a previous process. Never raises."""
-        if self._store is None:
-            return 0
-        try:
-            async with self._store() as store:
-                count = await store.fail_stale(stale_after_s, RESTART_ERROR)
-        except Exception:
-            logger.exception("AI job startup recovery failed")
-            return 0
-        if count:
-            logger.warning("marked orphaned AI jobs failed", extra={"count": count})
-        return count
-
-    async def shutdown(self, timeout_s: float = 10.0) -> None:
-        self._closing = True
-        tasks = list(self._tasks)
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.wait(tasks, timeout=timeout_s)

@@ -17,13 +17,12 @@ from app.optimization.model import Constraints, Employee, PlanningInput, Task
 from app.optimization.overrides import apply_overrides, with_plan_in_force
 from app.optimization.remedies import apply_remedy, price_remedies
 from app.optimization.solver import solve
-from tests.test_optimization_solver import FAST, make_input
-from tests.test_solver_part_time import _pipeline
+from tests.support.solver_inputs import FAST, data_pipeline_input, make_input
 
 
 def _leo_cut_to_16_hours() -> PlanningInput:
     """Step 7: Leo goes from 40 to 16 h/week; the plan in force finished Oct 23."""
-    in_force = with_plan_in_force(_pipeline(), {}, date(2026, 10, 23))
+    in_force = with_plan_in_force(data_pipeline_input(), {}, date(2026, 10, 23))
     return apply_overrides(in_force, {"hoursPerWeek": {"leo": 16}})
 
 
@@ -37,7 +36,7 @@ def test_a_late_replan_reports_its_target_and_slip() -> None:
         "2026-10-23",
         23,
     )
-    on_time = build_report(_pipeline(), solve(_pipeline(), FAST)).result
+    on_time = build_report(data_pipeline_input(), solve(data_pipeline_input(), FAST)).result
     assert on_time is not None
     # Without a plan in force the target is the deadline (Mar 31, 2027): on time.
     assert (on_time["summary"]["targetDate"], on_time["summary"]["slipDays"]) == ("2027-03-31", 0)

@@ -1,8 +1,10 @@
 """Supabase Auth access-token verification.
 
-Tokens are verified against the project's JWKS (asymmetric ES256/RS256 signing
-keys). Legacy HS256 tokens are accepted only when `SUPABASE_JWT_SECRET` is set.
-Tokens are never logged.
+Purpose: Only verified Supabase users may call the API. Tokens are checked against the project's
+JWKS (ES256/RS256); legacy HS256 tokens only when `SUPABASE_JWT_SECRET` is set. Never logged.
+How it fits: `app.main` builds the `TokenVerifier`; routes depend on `CurrentPrincipal`, whose
+claims `app.core.db` publishes to Postgres for RLS; layer: core.
+Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -40,6 +42,8 @@ class Principal:
 
 
 class TokenVerifier:
+    """Verifies Supabase access tokens and turns them into a `Principal`."""
+
     def __init__(
         self,
         *,
@@ -48,6 +52,7 @@ class TokenVerifier:
         hs256_secret: str | None = None,
         leeway_s: int = 10,
     ) -> None:
+        """Keep the expected issuer, JWKS client, optional HS256 secret and clock leeway."""
         self._issuer = issuer
         self._jwks = jwks_client
         self._secret = hs256_secret
@@ -55,6 +60,7 @@ class TokenVerifier:
 
     @classmethod
     def from_settings(cls, settings: Settings) -> TokenVerifier | None:
+        """Build a verifier from settings, or return None when Supabase Auth is not configured."""
         if not settings.jwt_issuer or not settings.jwks_url:
             return None
         jwks = PyJWKClient(
@@ -73,6 +79,11 @@ class TokenVerifier:
         )
 
     async def verify(self, token: str) -> Principal:
+        """Verify an access token and return the caller.
+
+        Raises 401 for malformed, expired, wrongly signed or non-`authenticated` tokens and 503 when
+        the signing keys cannot be fetched.
+        """
         try:
             header = jwt.get_unverified_header(token)
         except jwt.PyJWTError as exc:
@@ -121,6 +132,7 @@ class TokenVerifier:
 
     @staticmethod
     async def _signing_key(jwks: PyJWKClient, kid: str) -> Any:
+        """Fetch the public key for `kid` from the JWKS without blocking the event loop."""
         try:
             # PyJWKClient uses blocking urllib; keep it off the event loop.
             # On an unknown kid it refetches the JWKS once (key rotation).
@@ -137,6 +149,7 @@ _bearer = HTTPBearer(auto_error=False)
 
 
 def get_token_verifier(request: Request) -> TokenVerifier:
+    """Return the app's token verifier; raises 503 when authentication is not configured."""
     verifier: TokenVerifier | None = getattr(request.app.state, "token_verifier", None)
     if verifier is None:
         raise ServiceUnavailableError("Authentication is not configured")
@@ -147,6 +160,7 @@ async def get_current_principal(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     verifier: Annotated[TokenVerifier, Depends(get_token_verifier)],
 ) -> Principal:
+    """FastAPI dependency: authenticate the bearer token and record the user id for logging."""
     if credentials is None or credentials.scheme.lower() != "bearer" or not credentials.credentials:
         raise UnauthorizedError()
     principal = await verifier.verify(credentials.credentials)

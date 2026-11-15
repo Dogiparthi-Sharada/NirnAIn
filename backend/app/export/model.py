@@ -1,19 +1,12 @@
-"""The data both export formats render, derived from a run and its assignments.
+"""The data both export formats render, derived from a run and its planned assignments.
 
-Business rule (round 3, R4): an export states the plan as solved. Each work
-package keeps the first and last day of the run's timeline (`result.schedule`),
-its duration is the working days between them (a part-timer's package takes
-longer than its WBS duration), and its work is the effort the plan books: its
-weekly rate (`planned_assignments.hours_per_week`) over those days, the same
-hours applying the plan books (64 h, not the rate over the WBS duration).
-
-Runs stored before the timeline existed only have 0-based calendar weeks
-counted from the Monday of the week containing the run's planning start (see
-`app/optimization/calendar.py:week_index`): a task then starts on the first
-working day of its start week (not before the planning start) (moved later
-within that week to follow its FS/SS predecessors), runs for its WBS
-duration in working days, and finishes inside its end week and not after the
-run's completion date.
+Purpose: Round 3, R4: an export states the plan as solved. Each package keeps the first and last day
+of the run's timeline, its duration is the working days between them and its work the hours the plan
+books. Runs stored before the timeline existed fall back to their week indexes, moved to follow
+FS/SS predecessors and kept within the run's completion date.
+How it fits: `build_export` is called by app/api/v1/plan.py with rows from app/repositories/plan.py;
+rendered by msproject.py and pdf.py; layer: export.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -66,6 +59,8 @@ class PlannedRow:
 
 @dataclass(frozen=True, slots=True)
 class ExportTask:
+    """One work package as exported: dates, duration, work and who does it."""
+
     uid: int
     wbs_node_id: str
     code: str
@@ -82,6 +77,8 @@ class ExportTask:
 
 @dataclass(frozen=True, slots=True)
 class ExportLink:
+    """A dependency between two exported tasks (by task uid)."""
+
     predecessor_uid: int
     successor_uid: int
     type: str  # FS | SS | FF | SF
@@ -90,6 +87,8 @@ class ExportLink:
 
 @dataclass(frozen=True, slots=True)
 class PlanExport:
+    """Everything an export file shows about one plan."""
+
     project_name: str
     title: str
     file_stem: str
@@ -115,6 +114,7 @@ def file_stem(project_name: str, version: int | None, run_id: uuid.UUID) -> str:
 
 
 def _snapshot_start(snapshot: Mapping[str, Any], fallback: date) -> date:
+    """Return the run's planning start from its input snapshot, else the fallback date."""
     try:
         return date.fromisoformat(str(snapshot["start_date"]))
     except (KeyError, TypeError, ValueError):
@@ -122,12 +122,14 @@ def _snapshot_start(snapshot: Mapping[str, Any], fallback: date) -> date:
 
 
 def _working_days(snapshot: Mapping[str, Any]) -> int:
+    """Return the run's working days per week from its snapshot (default 5)."""
     constraints = snapshot.get("constraints")
     value = constraints.get("working_days_per_week") if isinstance(constraints, dict) else None
     return value if isinstance(value, int) and 1 <= value <= 7 else DEFAULT_WORKING_DAYS
 
 
 def _snapshot_durations(snapshot: Mapping[str, Any]) -> dict[str, int]:
+    """Return each task's WBS duration from the run's input snapshot."""
     tasks = snapshot.get("tasks")
     durations: dict[str, int] = {}
     for task in tasks if isinstance(tasks, list) else []:
@@ -151,6 +153,7 @@ def _planned_dates(result: Mapping[str, Any] | None) -> dict[str, tuple[date, da
 
 
 def _rows_of(result: Mapping[str, Any] | None, key: str) -> list[dict[str, str]]:
+    """Return a list of result rows (KPIs, reassignments, ...) as string dictionaries."""
     rows = result.get(key) if result else None
     return [
         {field: str(value) for field, value in row.items() if value is not None}
@@ -160,6 +163,7 @@ def _rows_of(result: Mapping[str, Any] | None, key: str) -> list[dict[str, str]]
 
 
 def _resource_key(row: PlannedRow) -> str | None:
+    """Return the resource a row is assigned to: the employee id or `contractor:<label>`."""
     if row.employee_id is not None:
         return str(row.employee_id)
     return f"contractor:{row.contractor_label}" if row.contractor_label else None
@@ -176,6 +180,10 @@ class _Window:
     duration_days: int
 
     def finish(self, start: date, per_week: int, completion: date | None) -> date:
+        """Return the finish for a start: the duration's last working day, kept in the end week.
+
+        The finish never passes the run's completion date nor comes before the start.
+        """
         finish = workday_date(start, max(self.duration_days, 1) - 1, per_week)
         finish = min(max(finish, self.end_monday), self.end_last)
         if completion is not None and start <= completion < finish:
@@ -184,6 +192,7 @@ class _Window:
 
 
 def _window(row: PlannedRow, duration_days: int, planning_start: date, per_week: int) -> _Window:
+    """Return where a legacy row may sit: its start and end weeks as dates."""
     monday = planning_start - timedelta(days=planning_start.weekday())
     start_monday = monday + timedelta(weeks=row.start_week)
     end_monday = monday + timedelta(weeks=max(row.end_week, row.start_week))
@@ -198,6 +207,7 @@ def _window(row: PlannedRow, duration_days: int, planning_start: date, per_week:
 
 
 def _links(snapshot: Mapping[str, Any], task_uids: Mapping[str, int]) -> list[ExportLink]:
+    """Return the snapshot's dependencies between exported tasks."""
     links: list[ExportLink] = []
     dependencies = snapshot.get("dependencies")
     for dependency in dependencies if isinstance(dependencies, list) else []:
@@ -244,6 +254,7 @@ def _schedule(
 
 
 def build_export(header: RunHeader, rows: Sequence[PlannedRow]) -> PlanExport:
+    """Build a run's export: the timeline's dates where it has them, else derived ones."""
     snapshot = header.snapshot
     planning_start = _snapshot_start(snapshot, header.created_at.date())
     per_week = _working_days(snapshot)

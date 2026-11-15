@@ -1,11 +1,11 @@
 """Finished work packages, read while freezing the optimizer's input (caller's RLS session).
 
-Business rule (round 3, R2, "done work stays done"): approving a step-7 progress change
-writes 0 working days left into the WBS. Such a package is still part of the project: it
-was planned and finished. A 0-day package that an applied plan scheduled is therefore
-finished work, kept in every later plan as done at the dates the latest applied plan that
-scheduled it gave it. A 0-day package no applied plan ever scheduled has no usable duration:
-it blocks the optimizer (`work_packages.py`).
+Purpose: Round 3, R2 "done work stays done": a 0-day package that an applied plan scheduled is
+finished work, kept in every later plan at the dates the latest such plan gave it; a 0-day package
+no applied plan scheduled has no usable duration and blocks the optimizer.
+How it fits: Called by app/repositories/work_packages.py and the planning-input reader; reads
+`optimization_runs.result.schedule`; layer: repositories.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations

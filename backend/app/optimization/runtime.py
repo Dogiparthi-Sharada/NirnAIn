@@ -1,12 +1,11 @@
 """How CP-SAT runs: the solve options, stopping a solve, and the settings a run records.
 
-`solver.solve` (the plan), `blockers.explain_infeasibility` (why there is
-none) and `remedies.price_remedies` (the ways out) all run CP-SAT through
-`new_solver` and `run_model`, so one `SolveControl` can stop any of them on
-server shutdown. `solver_settings` is what a run stores in
-`options.solverSettings` (round 3, R7): the solver and its version, the
-time limit, workers and seed, and the objective weights in cents, so a run
-can be reproduced and compared.
+Purpose: Let one `SolveControl` stop any running solve on server shutdown, and record in
+`options.solverSettings` (round 3, R7) the solver, version, time limit, workers, seed and objective
+weights so a run can be reproduced and compared.
+How it fits: `solver.solve`, `blockers.explain_infeasibility` and `remedies.price_remedies` all run
+CP-SAT through `new_solver` and `run_model`; layer: optimization.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -40,6 +39,7 @@ class SolveControl:
     """Lets another thread stop a running solve (used on server shutdown)."""
 
     def __init__(self) -> None:
+        """Start with no solve running and not stopped."""
         self._lock = threading.Lock()
         self._solver: cp_model.CpSolver | None = None
         self._stopped = False

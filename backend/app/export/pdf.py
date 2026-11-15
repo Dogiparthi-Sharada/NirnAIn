@@ -1,4 +1,11 @@
-"""Plan export as a PDF (fpdf2, built-in Helvetica: text is reduced to Latin-1)."""
+"""Plan export as a PDF (fpdf2, built-in Helvetica: text is reduced to Latin-1).
+
+Purpose: Give stakeholders a printable plan: KPIs, the schedule as solved, reassignments and
+schedule changes, with the same dates and work as the MS Project export.
+How it fits: `render_pdf` is called by app/api/v1/plan.py (in a worker thread) with
+app/export/model.py's `PlanExport`; layer: export.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -58,6 +65,7 @@ def latin1(text: str) -> str:
 
 class _Document(FPDF):
     def footer(self) -> None:
+        """Draw the page number at the bottom of every page."""
         self.set_y(-12)
         self.set_font(FONT, size=8)
         self.set_text_color(*MUTED)
@@ -65,6 +73,7 @@ class _Document(FPDF):
 
 
 def _heading(pdf: FPDF, text: str) -> None:
+    """Draw a section heading."""
     pdf.ln(4)
     pdf.set_font(FONT, "B", 12)
     pdf.set_text_color(*INK)
@@ -72,16 +81,19 @@ def _heading(pdf: FPDF, text: str) -> None:
 
 
 def _note(pdf: FPDF, text: str) -> None:
+    """Draw a muted note paragraph."""
     pdf.set_font(FONT, size=9)
     pdf.set_text_color(*MUTED)
     pdf.multi_cell(0, 5, latin1(text), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
 
 def _cells(rows: Sequence[dict[str, str]], keys: Sequence[str]) -> list[list[str]]:
+    """Return the rows' values for the given keys, empty where missing."""
     return [[row.get(key, "") for key in keys] for row in rows]
 
 
 def _assignee(task: ExportTask) -> str:
+    """Return who does the task, marking contractors."""
     if task.resource is None:
         return "Unassigned"
     if task.is_contractor and "contractor" not in task.resource.lower():
@@ -92,6 +104,7 @@ def _assignee(task: ExportTask) -> str:
 def _table(
     pdf: FPDF, headings: Sequence[str], rows: Sequence[Sequence[str]], widths: Sequence[float]
 ) -> None:
+    """Draw a table with headings, rows and column widths."""
     pdf.set_font(FONT, size=9)
     pdf.set_text_color(*INK)
     with pdf.table(
@@ -125,6 +138,7 @@ def schedule_rows(plan: PlanExport) -> list[tuple[str, ...]]:
 
 
 def render_pdf(plan: PlanExport) -> bytes:
+    """Return the plan as PDF bytes (landscape A4)."""
     pdf = _Document(orientation="L", unit="mm", format="A4")
     pdf.set_title(latin1(f"{plan.project_name} - {plan.title}"))
     pdf.set_creator("NirnAIn")

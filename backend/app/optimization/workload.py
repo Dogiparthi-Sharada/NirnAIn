@@ -1,31 +1,19 @@
 """Each person's work in the CP-SAT model: work modes, overtime and capacity.
 
-`ModelBuilder` (builder.py) asks `Workload.candidate` for every (task,
-person) it may assign and calls `Workload.close` once, which adds one
-capacity constraint set per person. Modelling rules:
-
-* Modes: a candidate does the task in exactly one mode, each an optional
-  fixed-size interval from the task's start. "regular" is `load.task_mode`
-  at the person's daily hours (part-timers stretch the task). With "Can
-  flex" capacity a "flex" mode lets a part-timer work up to 25% over their
-  hours so the task stretches less (never below their full-time duration).
-  "booked" modes stretch it further, to the hours their bookings on other
-  projects leave (`load.booked_modes`), so it can run beside a booking
-  rather than only after it (QA pack RES-006). In the explanation model a
-  "relaxed" mode at their full-time duration is
-  open only when the person's capacity group is dropped, so a part-timer
-  who makes a date impossible is named in the conflict. Every mode is at
-  the person's pace for their skill level (`speed.py`).
-* Capacity: a cumulative over the person's intervals and other-project
-  bookings against their daily capacity. Must hold: as is. Can flex: each
-  interval may move part of its daily load, o, into overtime, paid
-  `capacity_penalty` plus the overtime premium (1.5x an employee's rate,
-  nothing extra for a contractor) per tenth-hour on every day it runs; a
-  second cumulative caps the full load at 125% of capacity (round-2 D2).
-  Explanation model: overtime is free under Can flex and forbidden by the
-  capacity group under Must hold; the 125% cap is part of the group.
-* Contractor profiles have no capacity: they stand for as many people as
-  needed, so they keep the WBS duration and book nothing here.
+Purpose: Model how a person's hours shape the plan, following these rules:
+    * Modes: a candidate does the task in exactly one mode, each an optional fixed-size interval
+      from the task's start: "regular" at their daily hours (part-timers stretch the task);
+      "flex" (Can flex only) up to 25% over their hours; "booked" stretched to the hours their
+      other-project bookings leave (RES-006); in the explanation model a "relaxed" full-time
+      mode, open only when the person's capacity group is dropped, so a part-timer who makes a
+      date impossible is named. Every mode is at the person's pace (speed.py).
+    * Capacity: a cumulative over the person's intervals and bookings against their daily
+      capacity. Can flex: each interval may move part of its load into paid overtime, and a
+      second cumulative caps the full load at 125% (round-2 D2).
+    * Contractor profiles have no capacity: they keep the WBS duration and book nothing here.
+How it fits: `ModelBuilder` (builder.py) asks `Workload.candidate` for every (task, person) and
+calls `Workload.close` once to add the capacity constraints; layer: optimization.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -39,7 +27,8 @@ from ortools.sat.python import cp_model
 
 from app.optimization import conflicts
 from app.optimization.load import TENTHS, Mode, flex_capacity_tenths, task_mode
-from app.optimization.model import Conflict, Resource, Task
+from app.optimization.model import Task
+from app.optimization.outcome import Conflict, Resource
 
 if TYPE_CHECKING:
     from app.optimization.builder import ModelBuilder
@@ -61,6 +50,7 @@ class Workload:
     """The modes and capacity constraints of every person in one model."""
 
     def __init__(self, builder: ModelBuilder) -> None:
+        """Attach to the builder's model and problem; capacity is flexible under "Can flex"."""
         self.builder = builder
         self.problem = builder.problem
         self.model = builder.model
@@ -72,6 +62,7 @@ class Workload:
         return ("capacity", resource.id), partial(conflicts.capacity, self.problem, resource)
 
     def _modes(self, task: Task, resource: Resource) -> list[tuple[Mode, ModeKind]]:
+        """Return the ways this person may do the task: regular, flex, booked and relaxed modes."""
         regular = self.problem.modes[task.id, resource.id]
         modes: list[tuple[Mode, ModeKind]] = [(regular, "regular")]
         flex = self.problem.flex_modes.get((task.id, resource.id))
@@ -97,8 +88,10 @@ class Workload:
             literals = [chosen]
         else:
             literals = [model.new_bool_var(f"{kind}[{label}]") for _, kind in modes]
+            # Exactly one mode is on when this person is chosen, none otherwise.
             model.add(cp_model.LinearExpr.sum(literals) == chosen)
         for (mode, kind), literal in zip(modes, literals, strict=True):
+            # Optional interval: it exists (and books capacity) only if its mode is chosen.
             interval = model.new_optional_fixed_size_interval_var(
                 start, mode.duration_days, literal, f"{kind}[{label}]"
             )
@@ -127,6 +120,7 @@ class Workload:
                 self._person(resource, loads)
 
     def _person(self, resource: Resource, loads: list[Load]) -> None:
+        """Add one person's capacity constraints and overtime cost (or forbid it when hard)."""
         problem, model = self.problem, self.model
         capacity = problem.capacity[resource.id]
         bookings = [
@@ -144,6 +138,8 @@ class Workload:
             for load in loads
         ]
         intervals = [load.interval for load in loads] + [interval for interval, _ in bookings]
+        # Cumulative capacity: on every day the chosen modes' regular load plus the bookings
+        # elsewhere stays within the person's daily hours.
         model.add_cumulative(intervals, regular + [tenths for _, tenths in bookings], capacity)
         overtime = [
             (load.overtime, load.duration_days) for load in loads if load.overtime is not None

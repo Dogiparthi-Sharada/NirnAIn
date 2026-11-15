@@ -1,16 +1,11 @@
 """Rules reading of people in new meeting notes (step 7, no AI key or Claude failed).
 
-What: finds who gives the project different hours ("Leo can only give 16 hours a week",
-"Ana will be at 20 hours per week"; only hours a week said after the person's name), who
-leaves ("Mark is leaving"), and who is brought in
-("bring in an outside security specialist", "hire a contractor for the data migration").
-Why: mid-project the PM's meetings change the team as often as dates and money; the
-deterministic reader must catch it without Claude and without inventing anything: a
-newcomer's hours are asked when the notes don't give them, and so is a contractor's rate
-when the project has none (see `app.changes.questions`). A newcomer brings the project's
-skills the sentence names.
-How it fits: `app.changes.detect.detect` calls `capacity_change` and `newcomer_change` per
-sentence; team members are matched by case-insensitive full, first or last name.
+Purpose: Mid-project meetings change the team as often as dates and money. Find who gives the
+project different hours, who leaves and who is brought in, without inventing anything: a newcomer's
+hours, or a contractor's rate when the project has none, are asked instead.
+How it fits: `app.changes.detect.detect` calls `capacity_change` and `newcomer_change` per sentence;
+team members are matched by case-insensitive full, first or last name; layer: changes.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -132,6 +127,7 @@ def capacity_change(
 
 
 def _title(words: list[str]) -> str:
+    """Return the words in title case, keeping acronyms ("SAP") as written."""
     return " ".join(word if word.isupper() else word.capitalize() for word in words)
 
 

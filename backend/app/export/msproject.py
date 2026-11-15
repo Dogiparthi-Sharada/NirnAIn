@@ -1,9 +1,12 @@
-"""Plan export as Microsoft Project XML (MSPDI): Tasks, Resources, Assignments.
+"""Plan export as Microsoft Project XML (MSPDI): tasks, resources and assignments.
 
-Each work package becomes a task with its planned start ("start no earlier
-than", so Project keeps the optimizer's dates), duration and WBS code;
-dependencies become predecessor links. People and contractors become work
-resources, assigned at their planned hours per week.
+Purpose: Let the PM open the optimized plan in MS Project with the optimizer's dates kept: each
+package is a task with its planned start ("start no earlier than"), duration and WBS code,
+dependencies become predecessor links, and people and contractors become work resources assigned at
+their planned hours per week.
+How it fits: `render_msproject` is called by app/api/v1/plan.py with app/export/model.py's
+`PlanExport`; layer: export.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -22,20 +25,24 @@ LINK_TYPES = {"FF": "0", "FS": "1", "SF": "2", "SS": "3"}
 
 
 def _add_child(parent: ET.Element, tag: str, text: str | int) -> ET.Element:
+    """Append a child element with text and return it."""
     element = ET.SubElement(parent, tag)
     element.text = str(text)
     return element
 
 
 def _start(day: date) -> str:
+    """Return a day's 8:00 start timestamp, as MS Project expects."""
     return f"{day.isoformat()}T08:00:00"
 
 
 def _finish(day: date) -> str:
+    """Return a day's 17:00 finish timestamp, as MS Project expects."""
     return f"{day.isoformat()}T17:00:00"
 
 
 def _hours(hours: float) -> str:
+    """Return hours as an ISO-8601 duration ("PT8H0M0S")."""
     whole, minutes = divmod(round(hours * 60), 60)
     return f"PT{whole}H{minutes}M0S"
 
@@ -43,6 +50,7 @@ def _hours(hours: float) -> str:
 def _task(
     tasks: ET.Element, task: ExportTask, links: dict[int, list[tuple[int, str, int]]]
 ) -> None:
+    """Add one work package as a task with its dates, work and predecessor links."""
     element = ET.SubElement(tasks, "Task")
     _add_child(element, "UID", task.uid)
     _add_child(element, "ID", task.uid)
@@ -71,6 +79,7 @@ def _task(
 
 
 def _summary(tasks: ET.Element, plan: PlanExport, finish: date) -> None:
+    """Add the project summary task (UID 0) spanning the whole plan."""
     element = ET.SubElement(tasks, "Task")
     _add_child(element, "UID", 0)
     _add_child(element, "ID", 0)
@@ -84,6 +93,7 @@ def _summary(tasks: ET.Element, plan: PlanExport, finish: date) -> None:
 
 
 def _resources(root: ET.Element, plan: PlanExport) -> dict[str, int]:
+    """Add one resource per person or contractor profile; return their uids by resource key."""
     resources = ET.SubElement(root, "Resources")
     resource_uids: dict[str, int] = {}
     for task in plan.tasks:
@@ -103,6 +113,7 @@ def _resources(root: ET.Element, plan: PlanExport) -> dict[str, int]:
 
 
 def _assignments(root: ET.Element, plan: PlanExport, resource_uids: dict[str, int]) -> None:
+    """Add each task's assignment at the person's share of a full-time week."""
     assignments = ET.SubElement(root, "Assignments")
     full_time_week = HOURS_PER_DAY * plan.working_days_per_week
     for task in plan.tasks:
@@ -119,6 +130,7 @@ def _assignments(root: ET.Element, plan: PlanExport, resource_uids: dict[str, in
 
 
 def render_msproject(plan: PlanExport) -> bytes:
+    """Return the plan as MSPDI XML bytes."""
     finish = plan.finish_date or plan.start_date
     root = ET.Element("Project", {"xmlns": NAMESPACE})
     _add_child(root, "SaveVersion", 14)

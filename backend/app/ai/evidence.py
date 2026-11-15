@@ -1,10 +1,11 @@
 """Scope evidence ("never invent"): tie every extracted item to the notes' own words.
 
-Whatever the extractor claims, an item keeps a `source_quote` only when that
-quote really occurs in the notes. Matching ignores case, runs of whitespace
-and typographic quote/dash variants, and the stored quote is the verbatim
-span of the notes (not the extractor's rendering of it). An item whose quote
-can't be found loses it and becomes 'inferred' with `NO_QUOTE_NOTE`.
+Purpose: An item keeps a `source_quote` only when that quote really occurs in the notes (ignoring
+case, whitespace runs and typographic quote/dash variants), stored as the notes' verbatim span; an
+item whose quote can't be found loses it and becomes 'inferred' with `NO_QUOTE_NOTE`.
+How it fits: Used by the Claude and rule-based intake extractors (intake_llm.py, intake_rules.py)
+before items are stored; layer: ai.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -79,6 +80,7 @@ class QuoteFinder:
     """Finds quotes in the notes; each source is folded once, then searched many times."""
 
     def __init__(self, sources: Sequence[Source]) -> None:
+        """Fold every source once so each quote lookup is a plain substring search."""
         self._folded_sources = [(source, *_folded(source.text)) for source in sources]
 
     def locate(self, quote: str) -> tuple[str, uuid.UUID | None] | None:

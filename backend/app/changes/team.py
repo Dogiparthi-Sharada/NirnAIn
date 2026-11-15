@@ -1,15 +1,12 @@
 """People joining or leaving the project mid-way (step 7, change kind "team").
 
-What: turns the "Add person" / "Remove" edits into changes (with the 422 rules), maps the
-answered changes to the re-plan's `addMembers` / `removeMembers`, and says which reserved
-employees a decision leaves unused.
-Why: the PM must be able to bring in a specialist or contractor, or take someone off the
-project, after Plan v1 is applied; the team inputs are locked then, so it goes through step 7.
-How it fits: pure functions used by `app.changes.derive` (edits, overrides), the rules and
-Claude readers (`addition`) and the API (which candidate employees to release); the hours
-question a hire from notes raises lives with the other questions (`app.changes.questions`).
-The API reserves an organization employee for every newcomer before the impact is built
-(`target`), so the optimizer's plan can name them; approval puts them on the team.
+Purpose: After Plan v1 the team inputs are locked, so bringing in a specialist or contractor, or
+taking someone off, goes through step 7: "Add person" / "Remove" edits become changes (with the 422
+rules), answered changes become `addMembers` / `removeMembers`, and unused reservations are named so
+the API can release them.
+How it fits: Pure functions used by derive.py, the rules and Claude readers (`addition`) and the
+API; the API reserves an employee for every newcomer before the impact is built; layer: changes.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations

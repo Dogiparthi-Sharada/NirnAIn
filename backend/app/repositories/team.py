@@ -1,20 +1,25 @@
-"""The team on a project (`project_team_members`) and the skills it needs (`project_skills`)."""
+"""Repository of the team on a project (`project_team_members`) and its people's records.
+
+Purpose: Put people on and off a project, keep their hours, role, worker type and rate, and show how
+much of their time other projects already booked (caller's RLS session).
+How it fits: Used by app/api/v1/team.py and the step-7 change repositories; skill reads and writes
+come from the mixed-in `TeamSkillQueries` (app/repositories/team_skills.py); layer: repositories.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
 import uuid
 from collections import defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.domain.planning import average_weekly_hours
-from app.domain.team import ProjectSkill, TeamMember
+from app.domain.team import TeamMember
 from app.repositories import access
 from app.repositories.access import ProjectRef
 from app.repositories.tables import (
@@ -22,41 +27,35 @@ from app.repositories.tables import (
     constraint_sets,
     employee_skills,
     employees,
-    project_skills,
     project_team_members,
     skills,
-    task_skill_requirements,
     wbs_nodes,
 )
-
-DEFAULT_PROFICIENCY = 3
-
-
-@dataclass(frozen=True, slots=True)
-class SkillRow:
-    skill_id: uuid.UUID
-    name: str
-    required: bool
+from app.repositories.team_skills import TeamSkillQueries
 
 
-class TeamRepository:
+class TeamRepository(TeamSkillQueries):
     """Team and skills persistence. Visibility and write permissions come from RLS."""
 
     def __init__(self, conn: AsyncConnection) -> None:
+        """Use the caller's RLS-scoped connection."""
         self._conn = conn
 
     async def project(self, project_id: uuid.UUID) -> ProjectRef | None:
+        """Return the project when the caller can see it, else None."""
         return await access.visible_project(self._conn, project_id)
 
     async def can_write(self, project_id: uuid.UUID) -> bool:
+        """Tell whether the caller may change the project."""
         return await access.can_write_project(self._conn, project_id)
 
     async def window(self, project: ProjectRef) -> tuple[date | None, date | None]:
         """Planning window: the constraint dates, falling back to the project's dates."""
-        cs = constraint_sets
         row = (
             await self._conn.execute(
-                sa.select(cs.c.start_date, cs.c.must_finish_by).where(cs.c.project_id == project.id)
+                sa.select(constraint_sets.c.start_date, constraint_sets.c.must_finish_by).where(
+                    constraint_sets.c.project_id == project.id
+                )
             )
         ).first()
         start = row.start_date if row else None
@@ -118,42 +117,43 @@ class TeamRepository:
         ]
 
     async def _skill_names(self, employee_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[str]]:
+        """Return each employee's skill names, alphabetically."""
         out: dict[uuid.UUID, list[str]] = defaultdict(list)
         if employee_ids:
-            es, s = employee_skills, skills
+            held, skill_table = employee_skills, skills
             for row in (
                 await self._conn.execute(
-                    sa.select(es.c.employee_id, s.c.name)
-                    .select_from(es.join(s, s.c.id == es.c.skill_id))
-                    .where(es.c.employee_id.in_(employee_ids))
-                    .order_by(es.c.employee_id, s.c.name)
+                    sa.select(held.c.employee_id, skill_table.c.name)
+                    .select_from(held.join(skill_table, skill_table.c.id == held.c.skill_id))
+                    .where(held.c.employee_id.in_(employee_ids))
+                    .order_by(held.c.employee_id, skill_table.c.name)
                 )
             ).all():
                 out[row.employee_id].append(str(row.name))
         return out
 
     async def member_names(self, project_id: uuid.UUID) -> dict[uuid.UUID, str]:
-        t, e = project_team_members, employees
+        """Return the full name of everyone on the project's team, by employee id."""
+        members, staff = project_team_members, employees
         rows = (
             await self._conn.execute(
-                sa.select(t.c.employee_id, e.c.full_name)
-                .select_from(t.join(e, e.c.id == t.c.employee_id))
-                .where(t.c.project_id == project_id)
+                sa.select(members.c.employee_id, staff.c.full_name)
+                .select_from(members.join(staff, staff.c.id == members.c.employee_id))
+                .where(members.c.project_id == project_id)
             )
         ).all()
-        return {r.employee_id: str(r.full_name) for r in rows}
+        return {row.employee_id: str(row.full_name) for row in rows}
 
     async def find_employee(self, org_id: uuid.UUID, full_name: str) -> uuid.UUID | None:
         """An active employee of the organization with this name (case-insensitive)."""
-        e = employees
         stmt = (
-            sa.select(e.c.id)
+            sa.select(employees.c.id)
             .where(
-                e.c.org_id == org_id,
-                e.c.active.is_(True),
-                sa.func.lower(e.c.full_name) == full_name.lower(),
+                employees.c.org_id == org_id,
+                employees.c.active.is_(True),
+                sa.func.lower(employees.c.full_name) == full_name.lower(),
             )
-            .order_by(e.c.full_name, e.c.id)
+            .order_by(employees.c.full_name, employees.c.id)
             .limit(1)
         )
         return (await self._conn.execute(stmt)).scalar()
@@ -223,14 +223,15 @@ class TeamRepository:
         )
 
     async def rename_employee(self, employee_id: uuid.UUID, full_name: str) -> None:
-        e = employees
+        """Change the name on the organization's employee record."""
         await self._conn.execute(
-            sa.update(e).where(e.c.id == employee_id).values(full_name=full_name)
+            sa.update(employees).where(employees.c.id == employee_id).values(full_name=full_name)
         )
 
     async def add_member(
         self, project_id: uuid.UUID, employee_id: uuid.UUID, role_title: str, hours_per_week: int
     ) -> None:
+        """Put an employee on the project's team with a role and weekly hours."""
         await self._conn.execute(
             sa.insert(project_team_members).values(
                 project_id=project_id,
@@ -243,10 +244,13 @@ class TeamRepository:
     async def update_member(
         self, project_id: uuid.UUID, employee_id: uuid.UUID, changes: dict[str, Any]
     ) -> bool:
-        t = project_team_members
+        """Change a team member's project role or hours; False when they are not on the team."""
         result = await self._conn.execute(
-            sa.update(t)
-            .where(t.c.project_id == project_id, t.c.employee_id == employee_id)
+            sa.update(project_team_members)
+            .where(
+                project_team_members.c.project_id == project_id,
+                project_team_members.c.employee_id == employee_id,
+            )
             .values(**changes)
         )
         return result.rowcount > 0
@@ -274,187 +278,3 @@ class TeamRepository:
             .values(owner_employee_id=None)
         )
         return True
-
-    async def ensure_skills(self, org_id: uuid.UUID, names: list[str]) -> list[uuid.UUID]:
-        """Ids of the organization's skills with these names, creating missing ones."""
-        if not names:
-            return []
-        s = skills
-        await self._conn.execute(
-            pg_insert(s)
-            .values([{"id": uuid.uuid4(), "org_id": org_id, "name": n} for n in names])
-            .on_conflict_do_nothing(index_elements=[s.c.org_id, s.c.name])
-        )
-        rows = (
-            await self._conn.execute(
-                sa.select(s.c.id, s.c.name).where(
-                    s.c.org_id == org_id, sa.func.lower(s.c.name).in_([n.lower() for n in names])
-                )
-            )
-        ).all()
-        by_name = {str(r.name).lower(): r.id for r in rows}
-        return [by_name[n.lower()] for n in names if n.lower() in by_name]
-
-    async def add_employee_skills(self, employee_id: uuid.UUID, skill_ids: list[uuid.UUID]) -> None:
-        if not skill_ids:
-            return
-        es = employee_skills
-        await self._conn.execute(
-            pg_insert(es)
-            .values(
-                [
-                    {"employee_id": employee_id, "skill_id": s, "proficiency": DEFAULT_PROFICIENCY}
-                    for s in skill_ids
-                ]
-            )
-            .on_conflict_do_nothing(index_elements=[es.c.employee_id, es.c.skill_id])
-        )
-
-    async def set_employee_skills(self, employee_id: uuid.UUID, skill_ids: list[uuid.UUID]) -> None:
-        """Replace the person's skills; skills they keep keep their proficiency."""
-        es = employee_skills
-        stale = sa.delete(es).where(es.c.employee_id == employee_id)
-        if skill_ids:
-            stale = stale.where(es.c.skill_id.not_in(skill_ids))
-        await self._conn.execute(stale)
-        await self.add_employee_skills(employee_id, skill_ids)
-
-    # ------------------------------------------------------------------ skills
-    async def _project_skill_rows(self, project_id: uuid.UUID) -> list[SkillRow]:
-        ps, s = project_skills, skills
-        rows = (
-            await self._conn.execute(
-                sa.select(ps.c.skill_id, s.c.name, ps.c.required)
-                .select_from(ps.join(s, s.c.id == ps.c.skill_id))
-                .where(ps.c.project_id == project_id)
-                .order_by(ps.c.created_at, s.c.name, ps.c.skill_id)
-            )
-        ).all()
-        return [SkillRow(r.skill_id, str(r.name), bool(r.required)) for r in rows]
-
-    async def _wbs_skill_rows(self, project_id: uuid.UUID) -> list[SkillRow]:
-        """Skills the work packages require, as the starting list (all required)."""
-        t, s, n = task_skill_requirements, skills, wbs_nodes
-        rows = (
-            await self._conn.execute(
-                sa.select(t.c.skill_id, s.c.name)
-                .select_from(t.join(n, n.c.id == t.c.wbs_node_id).join(s, s.c.id == t.c.skill_id))
-                .where(n.c.project_id == project_id)
-                .group_by(t.c.skill_id, s.c.name)
-                .order_by(s.c.name)
-            )
-        ).all()
-        return [SkillRow(r.skill_id, str(r.name), True) for r in rows]
-
-    async def skill_rows(self, project_id: uuid.UUID) -> list[SkillRow]:
-        """The project's skill list; until it is edited, the skills its WBS requires."""
-        return await self._project_skill_rows(project_id) or await self._wbs_skill_rows(project_id)
-
-    async def materialize_skills(self, project_id: uuid.UUID) -> None:
-        """Before the first edit, store the list derived from the WBS so edits apply to it."""
-        if await self._project_skill_rows(project_id):
-            return
-        derived = await self._wbs_skill_rows(project_id)
-        if derived:
-            ps = project_skills
-            await self._conn.execute(
-                pg_insert(ps)
-                .values(
-                    [
-                        {"project_id": project_id, "skill_id": r.skill_id, "required": r.required}
-                        for r in derived
-                    ]
-                )
-                .on_conflict_do_nothing(index_elements=[ps.c.project_id, ps.c.skill_id])
-            )
-
-    async def holders(
-        self, project_id: uuid.UUID, skill_ids: list[uuid.UUID]
-    ) -> dict[uuid.UUID, list[str]]:
-        """Team members who have each skill (any proficiency), by name."""
-        out: dict[uuid.UUID, list[str]] = defaultdict(list)
-        if not skill_ids:
-            return out
-        es, t, e = employee_skills, project_team_members, employees
-        rows = (
-            await self._conn.execute(
-                sa.select(es.c.skill_id, e.c.full_name)
-                .select_from(
-                    es.join(
-                        t, (t.c.employee_id == es.c.employee_id) & (t.c.project_id == project_id)
-                    ).join(e, e.c.id == es.c.employee_id)
-                )
-                .where(es.c.skill_id.in_(skill_ids))
-                .order_by(t.c.created_at, e.c.full_name)
-            )
-        ).all()
-        for r in rows:
-            out[r.skill_id].append(str(r.full_name))
-        return out
-
-    async def skills(self, project_id: uuid.UUID) -> list[ProjectSkill]:
-        rows = await self.skill_rows(project_id)
-        who = await self.holders(project_id, [r.skill_id for r in rows])
-        return [
-            ProjectSkill(
-                skill_id=r.skill_id,
-                name=r.name,
-                required=r.required,
-                holders=who.get(r.skill_id, []),
-            )
-            for r in rows
-        ]
-
-    async def org_skill(self, org_id: uuid.UUID, name: str) -> uuid.UUID | None:
-        s = skills
-        stmt = sa.select(s.c.id).where(
-            s.c.org_id == org_id, sa.func.lower(s.c.name) == name.lower()
-        )
-        return (await self._conn.execute(stmt)).scalar()
-
-    async def add_project_skill(
-        self, project_id: uuid.UUID, skill_id: uuid.UUID, required: bool
-    ) -> None:
-        await self._conn.execute(
-            sa.insert(project_skills).values(
-                project_id=project_id, skill_id=skill_id, required=required
-            )
-        )
-
-    async def set_required(
-        self, project_id: uuid.UUID, skill_id: uuid.UUID, required: bool
-    ) -> bool:
-        ps = project_skills
-        result = await self._conn.execute(
-            sa.update(ps)
-            .where(ps.c.project_id == project_id, ps.c.skill_id == skill_id)
-            .values(required=required)
-        )
-        return result.rowcount > 0
-
-    async def rename_skill(self, skill_id: uuid.UUID, name: str) -> None:
-        await self._conn.execute(sa.update(skills).where(skills.c.id == skill_id).values(name=name))
-
-    async def replace_skill(
-        self, project_id: uuid.UUID, old_id: uuid.UUID, new_id: uuid.UUID, required: bool
-    ) -> None:
-        """Point the project at another skill; team members with the old one get the new one."""
-        ps, es, t = project_skills, employee_skills, project_team_members
-        await self._conn.execute(
-            sa.delete(ps).where(ps.c.project_id == project_id, ps.c.skill_id == old_id)
-        )
-        await self.add_project_skill(project_id, new_id, required)
-        holders = sa.select(es.c.employee_id).where(
-            es.c.skill_id == old_id,
-            es.c.employee_id.in_(sa.select(t.c.employee_id).where(t.c.project_id == project_id)),
-        )
-        employee_ids: list[uuid.UUID] = list((await self._conn.execute(holders)).scalars())
-        for employee_id in employee_ids:
-            await self.add_employee_skills(employee_id, [new_id])
-
-    async def remove_skill(self, project_id: uuid.UUID, skill_id: uuid.UUID) -> bool:
-        ps = project_skills
-        result = await self._conn.execute(
-            sa.delete(ps).where(ps.c.project_id == project_id, ps.c.skill_id == skill_id)
-        )
-        return result.rowcount > 0

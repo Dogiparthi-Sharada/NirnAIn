@@ -1,3 +1,12 @@
+"""Planning endpoints: constraints and milestones, capacity, skill coverage and dependencies.
+
+Purpose: Let the PM set what the plan must respect (budget, deadline, policies, milestones) and link
+work packages, refusing cross-project links (SEC-001) and naming any cycle (WBS-009).
+How it fits: Uses app/repositories/planning.py and the pure rules in app/domain/planning.py;
+layer: api.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
+
 from __future__ import annotations
 
 import uuid
@@ -29,6 +38,7 @@ NODE_NOT_IN_PROJECT = "Work package not found in this project"
 
 
 async def _project(planning: Planning, project_id: ProjectId) -> ProjectRef:
+    """Return the project; 404 when it is hidden."""
     project = await planning.project(project_id)
     if project is None:
         raise NotFoundError("Project not found")
@@ -36,6 +46,7 @@ async def _project(planning: Planning, project_id: ProjectId) -> ProjectRef:
 
 
 async def _writable_project(planning: Planning, project_id: ProjectId) -> ProjectRef:
+    """Return the project; 404 when hidden, 403 when the caller can't edit its plan."""
     project = await _project(planning, project_id)
     if not await planning.can_write(project_id):
         raise ForbiddenError("You do not have permission to edit this project's plan")
@@ -49,6 +60,7 @@ async def _writable_project(planning: Planning, project_id: ProjectId) -> Projec
     summary="Project constraints (defaults from the project until saved)",
 )
 async def get_constraints(project_id: ProjectId, planning: Planning) -> ConstraintSet:
+    """Return the project's constraints (defaults from the project until saved)."""
     return await planning.constraints(await _project(planning, project_id))
 
 
@@ -60,8 +72,14 @@ async def get_constraints(project_id: ProjectId, planning: Planning) -> Constrai
 async def put_constraints(
     project_id: ProjectId, body: ConstraintSetInput, planning: Planning
 ) -> ConstraintSet:
+    """Save the constraints and milestones and return them.
+
+    Returns 422 when a milestone names a WBS node outside the project.
+    """
     project = await _writable_project(planning, project_id)
-    nodes = {m.wbs_node_id for m in body.milestones if m.wbs_node_id is not None}
+    nodes = {
+        milestone.wbs_node_id for milestone in body.milestones if milestone.wbs_node_id is not None
+    }
     if nodes - await planning.node_ids(project_id, nodes):
         raise UnprocessableError("Milestone wbsNodeId must be a WBS node of this project")
     await planning.save_constraints(project_id, body)
@@ -75,11 +93,15 @@ async def put_constraints(
     summary="Team capacity with average weekly hours committed to other projects",
 )
 async def get_capacity(project_id: ProjectId, planning: Planning) -> list[CapacityEntry]:
+    """Return the active employees with their average weekly hours booked on other projects.
+
+    The window is the planning window (constraint dates, else project dates, from today).
+    """
     project = await _project(planning, project_id)
-    cs = await planning.constraints(project)
+    constraint_set = await planning.constraints(project)
     weeks = planning_weeks(
-        cs.start_date or project.start_date,
-        cs.must_finish_by or project.target_end_date,
+        constraint_set.start_date or project.start_date,
+        constraint_set.must_finish_by or project.target_end_date,
         datetime.now(UTC).date(),
     )
     return await planning.capacity(project, weeks)
@@ -91,6 +113,7 @@ async def get_capacity(project_id: ProjectId, planning: Planning) -> list[Capaci
     summary="Required skills and whether the team covers them",
 )
 async def get_skills_coverage(project_id: ProjectId, planning: Planning) -> list[SkillCoverage]:
+    """Return the skills the WBS needs and whether someone in the organization covers them."""
     project = await _project(planning, project_id)
     return skill_coverage(
         await planning.required_skills(project_id), await planning.held_skills(project.org_id)
@@ -103,6 +126,7 @@ async def get_skills_coverage(project_id: ProjectId, planning: Planning) -> list
     summary="Active employees of an organization (resource pool)",
 )
 async def list_employees(org_id: OrgId, orgs: Orgs, planning: Planning) -> list[PoolEmployee]:
+    """Return the organization's active employees (the resource pool); 404 for non-members."""
     await ensure_org_visible(orgs, org_id)
     return await planning.employees(org_id)
 
@@ -143,6 +167,7 @@ async def _ensure_no_cycle(
     summary="Task dependencies of a project",
 )
 async def list_dependencies(project_id: ProjectId, planning: Planning) -> list[Dependency]:
+    """Return the project's dependencies in WBS order; 404 when the project is hidden."""
     await _project(planning, project_id)
     return await planning.dependencies(project_id)
 
@@ -168,6 +193,7 @@ async def create_dependency(
 
 
 async def _writable_dependency(planning: Planning, dependency_id: DependencyId) -> uuid.UUID:
+    """Return the dependency's project; 404 when hidden, 403 when the caller can't edit its plan."""
     project_id = await planning.dependency_project(dependency_id)
     if project_id is None:
         raise NotFoundError("Dependency not found")
@@ -205,6 +231,7 @@ async def update_dependency(
     summary="Delete a dependency",
 )
 async def delete_dependency(dependency_id: DependencyId, planning: Planning) -> Response:
+    """Delete a dependency; 404 when hidden, 403 when the caller can't edit the plan."""
     await _writable_dependency(planning, dependency_id)
     if not await planning.delete_dependency(dependency_id):
         raise ForbiddenError("You do not have permission to edit this project's plan")

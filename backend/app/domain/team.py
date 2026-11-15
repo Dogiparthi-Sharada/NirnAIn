@@ -1,9 +1,11 @@
-"""The team on a project and the skills it needs.
+"""API models of the team on a project and the skills it needs.
 
-Every team member is an employee (already in the company) or a contractor
-(`employees.is_contractor`, round-2 decision D1). Employees are costed at
-the rate on their company record, never one typed here; contractors need
-an hourly rate, the project's confirmed contractor rate being the default.
+Purpose: Every team member is an employee (already in the company) or a contractor
+(`employees.is_contractor`, round-2 decision D1). Employees are costed at the rate on their company
+record, never one typed here; contractors need an hourly rate.
+How it fits: Used by app/api/v1/team.py and app/repositories/team.py; app/domain/changes.py reuses
+the field types for people who join mid-project; layer: domain.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -42,6 +44,8 @@ def clean_skill_names(names: list[str]) -> list[str]:
 
 # --------------------------------------------------------------------------- team
 class TeamMember(CamelModel):
+    """A person on the project with hours, rate, booked hours and skills."""
+
     employee_id: uuid.UUID
     full_name: str
     role_title: str | None
@@ -67,11 +71,13 @@ class TeamMemberCreate(InputModel):
     @field_validator("full_name")
     @classmethod
     def _squash(cls, value: str) -> str:
+        """Collapse runs of whitespace in the name."""
         return " ".join(value.split())
 
     @field_validator("skills")
     @classmethod
     def _clean(cls, value: list[str]) -> list[str]:
+        """Trim the skill names and drop blanks and duplicates."""
         return clean_skill_names(value)
 
 
@@ -88,6 +94,7 @@ class TeamMemberUpdate(InputModel):
 
     @model_validator(mode="after")
     def _validate(self) -> TeamMemberUpdate:
+        """Reject an empty body and nulls (except the rate), then normalise the name and skills."""
         if not self.model_fields_set:
             raise ValueError("Provide at least one field to update")
         nulls = sorted(
@@ -120,6 +127,8 @@ class TeamMemberUpdate(InputModel):
 
 # --------------------------------------------------------------------------- skills
 class ProjectSkill(CamelModel):
+    """A skill the project needs and which team members hold it."""
+
     skill_id: uuid.UUID
     name: str
     required: bool
@@ -127,24 +136,32 @@ class ProjectSkill(CamelModel):
 
 
 class ProjectSkillCreate(InputModel):
+    """Body to add a needed skill."""
+
     name: SkillName
     required: bool = True
 
     @field_validator("name")
     @classmethod
     def _squash(cls, value: str) -> str:
+        """Collapse runs of whitespace in the skill name."""
         return " ".join(value.split())
 
 
 class ProjectSkillUpdate(InputModel):
+    """Body to rename a needed skill or change whether it is required."""
+
     name: SkillName | None = None
     required: bool | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> ProjectSkillUpdate:
+        """Reject an empty body and nulls, then normalise the name."""
         if not self.model_fields_set:
             raise ValueError("Provide at least one field to update")
-        nulls = sorted(f for f in self.model_fields_set if getattr(self, f) is None)
+        nulls = sorted(
+            field_name for field_name in self.model_fields_set if getattr(self, field_name) is None
+        )
         if nulls:
             raise ValueError(f"Fields cannot be null: {', '.join(nulls)}")
         if self.name is not None:

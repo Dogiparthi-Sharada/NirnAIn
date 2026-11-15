@@ -1,12 +1,11 @@
 """Project drafts read by Claude: prompt, output schema and the checks on its answer.
 
-The model must quote the notes word for word. Every quote is looked up in the
-source text: a "stated" value whose quote isn't there is downgraded to
-"inferred" (the PM has to confirm it), and values that don't parse are dropped,
-so a model mistake can never put an unchecked value into a project.
-
-Called by `app.drafts.reader.DraftReader` (on a worker thread) only when
-ANTHROPIC_API_KEY is set; the call goes through `app.ai.llm.LLM`.
+Purpose: A model mistake must never put an unchecked value into a project: every quote is looked up
+in the source, a "stated" value whose quote isn't there becomes "inferred" (the PM confirms it), and
+values that don't parse are dropped.
+How it fits: Called by `app.drafts.reader.DraftReader` (on a worker thread) only when
+ANTHROPIC_API_KEY is set, through `app.ai.llm.LLM`; layer: drafts.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -110,6 +109,7 @@ def _checked(status: DraftStatus, quote: str | None, text: str) -> tuple[DraftSt
 
 
 def _text(raw: _AiText, text: str, limit: int) -> TextField:
+    """Return a checked text field, or a missing one when the model gave no value."""
     value = one_line(raw.value or "", limit)
     if raw.status == "missing" or not value:
         return TextField()
@@ -118,6 +118,7 @@ def _text(raw: _AiText, text: str, limit: int) -> TextField:
 
 
 def _date(raw: _AiText, text: str) -> DateField:
+    """Return a checked ISO date field, or a missing one when the value isn't a date."""
     if raw.status == "missing" or not raw.value:
         return DateField()
     try:
@@ -129,6 +130,7 @@ def _date(raw: _AiText, text: str) -> DateField:
 
 
 def _money(raw: _AiAmount, text: str) -> MoneyField:
+    """Return a checked amount in cents, or a missing one when it isn't a positive safe amount."""
     if raw.status == "missing" or raw.value is None:
         return MoneyField()
     try:

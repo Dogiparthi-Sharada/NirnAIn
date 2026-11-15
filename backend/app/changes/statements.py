@@ -1,14 +1,11 @@
 """What a sentence of meeting notes says about its own values (step 7, rules reader).
 
-What: whether a sentence rejects what it mentions ("we discussed $400,000 but rejected it"),
-which values it replaces ("24 hours instead of 40"), the policy it states for a budget or a
-deadline ("must hold" = hard, "may flex" = soft), and money that is spend rather than a
-budget (actual costs, hourly rates, the reserve, fixed costs).
-Why: the deterministic reader must never propose a value the notes don't decide (QA pack
-M02/M03: rejected proposals, actual costs and rates were offered as the new budget), and a
-"must hold" next to a new date must reach the re-plan as a hard deadline.
-How it fits: `app.changes.detect`, `app.changes.detect_limits` and
-`app.changes.detect_people` call these per sentence. Pure functions, no I/O.
+Purpose: Never propose a value the notes don't decide (QA pack M02/M03): find whether a sentence
+rejects what it mentions, which values it replaces, the policy it states for a budget or deadline
+("must hold" = hard, "may flex" = soft), and money that is spend rather than a budget.
+How it fits: Called per sentence by detect.py, detect_limits.py and detect_people.py; pure;
+layer: changes.
+Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations

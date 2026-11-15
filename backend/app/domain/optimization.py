@@ -1,11 +1,11 @@
 """Optimization run schemas: the stored result, the run request and the inputs sheet.
 
-`RunResult` mirrors `optimization_runs.result` as written by
-`app/optimization/explain.py` (plus the priced remedies when the run is
-infeasible or finishes after its target date). `RunCreate` is the
-optional body of `POST …/optimization/runs`; it is stored as the run's
-`options`. `OptimizationInputs` is the
-confirmation sheet ("Check the inputs the solver will use").
+Purpose: `RunResult` mirrors `optimization_runs.result` as written by app/optimization/explain.py
+(plus priced remedies); `RunCreate` is the optional body of `POST …/optimization/runs`, stored as
+the run's `options`; `OptimizationInputs` is the "Check the inputs the solver will use" sheet.
+How it fits: Used by app/api/v1/optimization.py, app/repositories/optimization.py and the optimizer
+job; layer: domain.
+Created: 2026-10-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -27,13 +27,17 @@ InputsHash = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
 class RunKpi(CamelModel):
+    """One headline figure of a run (label, value and an optional sub-line)."""
+
     label: str
     value: str
     # `sub?: string` on the client: omitted rather than null when absent.
-    sub: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    sub: str | None = Field(default=None, exclude_if=lambda sub_text: sub_text is None)
 
 
 class Reassignment(CamelModel):
+    """A work package the plan gives to someone other than its current owner, and why."""
+
     task: str
     current: str
     recommended: str
@@ -41,6 +45,8 @@ class Reassignment(CamelModel):
 
 
 class ScheduleChange(CamelModel):
+    """A work package whose dates the plan moves, by how much and why."""
+
     wbs: str
     name: str
     original: str
@@ -50,6 +56,8 @@ class ScheduleChange(CamelModel):
 
 
 class Utilization(CamelModel):
+    """A person's load before and after optimization, in percent."""
+
     name: str
     before: int
     after: int
@@ -133,6 +141,8 @@ class Remedy(CamelModel):
 
 
 class RunResult(CamelModel):
+    """The stored result of a run: KPIs, reassignments, schedule, summary and remedies."""
+
     kpis: list[RunKpi] = Field(default_factory=list)
     reassignments: list[Reassignment] = Field(default_factory=list)
     schedule_changes: list[ScheduleChange] = Field(default_factory=list)
@@ -143,11 +153,15 @@ class RunResult(CamelModel):
 
 
 class Conflict(CamelModel):
+    """One conflicting hard constraint of an infeasible run, in plain English."""
+
     name: str
     explanation: str
 
 
 class OptimizationRun(CamelModel):
+    """An optimization run as the API returns it."""
+
     id: uuid.UUID
     project_id: uuid.UUID
     status: SolverStatus

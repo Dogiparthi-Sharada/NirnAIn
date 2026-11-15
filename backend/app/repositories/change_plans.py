@@ -1,9 +1,10 @@
-"""Read side of step 7 under the caller's RLS session: the plan in force, run results and
-the project inputs a change is read against.
+"""Read side of step 7 under the caller's RLS session: plan in force, run results and inputs.
 
-`ChangeRepository` (app/repositories/changes.py) extends this class; the API only sees that.
-Everything here runs as the calling user, so RLS decides which projects, runs and planned
-assignments are visible; nothing in step 7 uses the service connection.
+Purpose: Measure a change against the plan in force and the project's current inputs, and compare a
+proposed re-plan with it; RLS decides which projects, runs and assignments are visible.
+How it fits: Base class of `ChangeTeamWrites` and `ChangeRepository` (the API only sees the latter);
+nothing in step 7 uses the service connection; layer: repositories.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from app.domain.common import SolverStatus
 from app.optimization.inputs import inputs_hash
 from app.repositories import access
 from app.repositories.access import ProjectRef
-from app.repositories.planning_input import PlanningInputReader, ProjectContext
+from app.repositories.planning_input import PlanningInputReader
 from app.repositories.tables import (
     constraint_sets,
     dependencies,
@@ -65,6 +66,7 @@ class ChangePlanReads:
     """Plans, runs and project inputs as the caller sees them."""
 
     def __init__(self, connection: AsyncConnection) -> None:
+        """Use the caller's RLS-scoped connection."""
         self._connection = connection
 
     async def project(self, project_id: uuid.UUID) -> ProjectRef | None:
@@ -134,15 +136,7 @@ class ChangePlanReads:
     async def saved_inputs_hash(self, project: ProjectRef, today: date) -> str:
         """The hash of the project's saved planning inputs, as `GET …/optimization/inputs`
         shows it and `POST …/optimization/runs` records it in `options.inputsHash`."""
-        context = ProjectContext(
-            project.id,
-            project.org_id,
-            project.name,
-            project.start_date,
-            project.target_end_date,
-            project.budget_cents,
-        )
-        return inputs_hash(await PlanningInputReader(self._connection).load(context, today))
+        return inputs_hash(await PlanningInputReader(self._connection).load(project, today))
 
     async def run_meta(self, run_id: uuid.UUID) -> RunMeta | None:
         """A run's KPIs, frozen input snapshot and day-level schedule, for the comparison."""

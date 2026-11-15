@@ -16,7 +16,7 @@ from app.optimization.inputs import inputs_hash
 from app.optimization.model import PlanningInput
 from app.optimization.overrides import apply_overrides, with_plan_in_force
 from app.optimization.solver import solve
-from tests.test_optimization_solver import FAST, MONDAY, make_input
+from tests.support.solver_inputs import FAST, MONDAY, make_input
 
 TODAY = date(2026, 10, 21)  # a Wednesday: working day 12 of a project started Mon Oct 5
 

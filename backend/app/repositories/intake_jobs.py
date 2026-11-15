@@ -1,8 +1,10 @@
-"""AI intake, worker side: claim a run, read its notes, store the extracted items.
+"""AI intake, worker side: claim a run, read its notes and store the extracted scope items.
 
-`IntakeJobStore` runs on a service connection (see `app.jobs.intake`), which
-bypasses RLS: it is only used by the trusted background worker, never for a
-user request.
+Purpose: Only the trusted background worker writes AI suggestions; re-analysis replaces earlier AI
+suggestions nobody touched, never the PM's accepted, removed or edited items.
+How it fits: `IntakeJobStore` runs on a service connection (bypasses RLS) from app/jobs/intake.py,
+never for a user request; layer: repositories.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -17,7 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app.ai.evidence import ScopeSuggestion
 from app.ai.intake import PASTED_TITLE, Source
 from app.domain.common import DocumentKind, ItemOrigin, JobStatus, ScopeCategory, ScopeStatus
-from app.repositories.intake import ACTIVE, doc_t, item_t, older_than, readable_uploads, run_t
+from app.repositories.intake import ACTIVE, readable_uploads
+from app.repositories.job_rows import started_before
+from app.repositories.tables import intake_runs, scope_items, source_documents
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,10 +33,17 @@ class ClaimedRun:
 
 
 def _unedited() -> sa.ColumnElement[bool]:
+    """Return the filter for scope items nobody has edited since the AI wrote them."""
     # Items written before original_text was stored: never updated since insert.
     return sa.or_(
-        sa.and_(item_t.c.original_text.is_not(None), item_t.c.text == item_t.c.original_text),
-        sa.and_(item_t.c.original_text.is_(None), item_t.c.updated_at == item_t.c.created_at),
+        sa.and_(
+            scope_items.c.original_text.is_not(None),
+            scope_items.c.text == scope_items.c.original_text,
+        ),
+        sa.and_(
+            scope_items.c.original_text.is_(None),
+            scope_items.c.updated_at == scope_items.c.created_at,
+        ),
     )
 
 
@@ -40,6 +51,7 @@ class IntakeJobStore:
     """Writes made by the background worker on a service connection (bypasses RLS)."""
 
     def __init__(self, conn: AsyncConnection) -> None:
+        """Use the worker's service connection."""
         self._conn = conn
 
     async def claim(self, run_id: uuid.UUID) -> ClaimedRun | None:
@@ -50,10 +62,10 @@ class IntakeJobStore:
         was read, oldest first.
         """
         stmt = (
-            sa.update(run_t)
-            .where(run_t.c.id == run_id, run_t.c.status == JobStatus.QUEUED)
+            sa.update(intake_runs)
+            .where(intake_runs.c.id == run_id, intake_runs.c.status == JobStatus.QUEUED)
             .values(status=JobStatus.RUNNING, started_at=sa.func.now())
-            .returning(run_t.c.project_id, run_t.c.created_at)
+            .returning(intake_runs.c.project_id, intake_runs.c.created_at)
         )
         row = (await self._conn.execute(stmt)).first()
         if row is None:
@@ -61,22 +73,24 @@ class IntakeJobStore:
         project_id = row.project_id
         pasted = (
             await self._conn.execute(
-                sa.select(doc_t.c.content_text)
+                sa.select(source_documents.c.content_text)
                 .where(
-                    doc_t.c.project_id == project_id,
-                    doc_t.c.kind == DocumentKind.TEXT,
-                    doc_t.c.created_at == row.created_at,
+                    source_documents.c.project_id == project_id,
+                    source_documents.c.kind == DocumentKind.TEXT,
+                    source_documents.c.created_at == row.created_at,
                 )
-                .order_by(doc_t.c.id)
+                .order_by(source_documents.c.id)
                 .limit(1)
             )
         ).first()
         sources = [Source(None, PASTED_TITLE, pasted.content_text)] if pasted else []
         uploads = (
             await self._conn.execute(
-                sa.select(doc_t.c.id, doc_t.c.title, doc_t.c.content_text)
+                sa.select(
+                    source_documents.c.id, source_documents.c.title, source_documents.c.content_text
+                )
                 .where(readable_uploads(project_id))
-                .order_by(doc_t.c.created_at, doc_t.c.id)
+                .order_by(source_documents.c.created_at, source_documents.c.id)
             )
         ).all()
         sources += [Source(upload.id, upload.title, upload.content_text) for upload in uploads]
@@ -95,11 +109,11 @@ class IntakeJobStore:
         # Re-analysis replaces earlier AI suggestions nobody has touched yet;
         # accepted, removed and edited items stay.
         await self._conn.execute(
-            sa.delete(item_t).where(
-                item_t.c.project_id == project_id,
-                item_t.c.origin == ItemOrigin.AI,
-                item_t.c.status == ScopeStatus.PENDING,
-                item_t.c.intake_run_id.is_distinct_from(run_id),
+            sa.delete(scope_items).where(
+                scope_items.c.project_id == project_id,
+                scope_items.c.origin == ItemOrigin.AI,
+                scope_items.c.status == ScopeStatus.PENDING,
+                scope_items.c.intake_run_id.is_distinct_from(run_id),
                 _unedited(),
             )
         )
@@ -128,10 +142,10 @@ class IntakeJobStore:
                         "sort_order": sort_order,
                     }
                 )
-            await self._conn.execute(sa.insert(item_t), rows)
+            await self._conn.execute(sa.insert(scope_items), rows)
         await self._conn.execute(
-            sa.update(run_t)
-            .where(run_t.c.id == run_id)
+            sa.update(intake_runs)
+            .where(intake_runs.c.id == run_id)
             .values(
                 status=JobStatus.SUCCEEDED,
                 model=model,
@@ -143,16 +157,18 @@ class IntakeJobStore:
         )
 
     async def fail(self, run_id: uuid.UUID, error: str) -> None:
+        """Mark an active intake run failed with the error shown to the user."""
         await self._conn.execute(
-            sa.update(run_t)
-            .where(run_t.c.id == run_id, run_t.c.status.in_(ACTIVE))
+            sa.update(intake_runs)
+            .where(intake_runs.c.id == run_id, intake_runs.c.status.in_(ACTIVE))
             .values(status=JobStatus.FAILED, error=error, finished_at=sa.func.now())
         )
 
     async def fail_stale(self, older_than_s: int, error: str) -> int:
+        """Fail runs active for over `older_than_s` (orphaned by a restart); return the count."""
         result = await self._conn.execute(
-            sa.update(run_t)
-            .where(run_t.c.status.in_(ACTIVE), older_than(older_than_s))
+            sa.update(intake_runs)
+            .where(intake_runs.c.status.in_(ACTIVE), started_before(intake_runs, older_than_s))
             .values(status=JobStatus.FAILED, error=error, finished_at=sa.func.now())
         )
         return int(result.rowcount)

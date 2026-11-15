@@ -1,11 +1,11 @@
 """Keyword rules of the rule-based intake extractor (used when Claude is unavailable).
 
-Deliberately simple and predictable: a sentence (or bullet) is classified by
-the first category whose keywords it contains, in `CATEGORY_RULES` order.
-The order puts the most specific signals first: an open question about the
-budget is missing information, a risk to the launch date is a risk, and a
-"must go live by Q3" is a constraint rather than a requirement. Sentences that
-match nothing are not scope items. Pure functions, no I/O.
+Purpose: Classify a sentence predictably by the first category whose keywords it contains, most
+specific signals first: an open question about the budget is missing information, a risk to the
+launch date is a risk, "must go live by Q3" is a constraint. Sentences matching nothing are not
+scope items.
+How it fits: Used by intake_sentences.py and intake_rules.py; pure; layer: ai.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -101,22 +101,27 @@ def _is_open_question(text: str) -> bool:
 
 
 def _asks_for_information(text: str) -> bool:
+    """Tell whether the sentence asks for or flags missing project information."""
     return _is_open_question(text) or bool(MISSING_INFO_WORDS.search(text))
 
 
 def _names_risk(text: str) -> bool:
+    """Tell whether the sentence names a risk."""
     return bool(RISK_WORDS.search(text))
 
 
 def _states_objective(text: str) -> bool:
+    """Tell whether the sentence states an objective."""
     return bool(OBJECTIVE_WORDS.search(text))
 
 
 def _names_deliverable(text: str) -> bool:
+    """Tell whether the sentence names a deliverable."""
     return bool(DELIVERABLE_WORDS.search(text))
 
 
 def _states_requirement(text: str) -> bool:
+    """Tell whether the sentence states a requirement."""
     return bool(REQUIREMENT_WORDS.search(text))
 
 

@@ -1,4 +1,11 @@
-"""Meeting transcripts without a Claude key: caption cleanup and the sentence-level rules."""
+"""Tests of meeting transcripts without a Claude key: caption cleanup and sentence rules.
+
+Purpose: Uploaded or pasted captions must read as speaker turns, and the rules must find scope in
+spoken sentences and prose, quoting them verbatim, without duplicates or one category crowding out
+the rest.
+How it fits: Pure tests of app/ai/transcripts.py, intake.py and intake_rules.py; layer: tests.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -99,6 +106,7 @@ Integration with the legacy ERP is a big concern. Who signs off on data retentio
 
 
 def _rows(items: list[ScopeSuggestion]) -> list[tuple[str, str]]:
+    """Return each item's category and text."""
     return [(item.category.value, item.text) for item in items]
 
 
@@ -115,6 +123,7 @@ def _assert_grounded(items: list[ScopeSuggestion], sources: list[Source]) -> Non
 
 # --------------------------------------------------------------------------- captions
 def test_speaker_labels_in_every_common_format() -> None:
+    """Speaker labels are found in every common caption format, and not in "Budget:"."""
     for line in (
         "Jane Doe: We must ship.",
         "[00:01:02] Jane Doe: We must ship.",
@@ -130,6 +139,7 @@ def test_speaker_labels_in_every_common_format() -> None:
 
 
 def test_zoom_captions_become_one_line_per_speaker_turn() -> None:
+    """Zoom and SRT captions become one line per speaker turn."""
     assert spoken_text("kickoff.vtt", ZOOM_VTT).splitlines()[2:5] == [
         "Jane Doe: Great. So the goal of this project is to replace the old billing system "
         "with one platform for all regions.",
@@ -146,6 +156,7 @@ def test_zoom_captions_become_one_line_per_speaker_turn() -> None:
 
 
 def test_spoken_text_is_idempotent_and_leaves_notes_alone() -> None:
+    """Cleaning captions twice changes nothing; prose notes are left alone."""
     once = spoken_text("kickoff.vtt", ZOOM_VTT)
     assert spoken_text("kickoff.vtt", once) == once
     assert spoken_text("notes.md", PROSE_NOTES) == PROSE_NOTES
@@ -156,6 +167,7 @@ def test_spoken_text_is_idempotent_and_leaves_notes_alone() -> None:
 
 # --------------------------------------------------------------------------- rules on meetings
 def test_rules_read_a_zoom_transcript() -> None:
+    """The rules read the Zoom call's scope, quoted from the spoken text."""
     upload = Source(CALL_ID, "kickoff.vtt", ZOOM_VTT)
     items = extract_by_rules([upload])
     assert _rows(items) == ZOOM_ITEMS
@@ -168,6 +180,7 @@ def test_rules_read_a_zoom_transcript() -> None:
 
 
 def test_raw_captions_pasted_as_notes_and_old_caption_lines_read_the_same() -> None:
+    """Pasted raw captions and old one-line-per-cue uploads read the same as the call."""
     pasted = Source(None, "Pasted notes", "\n" + ZOOM_VTT)
     assert _rows(extract_by_rules([pasted])) == ZOOM_ITEMS
     # Transcripts uploaded before captions were merged: one "Speaker: words" line per cue.
@@ -181,6 +194,7 @@ def test_raw_captions_pasted_as_notes_and_old_caption_lines_read_the_same() -> N
 
 
 def test_rules_read_plain_prose_notes() -> None:
+    """The rules read scope from prose sentences, quoting wrapped ones verbatim."""
     items = extract_by_rules([Source(None, "Pasted notes", PROSE_NOTES)])
     assert _rows(items) == [
         ("constraint", "Acme wants to replace its invoicing tool before the end of the year."),
@@ -202,6 +216,7 @@ def test_rules_read_plain_prose_notes() -> None:
 
 
 def test_captions_without_punctuation_are_cut_into_short_quotes() -> None:
+    """Captions without punctuation are cut into short quotes."""
     words = " ".join(["we must support the old warehouse scanners"] * 30)
     upload = Source(CALL_ID, "call.vtt", f"Jane: {words}")
     items = extract_by_rules([upload])
@@ -212,6 +227,7 @@ def test_captions_without_punctuation_are_cut_into_short_quotes() -> None:
 
 
 def test_near_duplicates_count_once_and_the_cap_spreads_across_categories() -> None:
+    """Near duplicates count once; the item cap is shared round-robin across categories."""
     repeated = (
         "Jane: We must support single sign-on for every regional office.\n"
         "Bob: Yes, we must support single sign-on for every regional office too.\n"
