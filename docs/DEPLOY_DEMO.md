@@ -4,13 +4,16 @@ This guide takes you from zero to a working public demo, one step at a time:
 
 | Part | Runs on | Free tier | What it is |
 |------|---------|-----------|------------|
-| Database + sign-in | **Supabase** (new free project) | 2 free projects; paused after 1 week without activity | Postgres, Auth |
+| Database + sign-in | **Supabase** (free project) | 2 free projects; paused after 1 week without activity (**Restore project** brings it back; Part 7 prevents it) | Postgres, Auth |
 | API | **Render** free web service (Docker) | 750 instance hours/month; sleeps after 15 min idle | `backend/` (FastAPI) |
-| Website | **Render** static site | Free; served from Render's CDN, never sleeps | `src/` (React), built by Render |
+| Website | **Render** static site | Free; served from Render's CDN, always on | `src/` (React), built by Render |
 
-Railway and the old Supabase project are no longer used. Nothing in this guide touches them. No code changes are needed.
+The team's own demo runs exactly this way: the website at <https://nirnain-web.onrender.com> and the API at
+<https://nirnain-api.onrender.com>, on Render's free plan in the Virginia region, with the Supabase project in
+us-east-1 (East US, North Virginia). Use this guide to rebuild it or to host a copy of your own. No code changes and
+no credit card are needed.
 
-Plan for about an hour. Do the parts in this order: Supabase, the API, the website, back to Supabase for the sign-in URLs, then the first login.
+Plan for about an hour. Do the parts in this order: Supabase, the API, the website, back to Supabase for the sign-in URLs, the first login, then the daily keep-alive.
 
 ---
 
@@ -18,7 +21,7 @@ Plan for about an hour. Do the parts in this order: Supabase, the API, the websi
 
 ### Accounts (all free)
 
-- GitHub access to this repository. Render builds both the API and the website straight from GitHub.
+- The code: <https://github.com/Dogiparthi-Sharada/NirnAIn> (public), branch `main`. Render builds both the API and the website straight from it.
 - Supabase: <https://supabase.com/dashboard/sign-up>
 - Render: <https://dashboard.render.com/register>. Sign up with GitHub, which makes step 2.1 easier.
 
@@ -34,9 +37,8 @@ Check it worked: `node --version` prints `v22.…`.
 ### Get the code
 
 ```bash
-git clone https://github.com/<ORG>/AI-Assisted-Project-Planning-Platform.git
-cd AI-Assisted-Project-Planning-Platform
-git switch <DEMO-BRANCH>        # the branch that holds the demo, e.g. demo/mockup (or main once merged)
+git clone https://github.com/Dogiparthi-Sharada/NirnAIn.git
+cd NirnAIn                      # branch main, the branch Render deploys
 ```
 
 Run every later command from this folder.
@@ -51,7 +53,7 @@ Keep these in a password manager or a private note. Never commit them, and never
 | `<DB-PASSWORD>` | (letters and digits only) | 1.1 |
 | `<SUPABASE-URL>` | `https://<PROJECT-REF>.supabase.co` | 1.2 |
 | `<PUBLISHABLE-KEY>` | `sb_publishable_…` | 1.2 |
-| `<SESSION-POOLER-URL>` | `postgresql://postgres.<PROJECT-REF>:<DB-PASSWORD>@aws-0-eu-central-1.pooler.supabase.com:5432/postgres` | 1.4 |
+| `<SESSION-POOLER-URL>` | `postgresql://postgres.<PROJECT-REF>:<DB-PASSWORD>@aws-0-us-east-1.pooler.supabase.com:5432/postgres` | 1.4 |
 | `<API-NAME>`, `<WEB-NAME>` | `nirnain-api`, `nirnain-web` | decide now |
 | `<YOUR-API-URL>` | `https://nirnain-api.onrender.com` | 2.2 |
 | `<YOUR-WEB-URL>` | `https://nirnain-web.onrender.com` | 3.1 |
@@ -66,8 +68,10 @@ You need the website's address for the API in step 2.2, before the website exist
 
 ### 1.1 Create the project
 
-1. Go to <https://supabase.com/dashboard> and click **New project**. Choose your organization.
-2. **Project name**: `nirnain-demo`.
+1. Go to <https://supabase.com/dashboard>. **First time on Supabase?** It asks you to create an organization before
+   the first project: any **Name** (for example `NirnAIn`), **Type** **Personal**, **Plan** **Free – $0/month**. Click
+   **Create organization**.
+2. Click **New project** and choose your organization. **Project name**: `nirnain-demo`.
 3. **Database password**: click **Generate a password**, or type a long password that uses **only letters and digits**.
    Symbols such as `@ # / ? %` would have to be URL-encoded in step 1.4. Save it as `<DB-PASSWORD>`.
 4. **Region**: pick one that Render also offers, so the API is close to the database:
@@ -75,12 +79,14 @@ You need the website's address for the API in step 2.2, before the website exist
    | Supabase region | Matching Render region (step 2.2) |
    |-----------------|-----------------------------------|
    | Central EU (Frankfurt) | Frankfurt |
-   | East US (North Virginia) | Virginia |
+   | East US (North Virginia), us-east-1 | Virginia (the team's demo uses this pair) |
    | East US (Ohio) | Ohio |
    | West US (Oregon) | Oregon |
    | Southeast Asia (Singapore) | Singapore |
 
 5. Leave the other options at their defaults and click **Create new project**. Setup takes about 2 minutes.
+   **Don't** enable Supabase's GitHub integration or branching, now or later: the tables come from the migrations in
+   step 1.5, and this guide never needs them.
 6. The address bar now reads `https://supabase.com/dashboard/project/<PROJECT-REF>`. Copy that id as `<PROJECT-REF>`.
 
 ✅ **Check it worked:** the project's home page loads without a "Setting up project" banner.
@@ -115,7 +121,8 @@ An empty list (`{"keys":[]}`) means the project still signs with the legacy secr
 ### 1.4 Copy the database connection string (Session pooler)
 
 1. Click **Connect** at the top of the project page.
-2. Choose **Session pooler** and copy the URI. It looks like this:
+2. Open the **Direct** tab (**Connection string**) and set **Method** to **Session pooler**. Copy the string. It looks
+   like this:
 
    ```text
    postgresql://postgres.<PROJECT-REF>:[YOUR-PASSWORD]@aws-<N>-<region>.pooler.supabase.com:5432/postgres
@@ -123,6 +130,10 @@ An empty list (`{"keys":[]}`) means the project still signs with the legacy secr
 
 3. Replace `[YOUR-PASSWORD]` (brackets included) with `<DB-PASSWORD>`. Save the result as `<SESSION-POOLER-URL>`.
    Copy the host from the dialog; don't type it yourself, because the `aws-<N>` part varies.
+   - **Only the Transaction pooler offered?** Copy that string and change the port `6543` to `5432`. The same host
+     then works as the session pooler.
+   - **A "Not IPv4 compatible" note** (shown for the direct connection) has a **Use Session Pooler** link that
+     switches the method for you.
 
 Why the session pooler?
 
@@ -208,7 +219,7 @@ You set the Site URL and Redirect URLs in Part 4, once the website exists.
 
 1. In <https://dashboard.render.com> click **New** → **Web Service** → **Git Provider** → **GitHub**.
 2. If the repository isn't listed, click **Configure account** (or **Connect GitHub**) and give the Render app
-   access to `AI-Assisted-Project-Planning-Platform`.
+   access to `NirnAIn`.
 
 ✅ **Check it worked:** the repository appears in the list. Click it.
 
@@ -220,8 +231,8 @@ Fill in the form exactly like this:
 |-------|-------|
 | **Name** | `<API-NAME>` (e.g. `nirnain-api`) |
 | **Language** | **Docker** |
-| **Branch** | `<DEMO-BRANCH>` |
-| **Region** | the one matching your Supabase region (table in step 1.1) |
+| **Branch** | `main` |
+| **Region** | the one matching your Supabase region (table in step 1.1); the team's demo uses Virginia |
 | **Root Directory** | `backend` |
 | **Dockerfile Path** | `./Dockerfile` (it's relative to the root directory, so this means `backend/Dockerfile`) |
 | **Docker Build Context Directory** | `.` (the default; also relative to `backend`) |
@@ -254,8 +265,9 @@ Click **Create Web Service**. The first build takes about 5–10 minutes.
 
 - The **Logs** tab shows a line containing `Uvicorn running on http://0.0.0.0:10000`, and the service status turns **Live**.
 - Copy the address at the top of the page (`https://….onrender.com`) as `<YOUR-API-URL>`.
-- Open `<YOUR-API-URL>/health`. You should see `{"status":"ok","version":"dev"}`.
-  ("dev" is expected: the API reads its version from a Railway-only variable.)
+- Open `<YOUR-API-URL>/health`. You should see `{"status":"ok","version":"<commit>"}`, where `<commit>` is the
+  git commit Render deployed. The API reads it from `RENDER_GIT_COMMIT`, which Render sets on every deploy (a local
+  API says `dev`).
 - Open `<YOUR-API-URL>/health/ready`. You should see `{"status":"ok","database":"ok"}`, which proves the database connection works.
 
 ### 2.3 Know the free-tier sleep (cold starts)
@@ -270,7 +282,8 @@ run is marked failed when the API starts again, so start it again.
 
 ### 2.4 Optional: switch on the AI features (`ANTHROPIC_API_KEY`)
 
-Without a key, the demo still works:
+With a key, Claude powers NirnAIn's AI features: AI intake, WBS generation and AI review, step-7 change detection
+and the planning assistant. The team's hosted API has one. Without a key, the demo still works:
 
 - AI intake uses the built-in rule-based extractor.
 - WBS generation uses a template, and validation runs only the deterministic checks.
@@ -283,6 +296,8 @@ To use Claude:
 3. Render keeps environment variables private to your workspace. Add the key **only to the API service**. Never put
    it in the repo, and never in the website's settings. Every `VITE_…` value is copied into the public website.
    (Render also passes environment variables to the Docker build. `backend/Dockerfile` doesn't use them, so the key isn't baked into the image.)
+4. In the Anthropic Console, open **Settings** → **Limits** and set a **monthly spend limit**, so a busy demo can't
+   run up a bill. Optimization, apply and approve never call Claude, and the keep-alive (Part 7) doesn't either.
 
 ✅ **Check it worked:** after the redeploy, the logs no longer show `ANTHROPIC_API_KEY is not set`.
 
@@ -300,7 +315,7 @@ Render builds the website from GitHub with your values, so you don't build anyth
    | Field | Value |
    |-------|-------|
    | **Name** | `<WEB-NAME>` (e.g. `nirnain-web`) |
-   | **Branch** | `<DEMO-BRANCH>` (the same branch as the API) |
+   | **Branch** | `main` (the same branch as the API) |
    | **Root Directory** | leave empty (the website lives at the repository root) |
    | **Build Command** | `corepack pnpm@10.34.3 install --frozen-lockfile && corepack pnpm@10.34.3 build` |
    | **Publish Directory** | `dist` |
@@ -403,15 +418,69 @@ Then click **+ Create Project** to try the whole flow.
 
 ## Part 6 (optional): Load demo data
 
-The demo seed script fills the hosted demo with sample users, projects and plans. It talks to the same public
-addresses as the website, so it needs `<SUPABASE-URL>`, `<PUBLISHABLE-KEY>` and `<YOUR-API-URL>`. **Follow the
-seed script's README** ([scripts/seed_demo/README.md](../scripts/seed_demo/README.md)) for the exact command.
+The demo seed script is in the repository: `scripts/seed_demo/seed_demo.py`. It fills the hosted demo with Jane
+Doe's workspace: five projects, with Enterprise Data Platform at Plan v2, the same data as the team's live demo. It
+needs only Python 3.12 and talks to the same public addresses as the website, so it needs `<SUPABASE-URL>`,
+`<PUBLISHABLE-KEY>` and `<YOUR-API-URL>`. **Follow the seed script's README**
+([scripts/seed_demo/README.md](../scripts/seed_demo/README.md)) for the exact command.
+
+Choose how it treats the three calls that can reach Claude (intake, WBS validation, step-7 notes):
+
+- `--ai-calls rules`: the API's built-in rules read the notes, for the full mockup look at **0 Claude tokens**. It
+  needs an API **without** `ANTHROPIC_API_KEY`, so seed before step 2.4. Against an API with a key, the first intake
+  reaches Claude and the script stops.
+- `--ai-calls skip`: never calls those three endpoints, so it spends **0 Claude tokens** against any API, including
+  one with a key.
+
 Before you run it:
 
 - Wake the API (step 2.3).
-- Keep **Confirm email** off (step 1.6) if the script creates users.
+- Keep **Confirm email** off (step 1.6), so the script can create the demo user.
 
-✅ **Check it worked:** sign in with a demo account from the seed README. Its projects appear on the dashboard.
+✅ **Check it worked:** sign in as the demo user from the seed README. Its five projects appear on the dashboard.
+
+---
+
+## Part 7: Keep the free demo awake (daily keep-alive)
+
+A free Supabase project pauses after a week without activity, and then sign-in and every data screen stop working.
+The repository's workflow `.github/workflows/keepalive.yml` prevents that. Every day at 13:17 UTC it:
+
+- wakes the API and checks `/health/ready`, which also queries the database;
+- checks Supabase Auth's health endpoint;
+- loads the website.
+
+It calls health endpoints only, so it spends no Claude tokens. If the demo is down or already paused, the run fails
+and GitHub emails the repository owner.
+
+### 7.1 Add the two repository variables
+
+On GitHub, open the repository → **Settings** → **Secrets and variables** → **Actions** → the **Variables** tab →
+**New repository variable**, once per row:
+
+| Name | Value |
+|------|-------|
+| `SUPABASE_PROJECT_REF` | `<PROJECT-REF>` |
+| `SUPABASE_PUBLISHABLE_KEY` | `<PUBLISHABLE-KEY>` |
+
+These are variables, not secrets: both values are public by design (the publishable key is in the website's code).
+The website and API addresses are written in the workflow itself (`https://nirnain-web.onrender.com` and
+`https://nirnain-api.onrender.com`). If your Render services have other names, change `WEB_URL` and `API_URL` at the
+top of `keepalive.yml`.
+
+### 7.2 Enable it and run it once
+
+1. Open **Actions** and click **Production health + keep-alive** in the list on the left.
+2. If GitHub says the workflow is disabled, click **Enable workflow**.
+3. Click **Run workflow** → branch `main` → **Run workflow**.
+
+✅ **Check it worked:** the run shows three green steps: "API + database readiness", "Supabase Auth health" and
+"Website". A red step names the part that is down; see the troubleshooting table.
+
+> [!NOTE]
+> GitHub disables scheduled workflows in a public repository after 60 days without commits. If the demo goes quiet
+> for that long, re-enable the keep-alive with step 7.2. The CI workflow (`ci.yml`) is currently disabled in this
+> repository, so run the checks locally before you push (GITHUB_UPLOAD_STEPS in `docs/project/`).
 
 ---
 
@@ -419,11 +488,13 @@ Before you run it:
 
 | What changed | What to do |
 |--------------|------------|
-| Code on `<DEMO-BRANCH>` | Nothing. Render redeploys automatically. The API rebuilds only for changes under `backend/`. The website rebuilds for every push, or only for website files if you set step 3.4. |
+| Code on `main` | Nothing. Render redeploys automatically. The API rebuilds only for changes under `backend/`. The website rebuilds for every push, or only for website files if you set step 3.4. |
 | A website setting (`VITE_…`) | Static site → **Environment** → edit → **Save, rebuild, and deploy**. The website needs a rebuild to pick up new values. |
 | An API setting | API service → **Environment** → edit → **Save, rebuild, and deploy**. |
 | Database (new file in `supabase/migrations/`) | `npx supabase@latest db push --remote` (step 1.5, Option A). |
-| Supabase project paused (no activity for a week) | Supabase dashboard → the project → **Restore project**. Data is kept. |
+| Supabase project paused (no activity for a week) | Supabase dashboard → the project → **Restore project**. Data is kept. Then check that the keep-alive runs (Part 7). |
+| The keep-alive stopped running (60 days without commits) | **Actions** → **Production health + keep-alive** → **Enable workflow** (step 7.2). |
+| The Claude key or its spend limit | API service → **Environment** for the key; Anthropic Console → **Settings** → **Limits** for the limit. |
 
 ---
 
@@ -448,6 +519,9 @@ Before you run it:
 | **Migrations fail**: timeout or "could not connect" | Network or firewall | Retry, or add `--debug` to see details. Use Option B (SQL Editor) as a fallback. |
 | Sign-up says **"Email address not authorized"**, or no confirmation email arrives | **Confirm email** is still on. Supabase's built-in mailer only sends to your team, 2 per hour. | Turn **Confirm email** off (step 1.6). |
 | Password-reset email never arrives | Same mailer limits | Test with an address that's a member of your Supabase team, or set up custom SMTP (Authentication → Emails → SMTP). |
+| Keep-alive fails at **"API + database readiness"** | The API is down or can't reach the database, or the Supabase project is paused. | Open `<YOUR-API-URL>/health/ready` and use the rows above. Restore a paused project. |
+| Keep-alive fails at **"Supabase Auth health"** | The repository variables are missing or wrong (step 7.1), or the project is paused. | Check `SUPABASE_PROJECT_REF` and `SUPABASE_PUBLISHABLE_KEY` under **Settings** → **Secrets and variables** → **Actions** → **Variables**. |
+| Keep-alive fails at **"Website"** | The static site is down, or it has another address than the one in `keepalive.yml`. | Open `<YOUR-WEB-URL>`; fix `WEB_URL` in the workflow if your site has another name. |
 
 ---
 
@@ -455,7 +529,6 @@ Before you run it:
 
 The guide works with the code as it is. These would only make it tidier:
 
-- **`/health` version:** `backend/app/core/config.py` could also read `RENDER_GIT_COMMIT`, which Render sets, so `/health` shows the deployed commit instead of `dev`.
 - **pnpm version in one place:** adding `"packageManager": "pnpm@10.34.3"` to `package.json` would let the build command drop the version (`corepack pnpm install --frozen-lockfile && corepack pnpm build`).
   Change CI's `pnpm/action-setup` `version:` at the same time, so the version isn't specified twice.
 
@@ -501,4 +574,9 @@ Checked in November 2026.
 - Supabase built-in email limits: <https://supabase.com/docs/guides/auth/auth-smtp>
 - Supabase CLI (`link`, `db push --remote`): <https://supabase.com/docs/reference/cli/supabase-db-push>, <https://supabase.com/docs/reference/cli/supabase-link>
 - Supabase pricing (free projects pause after 1 week of inactivity): <https://supabase.com/pricing>
+- Supabase branching (not used by this guide): <https://supabase.com/docs/guides/deployment/branching>
+- Render default environment variables (`RENDER_GIT_COMMIT`): <https://render.com/docs/environment-variables>
+- GitHub Actions variables: <https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-variables>
+- GitHub disables scheduled workflows after 60 days without activity in a public repository: <https://docs.github.com/en/actions/how-tos/manage-workflow-runs/disable-and-enable-workflows>
+- Anthropic spend limits: <https://docs.anthropic.com/en/api/rate-limits>
 - Hugging Face static Spaces (Appendix A): <https://huggingface.co/docs/hub/spaces-sdks-static>, <https://huggingface.co/docs/hub/spaces-config-reference>
