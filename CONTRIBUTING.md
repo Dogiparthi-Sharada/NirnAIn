@@ -11,18 +11,18 @@ Architecture and roadmap: [plan.md](plan.md).
 | Backend | Python 3.12, FastAPI, SQLAlchemy 2 async + asyncpg, OR-Tools (optimizer) | `backend/` | backend team |
 | Database | Supabase: Postgres 17, Auth, Storage, RLS | `supabase/` | database team |
 | Hosting | Render (static site `nirnain-web`, web service `nirnain-api`), auto-deploy from GitHub `main` | `backend/Dockerfile`, `docs/DEPLOY_DEMO.md` | — |
-| CI/CD | GitHub Actions `.github/workflows/ci.yml` | `.github/` | — |
+| CI/CD | GitHub Actions: `ci.yml` (checks; currently switched off, so run them locally) and `keepalive.yml` (daily health ping) | `.github/` | — |
 
 Package managers: **pnpm** for frontend (never npm/yarn lockfiles), **uv** for backend (never pip freeze).
 
-## Delivery flow (fully automatic)
+## Delivery flow
 
 ```
-feature branch → PR → CI (web · api · db checks) → review by CODEOWNERS → merge to main
+feature branch → PR → checks (web · api · db) → review → merge to main
   → supabase db push (migrations) → Render redeploys web + api
 ```
 
-- Never push directly to `main`. It is protected; use PRs.
+- Prefer a feature branch and a pull request for larger changes. Small, verified updates may go straight to `main`, but only after every local check below passes, because `main` deploys immediately.
 - Only production exists. Test locally or in PR CI, never against production data.
 - Don't change production settings in the Supabase or Render dashboards by hand. Put the change in code (migration, `config.toml`, `docs/DEPLOY_DEMO.md`) so it's reviewed and reproducible.
 

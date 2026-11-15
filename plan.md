@@ -12,7 +12,7 @@
 | Authorization | Postgres **RLS** is the source of truth. The backend runs each request as `authenticated` with the user's JWT claims. |
 | Schema ownership | `supabase/migrations/` (database team). The backend has no Alembic. |
 | Hosting | **Render**: `nirnain-web` (static site serving the Vite build) + `nirnain-api` (FastAPI web service, Docker), auto-deployed from GitHub `main` |
-| Environments | **Production only.** `main` is protected; PRs + CI are required. |
+| Environments | **Production only.** `main` deploys on every commit: larger changes go through PRs; small verified updates may go straight to `main` after the local checks pass. |
 | CI/CD | GitHub Actions: web/api/db checks on every PR. On `main`: `supabase db push`, then Render redeploys both services. |
 | Optimizer | **Google OR-Tools (CP-SAT)**. Gurobi is dropped, so §6.2 and §6.6 licensing notes no longer apply. The MILP formulation in §6.1 carries over. |
 | Team split | Frontend (`src/`), Backend (`backend/`), Database (`supabase/`), enforced with CODEOWNERS |
