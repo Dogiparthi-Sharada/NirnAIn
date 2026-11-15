@@ -1,4 +1,12 @@
-"""Team and skills endpoints with an in-memory fake repository."""
+"""Tests of the project team and skills endpoints.
+
+Purpose: Prove people are added once (reusing organization employees), with hours, worker type and
+rate rules; skills are listed with holders, renamed onto existing ones and removed; viewers only
+read and outsiders see nothing.
+How it fits: Exercises app/api/v1/team.py with the fake repository of tests/support/team.py,
+`clean_skill_names` and `TeamRepository.members` on a recording connection; layer: tests.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -27,17 +35,21 @@ from tests.support.tokens import Auth
 
 @pytest.fixture
 def team_store() -> TeamStore:
+    """Provide empty fake team data."""
     return TeamStore()
 
 
 @pytest.fixture
 def team_client(app: FastAPI, store: Store, team_store: TeamStore) -> Iterator[TestClient]:
+    """Provide a test client whose team repository is the fake."""
+
     def repo(principal: CurrentPrincipal) -> FakeTeam:
+        """Return the fake team repository acting as the caller."""
         return FakeTeam(store, team_store, principal.user_id)
 
     app.dependency_overrides[deps.get_team_repo] = repo
-    with TestClient(app, raise_server_exceptions=False) as c:
-        yield c
+    with TestClient(app, raise_server_exceptions=False) as test_client:
+        yield test_client
 
 
 # The planning window of the team tests' project.
@@ -48,9 +60,10 @@ SARA = {"fullName": "Sara Kim", "roleTitle": "Lead Architect", "hoursPerWeek": 4
 def test_team_crud(
     team_client: TestClient, store: Store, team_store: TeamStore, auth: Auth
 ) -> None:
-    user, org, pid = create_project(team_client, store, auth, **DATES)
+    """People are added once, reusing employees, changed and removed; viewers only read."""
+    user, org, project_id = create_project(team_client, store, auth, **DATES)
     headers = auth(user)
-    url = f"/api/v1/projects/{pid}/team"
+    url = f"/api/v1/projects/{project_id}/team"
     assert team_client.get(url, headers=headers).json() == []
 
     existing = uuid.uuid4()
@@ -125,11 +138,13 @@ def test_team_crud(
 def test_team_worker_types_and_rates(
     team_client: TestClient, store: Store, team_store: TeamStore, auth: Auth
 ) -> None:
-    user, org, pid = create_project(team_client, store, auth, **DATES)
+    """Employees take their record's rate; contractors need one, or the project's confirmed one."""
+    user, org, project_id = create_project(team_client, store, auth, **DATES)
     headers = auth(user)
-    url = f"/api/v1/projects/{pid}/team"
+    url = f"/api/v1/projects/{project_id}/team"
 
     def post(body: dict[str, Any]) -> Any:
+        """Add a team member with `body`."""
         return team_client.post(url, json=body, headers=headers)
 
     # Employees are costed at their company record's rate: none is typed here.
@@ -150,7 +165,7 @@ def test_team_worker_types_and_rates(
     )
     for bad in (-1, 100_000_001, 12.5, "lots"):
         assert post({**dana, "hourlyRateCents": bad}).status_code == 422, bad
-    team_store.contractor_rates[uuid.UUID(pid)] = 18_500
+    team_store.contractor_rates[uuid.UUID(project_id)] = 18_500
     added = post(dana)
     assert added.status_code == 201, added.text
     assert (added.json()["workerType"], added.json()["hourlyRateCents"]) == ("contractor", 18_500)
@@ -158,6 +173,7 @@ def test_team_worker_types_and_rates(
     assert team_store.employees[uuid.UUID(dana_id)]["is_contractor"] is True
 
     def patch(employee_id: str, body: dict[str, Any]) -> Any:
+        """Change a team member with `body`."""
         return team_client.patch(f"{url}/{employee_id}", json=body, headers=headers)
 
     assert patch(dana_id, {"hourlyRateCents": 12_000}).json()["hourlyRateCents"] == 12_000
@@ -169,7 +185,7 @@ def test_team_worker_types_and_rates(
     # Sara becomes a contractor at the project's confirmed rate; her rate can't be cleared.
     converted = patch(sara["employeeId"], {"workerType": "contractor"}).json()
     assert (converted["workerType"], converted["hourlyRateCents"]) == ("contractor", 18_500)
-    del team_store.contractor_rates[uuid.UUID(pid)]
+    del team_store.contractor_rates[uuid.UUID(project_id)]
     cleared = patch(sara["employeeId"], {"hourlyRateCents": None})
     assert (cleared.status_code, cleared.json()["detail"]) == (
         422,
@@ -186,56 +202,66 @@ def test_team_worker_types_and_rates(
 def test_skills_crud(
     team_client: TestClient, store: Store, team_store: TeamStore, auth: Auth
 ) -> None:
-    user, org, pid = create_project(team_client, store, auth, **DATES)
-    h = auth(user)
-    url = f"/api/v1/projects/{pid}/skills"
+    """Skills list with holders, are added once, renamed (onto existing ones) and removed."""
+    user, org, project_id = create_project(team_client, store, auth, **DATES)
+    headers = auth(user)
+    url = f"/api/v1/projects/{project_id}/skills"
     sap = uuid.uuid4()
     team_store.skills[sap] = (org, "SAP Integration")
-    team_store.wbs_skills[uuid.UUID(pid)] = [sap]
+    team_store.wbs_skills[uuid.UUID(project_id)] = [sap]
 
-    listed = team_client.get(url, headers=h).json()
+    listed = team_client.get(url, headers=headers).json()
     assert listed == [
         {"skillId": str(sap), "name": "SAP Integration", "required": True, "holders": []}
     ]
 
     team_client.post(
-        f"/api/v1/projects/{pid}/team", json={**SARA, "skills": ["Data Modeling"]}, headers=h
+        f"/api/v1/projects/{project_id}/team",
+        json={**SARA, "skills": ["Data Modeling"]},
+        headers=headers,
     )
-    r = team_client.post(url, json={"name": "data  modeling", "required": False}, headers=h)
-    assert r.status_code == 201, r.text
-    modeling = r.json()
+    response = team_client.post(
+        url, json={"name": "data  modeling", "required": False}, headers=headers
+    )
+    assert response.status_code == 201, response.text
+    modeling = response.json()
     assert (modeling["name"], modeling["required"], modeling["holders"]) == (
         "Data Modeling",
         False,
         ["Sara Kim"],
     )
-    r = team_client.post(url, json={"name": "sap integration"}, headers=h)
-    assert r.status_code == 409
-    assert r.json()["detail"] == "sap integration is already in the list"
-    assert team_client.post(url, json={"name": ""}, headers=h).status_code == 422
+    response = team_client.post(url, json={"name": "sap integration"}, headers=headers)
+    assert response.status_code == 409
+    assert response.json()["detail"] == "sap integration is already in the list"
+    assert team_client.post(url, json={"name": ""}, headers=headers).status_code == 422
 
-    r = team_client.post(url, json={"name": "Terraform", "required": False}, headers=h)
-    terraform = r.json()["skillId"]
-    r = team_client.patch(
-        f"{url}/{terraform}", json={"name": "Terraform Cloud", "required": True}, headers=h
+    response = team_client.post(url, json={"name": "Terraform", "required": False}, headers=headers)
+    terraform = response.json()["skillId"]
+    response = team_client.patch(
+        f"{url}/{terraform}", json={"name": "Terraform Cloud", "required": True}, headers=headers
     )
-    assert (r.json()["name"], r.json()["required"]) == ("Terraform Cloud", True)
-    r = team_client.patch(f"{url}/{terraform}", json={"name": "SAP integration"}, headers=h)
-    assert r.status_code == 409
+    assert (response.json()["name"], response.json()["required"]) == ("Terraform Cloud", True)
+    response = team_client.patch(
+        f"{url}/{terraform}", json={"name": "SAP integration"}, headers=headers
+    )
+    assert response.status_code == 409
 
     # Renaming to another organization skill points the project (and its holders) at it.
     spark = uuid.uuid4()
     team_store.skills[spark] = (org, "Spark / Kafka")
-    r = team_client.patch(f"{url}/{modeling['skillId']}", json={"name": "spark / kafka"}, headers=h)
-    assert (r.json()["skillId"], r.json()["holders"]) == (str(spark), ["Sara Kim"])
+    response = team_client.patch(
+        f"{url}/{modeling['skillId']}", json={"name": "spark / kafka"}, headers=headers
+    )
+    assert (response.json()["skillId"], response.json()["holders"]) == (str(spark), ["Sara Kim"])
 
-    assert team_client.delete(f"{url}/{sap}", headers=h).status_code == 204
-    assert team_client.delete(f"{url}/{sap}", headers=h).status_code == 404
-    names = [s["name"] for s in team_client.get(url, headers=h).json()]
+    assert team_client.delete(f"{url}/{sap}", headers=headers).status_code == 204
+    assert team_client.delete(f"{url}/{sap}", headers=headers).status_code == 404
+    names = [skill["name"] for skill in team_client.get(url, headers=headers).json()]
     assert sorted(names) == ["Spark / Kafka", "Terraform Cloud"]
 
 
 def test_clean_skill_names() -> None:
+    """Skill names are trimmed, single-spaced and deduplicated ignoring case."""
     assert clean_skill_names([" SAP  Integration", "sap integration", "", "Kafka"]) == [
         "SAP Integration",
         "Kafka",
@@ -243,10 +269,11 @@ def test_clean_skill_names() -> None:
 
 
 async def test_repo_members_average_booked_hours() -> None:
+    """Members carry their rate, skills and average hours booked on other projects."""
     project = ProjectRef(uuid.uuid4(), uuid.uuid4(), "CRM", None, None, None)
-    emp = uuid.uuid4()
+    employee_id = uuid.uuid4()
     row = {
-        "employee_id": emp,
+        "employee_id": employee_id,
         "full_name": "Ada",
         "role_title": "Engineer",
         "hours_per_week": 30,
@@ -254,7 +281,7 @@ async def test_repo_members_average_booked_hours() -> None:
     }
     conn = Conn(
         Rows([{**row, "is_contractor": False, "hourly_rate_cents": 9_000}]),
-        Rows([{"employee_id": emp, "name": "Python"}]),
+        Rows([{"employee_id": employee_id, "name": "Python"}]),
     )
     weeks = planning_weeks(date(2026, 11, 16), date(2026, 12, 31), date(2026, 11, 13))
     [member] = await TeamRepository(conn).members(project, weeks)  # type: ignore[arg-type]

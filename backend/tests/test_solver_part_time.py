@@ -1,10 +1,11 @@
-"""Part-time people stretch the plan; full-time hours shrink it back (QA's core scenario).
+"""Tests that part-time people stretch the plan and full-time hours shrink it (QA's core scenario).
 
-The PM cuts or raises someone's hours mid-project (`hoursPerWeek` overrides,
-as Changes & Versions sends them) and the plan must react: a task's
-duration follows whoever does it (`load.task_mode`), soft capacity no
-longer prefers overbooking a person, and a part-timer who makes a hard date
-impossible is named in the explanation and gets a priced remedy.
+Purpose: When the PM cuts or raises someone's hours mid-project the plan must react: a task's
+duration follows whoever does it, soft capacity no longer prefers overbooking, and a part-timer who
+makes a hard date impossible is named and gets a priced remedy.
+How it fits: Pure tests of app/optimization/load.py `task_mode`, the overrides, the solver, remedies
+and the report; layer: tests.
+Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
@@ -28,9 +29,9 @@ from app.optimization.solver import solve
 from tests.support.solver_inputs import DATA, FAST, data_pipeline_input, leo_martins, make_input
 
 
-def _plan_at(inp: PlanningInput, hours: float) -> dict[str, Any]:
+def _plan_at(planning_input: PlanningInput, hours: float) -> dict[str, Any]:
     """Re-plan with Leo at `hours` per week, as a change's override does."""
-    changed = apply_overrides(inp, {"hoursPerWeek": {"leo": hours}})
+    changed = apply_overrides(planning_input, {"hoursPerWeek": {"leo": hours}})
     outcome = solve(changed, FAST)
     assert outcome.status == "optimal"
     assert outcome.plan is not None
@@ -47,6 +48,7 @@ def _plan_at(inp: PlanningInput, hours: float) -> dict[str, Any]:
 
 
 def test_task_duration_follows_the_persons_hours() -> None:
+    """A task stretches to the person's daily hours; without hours it keeps its duration."""
     task = Task("a", "1", "A", 10, effort_hours=80)  # 8 h a day at the WBS duration
     assert task_mode(task, 80) == Mode(10, 80, stretched=False)  # 40 h/week: fits
     assert task_mode(task, 32) == Mode(25, 32, stretched=True)  # 16 h/week: 2.5x as long
@@ -55,12 +57,13 @@ def test_task_duration_follows_the_persons_hours() -> None:
 
 
 def test_cutting_hours_lengthens_the_plan_and_raising_them_shortens_it() -> None:
-    inp = data_pipeline_input()
-    full = _plan_at(inp, 40)
+    """Cutting Leo's hours stretches his work and the plan; giving them back shortens it."""
+    planning_input = data_pipeline_input()
+    full = _plan_at(planning_input, 40)
     assert (full["makespan"], full["finish"]) == (15, date(2026, 10, 23))
     assert (full["days"]["a"], full["days"]["b"]) == (10, 5)
 
-    cut = _plan_at(inp, 16)
+    cut = _plan_at(planning_input, 16)
     # 16 h/week is 3.2 h a day: Ingest 80 h -> 25 days, Model 40 h -> 13 days.
     assert (cut["days"]["a"], cut["days"]["b"]) == (25, 13)
     assert cut["days"]["c"] == 5  # Ana's work is untouched
@@ -78,10 +81,10 @@ def test_cutting_hours_lengthens_the_plan_and_raising_them_shortens_it() -> None
     }
 
     # Giving hours back shortens the plan again, step by step.
-    partial = _plan_at(inp, 32)
+    partial = _plan_at(planning_input, 32)
     assert (partial["days"]["a"], partial["days"]["b"]) == (13, 7)
     assert cut["makespan"] > partial["makespan"] > full["makespan"]
-    assert _plan_at(inp, 40)["finish"] == full["finish"]
+    assert _plan_at(planning_input, 40)["finish"] == full["finish"]
 
 
 def _ten_hour_week(deadline: date, capacity_mode: str) -> PlanningInput:
@@ -107,19 +110,20 @@ def _ten_hour_week(deadline: date, capacity_mode: str) -> PlanningInput:
 def test_ten_hour_week_is_feasible_far_out_and_priced_when_tight(
     capacity_mode: str, moved_to: date, title: str
 ) -> None:
+    """Ten hours a week fit a far deadline; a tight one names Sam and prices a later go-live."""
     far = solve(_ten_hour_week(date(2026, 12, 31), capacity_mode), FAST)
     assert far.status == "optimal"
     assert far.plan is not None
     assert far.plan.tasks["a"].end == 20  # 40 h at 2 h a day
 
     tight = _ten_hour_week(date(2026, 10, 16), capacity_mode)
-    out = solve(tight, FAST)
-    assert out.status == "infeasible"
-    assert [conflict.name for conflict in out.conflicts] == [
+    outcome = solve(tight, FAST)
+    assert outcome.status == "infeasible"
+    assert [conflict.name for conflict in outcome.conflicts] == [
         "Deadline: must finish by Oct 16, 2026",
         "Capacity: Sam Okafor (10h/week)",
     ]
-    assert out.conflicts[1].explanation == (
+    assert outcome.conflicts[1].explanation == (
         "Sam Okafor can't take on the work they're needed for within 10h/week. "
         "At those hours 1.1 Build takes 20 working days instead of 5."
     )
@@ -128,8 +132,9 @@ def test_ten_hour_week_is_feasible_far_out_and_priced_when_tight(
 
 
 def test_soft_capacity_reassigns_instead_of_overbooking() -> None:
+    """Soft capacity hands work to someone free instead of overbooking Leo."""
     # QA: Leo cut to 16 h/week kept both packages and showed 188-288% peaks.
-    inp = make_input(
+    planning_input = make_input(
         tasks=(
             Task("a", "1.1", "Ingest", 10, effort_hours=80, owner_id="leo", skills=(DATA,)),
             Task("b", "1.2", "Transform", 10, effort_hours=80, owner_id="leo", skills=(DATA,)),
@@ -141,7 +146,7 @@ def test_soft_capacity_reassigns_instead_of_overbooking() -> None:
         dependencies=(),
         constraints=Constraints(must_finish_by=date(2027, 3, 31), capacity_mode="soft"),
     )
-    report = build_report(inp, solve(inp, FAST))
+    report = build_report(planning_input, solve(planning_input, FAST))
     assert report.result is not None
     summary = report.result["summary"]
     assert summary["softViolations"] == []
@@ -150,9 +155,10 @@ def test_soft_capacity_reassigns_instead_of_overbooking() -> None:
 
 
 def test_soft_capacity_stretches_and_serialises_instead_of_overbooking() -> None:
+    """When only Leo can do the work, it is stretched and done one after the other."""
     # Only Leo can do either package: two stretched 25-day packages back to back
     # beat running them side by side at twice his hours.
-    inp = make_input(
+    planning_input = make_input(
         tasks=(
             Task("a", "1.1", "Ingest", 10, effort_hours=80, owner_id="leo", skills=(DATA,)),
             Task("b", "1.2", "Transform", 10, effort_hours=80, owner_id="leo", skills=(DATA,)),
@@ -161,18 +167,19 @@ def test_soft_capacity_stretches_and_serialises_instead_of_overbooking() -> None
         dependencies=(),
         constraints=Constraints(must_finish_by=date(2027, 3, 31), capacity_mode="soft"),
     )
-    outcome = solve(inp, FAST)
+    outcome = solve(planning_input, FAST)
     assert outcome.plan is not None
     assert outcome.plan.makespan == 50
-    report = build_report(inp, outcome)
+    report = build_report(planning_input, outcome)
     assert report.result is not None
     assert report.result["summary"]["softViolations"] == []
     assert report.result["utilization"] == [{"name": "Leo Martins", "before": 500, "after": 100}]
 
 
 def test_hard_capacity_names_the_part_timer_who_cannot_fit() -> None:
+    """Hard capacity names the part-timer whose hours can't fit the work by the date."""
     # Each package fits Sam's 20 h/week stretched to 10 days, but not both by Oct 23.
-    inp = make_input(
+    planning_input = make_input(
         tasks=(
             Task("a", "1.1", "Build", 5, effort_hours=40, owner_id="sam"),
             Task("b", "1.2", "Test", 5, effort_hours=40, owner_id="sam"),
@@ -181,17 +188,17 @@ def test_hard_capacity_names_the_part_timer_who_cannot_fit() -> None:
         dependencies=(),
         constraints=Constraints(capacity_mode="hard", must_finish_by=date(2026, 10, 23)),
     )
-    out = solve(inp, FAST)
-    assert out.status == "infeasible"
-    assert [conflict.name for conflict in out.conflicts] == [
+    outcome = solve(planning_input, FAST)
+    assert outcome.status == "infeasible"
+    assert [conflict.name for conflict in outcome.conflicts] == [
         "Deadline: must finish by Oct 23, 2026",
         "Capacity: Sam Okafor (20h/week)",
     ]
-    assert "takes 10 working days instead of 5" in out.conflicts[1].explanation
+    assert "takes 10 working days instead of 5" in outcome.conflicts[1].explanation
 
 
 def _control(must_finish_by: date | None) -> PlanningInput:
-    """Pack CONTROL: one 8 h package by Q, a $100/h contractor at 32 h/week, "Can flex"."""
+    """Return the CONTROL pack: one 8 h package by a $100/h contractor at 32 h/week, flexible."""
     return make_input(
         start_date=date(2027, 1, 4),
         tasks=(Task("t", "1.1.1", "Micro task T", 1, owner_id="q"),),
@@ -216,10 +223,11 @@ def _control(must_finish_by: date | None) -> PlanningInput:
 def test_flexible_capacity_books_overtime_only_to_keep_a_date(
     must_finish_by: date | None, finish: date, violations: list[str]
 ) -> None:
-    inp = _control(must_finish_by)
-    outcome = solve(inp, FAST)
+    """Flexible capacity books overtime only when it keeps a date, at no extra contractor cost."""
+    planning_input = _control(must_finish_by)
+    outcome = solve(planning_input, FAST)
     assert outcome.status == "optimal"
-    report = build_report(inp, outcome)
+    report = build_report(planning_input, outcome)
     assert report.result is not None
     assert report.completion_date == finish
     assert report.result["summary"]["softViolations"] == violations

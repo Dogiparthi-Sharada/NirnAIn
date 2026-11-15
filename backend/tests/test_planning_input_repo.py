@@ -1,4 +1,12 @@
-"""Moved test support."""
+"""Tests of loading the optimizer's input and the confirmation sheet's facts from the database.
+
+Purpose: The frozen input must have exactly the project's work packages, team, skills, dependencies,
+constraints, milestones and bookings, with the step-5 answers deciding the deadline mode and whether
+specialists may be used.
+How it fits: Compiles the loader of app/repositories/optimization.py and constraint_input.py against
+the recording connection of tests/support/connections.py; layer: tests.
+Created: 2026-10-14 · Version: 1.0 (NirnAIn demo release)
+"""
 
 from __future__ import annotations
 
@@ -15,7 +23,7 @@ from app.repositories.constraint_input import build_constraints
 from app.repositories.optimization import (
     OptimizationRepository,
 )
-from tests.support.connections import Conn, Rows, project_context
+from tests.support.connections import Conn, Rows, project_context, wbs_node_row
 from tests.support.solver_inputs import make_input
 
 # When a person confirmed an AI estimate in the fake rows.
@@ -23,59 +31,51 @@ CONFIRMED_AT = datetime(2026, 10, 14, 12, 0, tzinfo=UTC)
 
 
 async def test_load_input_builds_planning_input() -> None:
-    ctx = project_context()
-    root, d1, wp1, wp2, d2 = (uuid.uuid4() for _ in range(5))
-    e1, e2, sap = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-
-    def node(
-        id_: uuid.UUID, parent: uuid.UUID | None, level: int, code: str, **kw: Any
-    ) -> dict[str, Any]:
-        base = {
-            "id": id_,
-            "parent_id": parent,
-            "level": level,
-            "name": f"Node {code}",
-            "description": None,
-            "duration_days": None,
-            "effort_hours": None,
-            "owner_employee_id": None,
-            "code": code,
-        }
-        base.update(kw)
-        return base
+    """Work packages, team, skills, dependencies (expanded), milestones and bookings are loaded."""
+    project = project_context()
+    root, first_deliverable, first_package, empty_package, second_deliverable = (
+        uuid.uuid4() for _ in range(5)
+    )
+    mark, lisa, sap = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
 
     conn = Conn(
         Rows(
             [
-                node(root, None, 1, "1"),
-                node(d1, root, 2, "1.1"),
-                node(
-                    wp1,
-                    d1,
+                wbs_node_row(root, None, 1, "1"),
+                wbs_node_row(first_deliverable, root, 2, "1.1"),
+                wbs_node_row(
+                    first_package,
+                    first_deliverable,
                     3,
                     "1.1.1",
                     duration_days=5,
                     effort_hours=Decimal("30.0"),
-                    owner_employee_id=e1,
+                    owner_employee_id=mark,
                 ),
-                node(wp2, d1, 3, "1.1.2", duration_days=0),  # no duration: not a work package
-                node(d2, root, 2, "1.2", duration_days=10),  # childless level 2: work package
+                wbs_node_row(
+                    empty_package, first_deliverable, 3, "1.1.2", duration_days=0
+                ),  # no duration: not a work package
+                wbs_node_row(
+                    second_deliverable, root, 2, "1.2", duration_days=10
+                ),  # childless level 2: work package
             ]
         ),
         Rows([]),  # no applied plan scheduled the 0-day package: it isn't finished work
-        Rows([{"wbs_node_id": wp1, "skill_id": sap, "name": "SAP", "min_proficiency": 3}]),
+        Rows(
+            [{"wbs_node_id": first_package, "skill_id": sap, "name": "SAP", "min_proficiency": 3}]
+        ),
         Rows([{"skill_id": sap, "name": "SAP", "required": True}]),  # the project's list
         Rows(
             [
                 {
-                    "id": e1,
+                    "id": mark,
                     "full_name": "Mark",
                     "hours_per_week": Decimal("40.0"),
                     "hourly_rate_cents": 9000,
                     "is_contractor": False,
                 },
                 {
-                    "id": e2,
+                    "id": lisa,
                     "full_name": "Lisa",
                     "hours_per_week": Decimal("16.0"),  # hours on this project
                     "hourly_rate_cents": None,
@@ -83,9 +83,18 @@ async def test_load_input_builds_planning_input() -> None:
                 },
             ]
         ),
-        Rows([{"employee_id": e1, "skill_id": sap, "proficiency": 4}]),
+        Rows([{"employee_id": mark, "skill_id": sap, "proficiency": 4}]),
         # dependency on the summary node d1 expands to its work package wp1
-        Rows([{"predecessor_id": d1, "successor_id": d2, "type": "FS", "lag_days": 2}]),
+        Rows(
+            [
+                {
+                    "predecessor_id": first_deliverable,
+                    "successor_id": second_deliverable,
+                    "type": "FS",
+                    "lag_days": 2,
+                }
+            ]
+        ),
         Rows([]),  # no constraint set -> project fallbacks
         Rows(
             [
@@ -93,7 +102,7 @@ async def test_load_input_builds_planning_input() -> None:
                     "id": uuid.uuid4(),
                     "name": "Phase 1",
                     "due_date": date(2026, 11, 2),
-                    "wbs_node_id": d1,
+                    "wbs_node_id": first_deliverable,
                     "mode": "hard",
                 },
                 {
@@ -105,38 +114,42 @@ async def test_load_input_builds_planning_input() -> None:
                 },
             ]
         ),
-        Rows([{"employee_id": e2, "week_start": date(2026, 10, 12), "hours": Decimal("16.0")}]),
+        Rows([{"employee_id": lisa, "week_start": date(2026, 10, 12), "hours": Decimal("16.0")}]),
     )
-    inp = await OptimizationRepository(conn).load_input(ctx, date(2026, 10, 1))  # type: ignore[arg-type]
-    assert [t.code for t in inp.tasks] == ["1.1.1", "1.2"]
-    t1 = inp.tasks[0]
-    assert (t1.effort_hours, t1.owner_id) == (30.0, str(e1))
-    assert t1.skills[0].skill_name == "SAP"
-    assert [e.name for e in inp.employees] == ["Mark", "Lisa"]
-    assert [employee.weekly_capacity_hours for employee in inp.employees] == [40.0, 16.0]
+    planning_input = await OptimizationRepository(conn).load_input(project, date(2026, 10, 1))  # type: ignore[arg-type]
+    assert [task.code for task in planning_input.tasks] == ["1.1.1", "1.2"]
+    first_task = planning_input.tasks[0]
+    assert (first_task.effort_hours, first_task.owner_id) == (30.0, str(mark))
+    assert first_task.skills[0].skill_name == "SAP"
+    assert [person.name for person in planning_input.employees] == ["Mark", "Lisa"]
+    assert [employee.weekly_capacity_hours for employee in planning_input.employees] == [40.0, 16.0]
     assert "project_skills" in conn.sql[3]
     assert "project_team_members" in conn.sql[4]  # the project's team, not the whole org
-    assert inp.deliverables == {"1.1": "Node 1.1", "1.2": "Node 1.2"}
-    assert inp.constraints.allow_contractors is False  # nothing answered yet
-    assert inp.employees[0].skills == {str(sap): 4}
-    assert inp.employees[1].is_contractor
-    assert [(d.predecessor_id, d.successor_id, d.lag_days) for d in inp.dependencies] == [
-        (str(wp1), str(d2), 2)
-    ]
-    assert inp.start_date == date(2026, 10, 5)
-    assert inp.constraints.budget_total_cents == 37_500_000
-    assert inp.constraints.must_finish_by == date(2027, 1, 29)
-    assert [m.name for m in inp.milestones] == ["Phase 1"]  # nodeless milestone is informational
-    assert inp.milestones[0].task_ids == (str(wp1),)
-    assert inp.allocations[0].hours == 16.0
+    assert planning_input.deliverables == {"1.1": "Node 1.1", "1.2": "Node 1.2"}
+    assert planning_input.constraints.allow_contractors is False  # nothing answered yet
+    assert planning_input.employees[0].skills == {str(sap): 4}
+    assert planning_input.employees[1].is_contractor
+    assert [
+        (dependency.predecessor_id, dependency.successor_id, dependency.lag_days)
+        for dependency in planning_input.dependencies
+    ] == [(str(first_package), str(second_deliverable), 2)]
+    assert planning_input.start_date == date(2026, 10, 5)
+    assert planning_input.constraints.budget_total_cents == 37_500_000
+    assert planning_input.constraints.must_finish_by == date(2027, 1, 29)
+    assert [milestone.name for milestone in planning_input.milestones] == [
+        "Phase 1"
+    ]  # nodeless milestone is informational
+    assert planning_input.milestones[0].task_ids == (str(first_package),)
+    assert planning_input.allocations[0].hours == 16.0
     assert "wbs_nodes_with_code" in conn.sql[0]
     assert "allocations.project_id != " in conn.sql[-1]
     # The snapshot survives a round trip.
-    assert PlanningInput.from_snapshot(inp.to_snapshot()) == inp
+    assert PlanningInput.from_snapshot(planning_input.to_snapshot()) == planning_input
 
 
 async def test_load_input_with_constraint_set_and_no_data() -> None:
-    cs = {
+    """A saved constraint set is used, with project fallbacks and the whole organization as team."""
+    constraint_row = {
         "project_id": uuid.uuid4(),
         "budget_total_cents": None,
         "labor_cap_cents": 100,
@@ -158,18 +171,29 @@ async def test_load_input_with_constraint_set_and_no_data() -> None:
     }
     # nodes, project team (empty), org employees (fallback), deps, constraint set,
     # milestones (no task ids -> no skills/profs/alloc queries)
-    conn = Conn(Rows([]), Rows([]), Rows([]), Rows([]), Rows([cs]), Rows([]))
-    ctx = project_context()
-    inp = await OptimizationRepository(conn).load_input(ctx, date(2026, 10, 1))  # type: ignore[arg-type]
-    assert (inp.tasks, inp.employees) == ((), ())
-    c = inp.constraints
-    assert inp.start_date == date(2026, 11, 2)
-    assert c.budget_total_cents == ctx.budget_cents
-    assert c.must_finish_by == ctx.target_end_date
-    assert (c.labor_cap_cents, c.budget_mode, c.working_days_per_week) == (100, "soft", 6)
-    assert (c.capacity_mode, c.skill_mode, c.deadline_mode) == ("hard", "soft", "soft")
-    assert c.contingency_pct == 12.5
-    assert (c.allow_contractors, c.contractor_rate_cents) == (True, 17_500)  # default rate
+    conn = Conn(Rows([]), Rows([]), Rows([]), Rows([]), Rows([constraint_row]), Rows([]))
+    project = project_context()
+    planning_input = await OptimizationRepository(conn).load_input(project, date(2026, 10, 1))  # type: ignore[arg-type]
+    assert (planning_input.tasks, planning_input.employees) == ((), ())
+    constraints = planning_input.constraints
+    assert planning_input.start_date == date(2026, 11, 2)
+    assert constraints.budget_total_cents == project.budget_cents
+    assert constraints.must_finish_by == project.target_end_date
+    assert (
+        constraints.labor_cap_cents,
+        constraints.budget_mode,
+        constraints.working_days_per_week,
+    ) == (100, "soft", 6)
+    assert (constraints.capacity_mode, constraints.skill_mode, constraints.deadline_mode) == (
+        "hard",
+        "soft",
+        "soft",
+    )
+    assert constraints.contingency_pct == 12.5
+    assert (constraints.allow_contractors, constraints.contractor_rate_cents) == (
+        True,
+        17_500,
+    )  # default rate
     assert "project_team_members" in conn.sql[1]
     assert "employees.active IS true" in conn.sql[2]  # no project team: whole org
     assert len(conn.sql) == 6
@@ -190,6 +214,7 @@ def test_answers_set_deadline_and_specialist_policy(
     deadline_mode: str,
     contractors: bool,
 ) -> None:
+    """The deadline answer decides its mode; only "yes" allows specialists."""
     constraint_set: Any = SimpleNamespace(
         start_date=None,
         budget_total_cents=None,
@@ -217,10 +242,11 @@ def test_answers_set_deadline_and_specialist_policy(
 
 
 async def test_input_facts_reads_answers_and_confirmations() -> None:
-    ctx = project_context()
-    inp = make_input(
+    """The facts read answers, confirmations, dependency types, skills and the budget quote."""
+    project = project_context()
+    planning_input = make_input(
         tasks=(Task(str(uuid.uuid4()), "1.1", "Design", 5),),
-        constraints=Constraints(budget_total_cents=ctx.budget_cents),
+        constraints=Constraints(budget_total_cents=project.budget_cents),
     )
     sap = uuid.uuid4()
     conn = Conn(
@@ -241,7 +267,7 @@ async def test_input_facts_reads_answers_and_confirmations() -> None:
         Rows([{"skill_id": sap, "name": "SAP", "required": True}]),
         Rows([{"source_quote": "Budget is $400K"}, {"source_quote": "Budget approved at $375K"}]),
     )
-    facts = await OptimizationRepository(conn).input_facts(ctx, inp)  # type: ignore[arg-type]
+    facts = await OptimizationRepository(conn).input_facts(project, planning_input)  # type: ignore[arg-type]
     assert (facts.confirmed_ai_estimates, facts.unconfirmed_estimates) == (1, 1)
     assert facts.dependency_types == {"FS": 4, "SS": 1}
     assert facts.team_from_project is True
