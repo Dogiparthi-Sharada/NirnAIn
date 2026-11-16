@@ -140,8 +140,23 @@ class Remedy(CamelModel):
     changes: list[RemedyChange] = Field(default_factory=list)
 
 
+class TriedRemedy(CamelModel):
+    """An option tried (or skipped) but not offered, and why, in plain English.
+
+    E.g. "Bring in a contractor": "Not enough on its own. The dependency chain alone runs until
+    Aug 23, 2027, …", or "Not needed: overtime is already allowed under Can flex."
+    """
+
+    id: RemedyId
+    title: str
+    reason: str
+
+
 class RunResult(CamelModel):
-    """The stored result of a run: KPIs, reassignments, schedule, summary and remedies."""
+    """The stored result of a run: KPIs, reassignments, schedule, summary and remedies.
+
+    `triedRemedies` is absent on runs stored before it was added: it reads as empty.
+    """
 
     kpis: list[RunKpi] = Field(default_factory=list)
     reassignments: list[Reassignment] = Field(default_factory=list)
@@ -150,6 +165,7 @@ class RunResult(CamelModel):
     schedule: list[ScheduleItem] = Field(default_factory=list)
     summary: RunSummary | None = None
     remedies: list[Remedy] = Field(default_factory=list)
+    tried_remedies: list[TriedRemedy] = Field(default_factory=list)
 
 
 class Conflict(CamelModel):

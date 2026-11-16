@@ -10,7 +10,7 @@ Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from app.optimization.model import Task
@@ -66,10 +66,18 @@ class ScheduledTask:
 
 @dataclass(frozen=True, slots=True)
 class Conflict:
-    """One hard constraint in an infeasible core, in plain English."""
+    """One hard constraint in an infeasible core, in plain English.
+
+    `kind` is its constraint group (deadline, milestone, budget, labor, skill, capacity or
+    dependency; empty for the generic text) and `brief` restates its fact as a clause ("the
+    dependency chain alone runs until Aug 23, 2027"), so the remedies can say which blockers an
+    option leaves in place. Only name and explanation are stored with the run.
+    """
 
     name: str
     explanation: str
+    kind: str = field(default="", compare=False)
+    brief: str = field(default="", compare=False)
 
 
 @dataclass(frozen=True, slots=True)

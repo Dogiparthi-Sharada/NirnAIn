@@ -11,7 +11,8 @@ re-solves relaxed copies of the frozen input, each changing one thing the PM dec
       infeasible run a plan.
 A copy is offered only if it produces a plan, uses what it adds and, for a slipping plan,
 finishes earlier; `costCents` is the extra cost against this plan (the whole relaxed plan's cost
-for an infeasible run).
+for an infeasible run). Every option tried or skipped but not offered is reported too, with why
+(`result.triedRemedies`), from the outcomes already in hand: no extra solve.
 How it fits: `price_remedies` is called by the optimizer job; `apply_remedy` by the API when a
 run is created with `remedy`; remedy_options.py words and prices each option;
 layer: optimization.
@@ -20,27 +21,36 @@ Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import replace
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 
 from app.optimization.model import PlanningInput, Task
-from app.optimization.outcome import SolveOutcome
+from app.optimization.outcome import Conflict, SolveOutcome
 from app.optimization.remedy_options import (
     DEFAULT_SPECIALIST_RATE_CENTS,
     DESCRIBE,
+    ORDER,
     Remedy,
     RemedyId,
+    TriedRemedy,
     accept_remedy,
+    combined_not_needed,
     cost_of,
     finish_of,
+    no_plan_reason,
+    not_earlier_reason,
+    not_used_reason,
+    skipped_reasons,
 )
 from app.optimization.solver import SolveControl, SolveOptions, solve
 
 __all__ = [
     "DEFAULT_SPECIALIST_RATE_CENTS",
     "KEEP_TARGET_PENALTY_PER_DAY",
+    "PricedRemedies",
     "Remedy",
     "RemedyId",
+    "TriedRemedy",
     "allow_overtime",
     "allow_specialists",
     "apply_remedy",
@@ -161,20 +171,32 @@ def variants(planning_input: PlanningInput, solved: bool) -> list[tuple[RemedyId
     return found
 
 
+@dataclass(frozen=True, slots=True)
+class PricedRemedies:
+    """The options worth offering, and those tried (or skipped) but not offered, with why."""
+
+    offered: list[Remedy] = field(default_factory=list)
+    tried: list[TriedRemedy] = field(default_factory=list)
+
+
 def price_remedies(
     planning_input: PlanningInput,
     options: SolveOptions,
     control: SolveControl | None = None,
     current: SolveOutcome | None = None,
-) -> list[Remedy]:
-    """Re-solve each relaxed variant; return the ones worth offering. CPU-bound.
+    conflicts: Sequence[Conflict] = (),
+) -> PricedRemedies:
+    """Re-solve each relaxed variant; return the ones worth offering and why the others aren't.
 
-    `current` is this run's outcome: with a plan, the options must finish
-    earlier than it and are priced against it, and accepting its date is
-    always the last option.
+    CPU-bound. `current` is this run's outcome: with a plan, the options must finish earlier
+    than it and are priced against it, and accepting its date is always the last option.
+    `conflicts` are an infeasible run's blockers: an option that gets no plan is reported with
+    the ones it doesn't lift.
     """
     solved = current is not None and current.plan is not None
     found = variants(planning_input, solved)
+    # Only an infeasible run tries the other options (a slipping plan offers "Accept" instead).
+    not_offered = [] if solved else skipped_reasons(planning_input, [key for key, _ in found])
     if not solved:
         # Tried last, and only when no single option gets a plan (R6).
         found.append(("combined", change_together(planning_input)))
@@ -188,20 +210,28 @@ def price_remedies(
     base_cost = cost_of(planning_input, current) if current is not None and solved else 0
     remedies: list[Remedy] = []
     for remedy_id, variant in found:
-        if (control is not None and control.stopped) or (remedy_id == "combined" and remedies):
+        if control is not None and control.stopped:
+            break
+        if remedy_id == "combined" and remedies:
+            not_offered.append(combined_not_needed())
             break
         outcome = solve(variant, share, control, explain=False)
         if outcome.plan is None:
+            not_offered.append(no_plan_reason(remedy_id, outcome, conflicts))
             continue
         # Next to a plan, an option is only worth offering when it finishes earlier.
         if base_finish is not None and finish_of(variant, outcome) >= base_finish:
+            not_offered.append(not_earlier_reason(remedy_id, base_finish))
             continue
         # Priced as the extra cost over this plan; without a plan, the whole relaxed plan's.
         remedy = DESCRIBE[remedy_id](
             planning_input, variant, outcome, cost_of(variant, outcome) - base_cost
         )
-        if remedy is not None:
+        if remedy is None:
+            not_offered.append(not_used_reason(remedy_id))
+        else:
             remedies.append(remedy)
     if current is not None and solved:
         remedies.append(accept_remedy(planning_input, current))
-    return remedies
+    not_offered.sort(key=lambda entry: ORDER.index(entry.id))
+    return PricedRemedies(remedies, not_offered)

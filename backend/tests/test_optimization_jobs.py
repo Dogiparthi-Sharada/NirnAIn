@@ -109,6 +109,15 @@ async def test_infeasible_run_gets_priced_remedies() -> None:
     assert remedy["id"] == "move_deadline"
     assert remedy["title"] == "Move go-live to Oct 23 (+7 days)"
     assert remedy["completionDate"] == "2026-10-23"
+    # The contractor didn't help: the job passes the run's own conflicts to say why.
+    assert [(entry["id"], entry["reason"]) for entry in report.result["triedRemedies"]] == [
+        (
+            "specialist",
+            "Not enough on its own. The dependency chain alone runs until Oct 23, 2026.",
+        ),
+        ("overtime", "Not needed: overtime is already allowed under Can flex."),
+        ("combined", "Not needed: one change on its own already gets a plan."),
+    ]
     RunResult.model_validate(report.result)
 
 
@@ -127,6 +136,11 @@ async def test_late_run_keeps_its_plan_and_gets_ways_to_keep_the_date() -> None:
     # The FS chain can't be shortened by a contractor or overtime: accept the date.
     assert [remedy["id"] for remedy in report.result["remedies"]] == ["move_deadline"]
     assert report.result["remedies"][0]["costCents"] == 0
+    # ... and the card says why the others aren't offered.
+    assert [(entry["id"], entry["reason"]) for entry in report.result["triedRemedies"]] == [
+        ("specialist", "Doesn't finish earlier than this plan's go-live, Oct 23, 2026."),
+        ("overtime", "Doesn't finish earlier than this plan's go-live, Oct 23, 2026."),
+    ]
     assert report.result["schedule"]  # the plan is kept
     RunResult.model_validate(report.result)
 

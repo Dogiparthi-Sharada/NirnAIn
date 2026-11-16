@@ -127,7 +127,7 @@ def test_ten_hour_week_is_feasible_far_out_and_priced_when_tight(
         "Sam Okafor can't take on the work they're needed for within 10h/week. "
         "At those hours 1.1 Build takes 20 working days instead of 5."
     )
-    remedy = {remedy.id: remedy for remedy in price_remedies(tight, FAST)}["move_deadline"]
+    remedy = {remedy.id: remedy for remedy in price_remedies(tight, FAST).offered}["move_deadline"]
     assert (remedy.completion_date, remedy.title) == (moved_to, title)
 
 

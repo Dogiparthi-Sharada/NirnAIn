@@ -2,8 +2,8 @@
 
 Purpose: Check what must be refused or explained: step-7 changes that are empty, out of
 range or decided out of order (7e); a project whose limits cannot all hold, which must be
-explained with priced remedies (8); and the security boundaries plus the no-key AI
-fallbacks (9).
+explained with priced remedies, and why the others are not offered (8); and the security
+boundaries plus the no-key AI fallbacks (9).
 How it fits: `run_api_suite.py` runs 7e after the mid-project changes, 8 on a project of its
 own, and 9 near the end with an anonymous client and a user from another workspace;
 layer: tests.
@@ -183,6 +183,18 @@ def impossible_project_scenarios(client: ApiClient, log: ScenarioLog, org_id: st
         "infeasible + reason + at least one remedy",
         f"{describe_run(run)} reason={reasons}",
         run.get("status") == "infeasible" and bool(remedies_of(run)),
+    )
+    # Every single option is either offered or listed under "Also tried" with its reason.
+    tried = (run.get("result") or {}).get("triedRemedies") or []
+    accounted = {remedy.get("id") for remedy in remedies_of(run)} | {
+        entry.get("id") for entry in tried if entry.get("title") and entry.get("reason")
+    }
+    log.check(
+        IMPOSSIBLE_AREA,
+        "Impossible limits: options not offered say why",
+        "specialist, overtime and move_deadline each offered or in triedRemedies with a reason",
+        "; ".join(f"{entry.get('id')}: {entry.get('reason')}" for entry in tried) or "none",
+        {"specialist", "overtime", "move_deadline"} <= accounted,
     )
     for remedy in ("move_deadline", "specialist"):
         _, remedied = run_optimizer(client, project, {"remedy": remedy})

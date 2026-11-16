@@ -95,7 +95,7 @@ export function policyHelp(key: PolicyKey, inputs: PolicyInputs): PolicyHelp {
         recWhy: inputs.budgetQuote
           ? `Your notes say \u201C${inputs.budgetQuote}\u201D, so treat it as a ceiling.`
           : 'An approved budget is usually a ceiling; keep it unless the sponsor agreed to more.',
-        hard: `The plan must cost ${budget} or less. If that is impossible, you get priced options instead of a plan.`,
+        hard: `The plan must cost ${budget} or less. If that is impossible, NirnAIn offers the priced options that actually work instead of a plan.`,
         soft: `The plan may cost more than ${budget}, with a penalty, if that is the only way to meet the other limits.`,
       }
     case 'deadline':
@@ -132,7 +132,7 @@ export function policyRisks(inputs: PolicyInputs): PolicyRisk[] {
       level: 'change',
       title: 'Hold employee capacity when the deadline must hold',
       why: `With a fixed deadline and flexible hours, the solver meets ${date} by booking overtime instead of telling you the date is at risk. The plan looks on time while people are scheduled above their hours, and that is where projects really slip.`,
-      fix: `Set Employee capacity to Must hold. If ${date} then cannot be met, you see it now, with priced options (a specialist, more hours, or a later date).`,
+      fix: `Set Employee capacity to Must hold. If ${date} then cannot be met, you see it now, and NirnAIn offers the priced options that actually work: a specialist, more hours, a later date, or a combination.`,
     })
   }
   if (policyOf('skills', inputs) === 'soft' && inputs.skillGaps.length > 0) {

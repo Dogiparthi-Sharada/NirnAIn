@@ -142,7 +142,7 @@ def test_no_single_option_works_so_they_are_combined() -> None:
     """The combined remedy moves go-live and brings in a contractor, and its re-run plans."""
     planning_input = m03_input()
 
-    (remedy,) = price_remedies(planning_input, QUICK)
+    (remedy,) = price_remedies(planning_input, QUICK).offered
 
     assert (remedy.id, remedy.title) == ("combined", "Change these together")
     assert remedy.completion_date is not None

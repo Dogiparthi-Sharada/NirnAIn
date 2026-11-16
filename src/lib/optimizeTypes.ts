@@ -2,8 +2,8 @@
  * Wire types of step 6, Optimization Results: the confirmation sheet, runs, results and remedies.
  *
  * Purpose: Mirrors the optimizer contract the results screen reads (input rows and their sources,
- * run requests and options, schedules, specialist bookings and priced remedies) so the screen and
- * its cards share one definition.
+ * run requests and options, schedules, specialist bookings, priced remedies and the options tried
+ * but not offered) so the screen and its cards share one definition.
  * How it fits: Re-exported by `lib/optimize.ts`, which screens import from; types only, no runtime
  * code; layer: hook/lib.
  * Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
@@ -57,6 +57,16 @@ export interface Remedy {
   completionDate: string | null
 }
 
+/**
+ * An option the backend tried (or skipped) but doesn't offer, with why in plain English, e.g.
+ * "Bring in a contractor": "Not enough on its own. The dependency chain alone runs until …".
+ */
+export interface TriedRemedy {
+  id: RemedyId | 'combined'
+  title: string
+  reason: string
+}
+
 /** One work package on the timeline (ISO dates, inclusive). */
 export interface ScheduleItem {
   wbsNodeId: string
@@ -105,6 +115,8 @@ export interface PlanResult extends RunResult {
   schedule?: ScheduleItem[]
   summary?: RunSummary | null
   remedies?: Remedy[]
+  /** Options tried but not offered, and why (absent on runs stored before it was added). */
+  triedRemedies?: TriedRemedy[]
 }
 
 /** How a run was set up (stored by the backend in `optimization_runs.options`). */
