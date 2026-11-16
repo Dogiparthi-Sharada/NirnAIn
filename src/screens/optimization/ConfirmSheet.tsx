@@ -4,7 +4,8 @@
  * Purpose: Nothing runs until the project manager approves this exact set of inputs: each row
  * shows where it came from, `ready: false` disables approval and lists what blocks it with links
  * to the step that fixes it, and a failed start (422 with `missing`, 403, 409) is explained below
- * the table.
+ * the table. While the sheet may be out of date (it is reloading, or a step 5 save is still on its
+ * way) it is dimmed under "Checking the latest inputs…" and can't be approved.
  * How it fits: Port of `renderConfirm()` in the mockup's views/optimize.js (`#opt-confirm`);
  * rendered by `screens/OptimizationResults.tsx`; repeats the Constraint check brief;
  * layer: screen.
@@ -27,6 +28,8 @@ interface ConfirmSheetProps {
   risks: PolicyRisk[]
   /** Which banner to show above the sheet. */
   context: 'first-run' | 'inputs-changed' | 'run-again'
+  /** The sheet on screen may be out of date: it is reloading or a change to it is being saved. */
+  checking: boolean
   starting: boolean
   startError: unknown
   onApprove: () => void
@@ -61,11 +64,16 @@ function StartProblem({ error, projectId }: { error: unknown; projectId: string 
 }
 
 /** The confirmation sheet; approving starts the run. */
-export function ConfirmSheet({ projectId, inputs, risks, context, starting, startError, onApprove, onCancel }: ConfirmSheetProps) {
+export function ConfirmSheet({ projectId, inputs, risks, context, checking, starting, startError, onApprove, onCancel }: ConfirmSheetProps) {
   const navigateToStep = useStepNav()
   const sheet = inputs.data
   const ready = sheet?.ready ?? false
   const blocking = sheet?.blocking ?? []
+  // Only the latest sheet may be approved: not while checking, nor after a failed reload.
+  const fresh = inputs.isSuccess && !checking
+  let hint = ''
+  if (checking) hint = 'Checking the latest inputs\u2026'
+  else if (sheet && !ready) hint = 'Finish steps 4 and 5 first.'
 
   return (
     <div id="opt-confirm">
@@ -91,60 +99,68 @@ export function ConfirmSheet({ projectId, inputs, risks, context, starting, star
       <div className={`card${context === 'first-run' ? ' mt' : ''}`}>
         <h3>Check the inputs the solver will use</h3>
         {inputs.isPending && <QuietNote busy>Loading the inputs&hellip;</QuietNote>}
+        {checking && (
+          <p className="small muted" id="confirm-checking" role="status" aria-live="polite" style={{ margin: '8px 0' }}>
+            Checking the latest inputs&hellip;
+          </p>
+        )}
         {inputs.isError && <ProblemAlert title="Couldn't load the inputs" error={inputs.error} onRetry={() => void inputs.refetch()} />}
-        {sheet && sheet.rows.length === 0 && <QuietNote>There are no inputs yet. Start with the work packages on step 4.</QuietNote>}
-        {sheet && sheet.rows.length > 0 && (
-          <div className="tbl-scroll">
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Input</th>
-                  <th>Value</th>
-                  <th>Source</th>
-                  <th>From</th>
-                </tr>
-              </thead>
-              <tbody id="confirm-rows">
-                {sheet.rows.map((row) => (
-                  <tr key={row.key}>
-                    <td>
-                      <b>{row.label}</b>
-                    </td>
-                    <td>{row.value}</td>
-                    <td>
-                      <SourceChip source={row.source} />
-                    </td>
-                    <td className="small muted">{row.from}</td>
+        {/* A sheet that may be out of date stays in place, dimmed, so the layout doesn't jump. */}
+        <div aria-busy={checking || undefined} style={sheet && !fresh ? { opacity: 0.5 } : undefined}>
+          {sheet && sheet.rows.length === 0 && <QuietNote>There are no inputs yet. Start with the work packages on step 4.</QuietNote>}
+          {sheet && sheet.rows.length > 0 && (
+            <div className="tbl-scroll">
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Input</th>
+                    <th>Value</th>
+                    <th>Source</th>
+                    <th>From</th>
                   </tr>
+                </thead>
+                <tbody id="confirm-rows">
+                  {sheet.rows.map((row) => (
+                    <tr key={row.key}>
+                      <td>
+                        <b>{row.label}</b>
+                      </td>
+                      <td>{row.value}</td>
+                      <td>
+                        <SourceChip source={row.source} />
+                      </td>
+                      <td className="small muted">{row.from}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div id="confirm-advice">
+            <ConstraintCheckBrief risks={risks} projectId={projectId} />
+          </div>
+
+          {sheet && !ready && blocking.length > 0 && (
+            <div className="cf-banner bad mt">
+              <b>{'\u26A0'} Before the solver can run:</b>
+              <ul>
+                {blocking.map((reason) => (
+                  <li key={reason}>
+                    <Link to={stepPath(blockingStep(reason), projectId)}>{reason}</Link>
+                  </li>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        <div id="confirm-advice">
-          <ConstraintCheckBrief risks={risks} projectId={projectId} />
+              </ul>
+            </div>
+          )}
         </div>
-
-        {sheet && !ready && blocking.length > 0 && (
-          <div className="cf-banner bad mt">
-            <b>{'\u26A0'} Before the solver can run:</b>
-            <ul>
-              {blocking.map((reason) => (
-                <li key={reason}>
-                  <Link to={stepPath(blockingStep(reason), projectId)}>{reason}</Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
         {startError != null && <StartProblem error={startError} projectId={projectId} />}
 
         <div className="row between mt">
           <span className="small muted">Inferred values are never used. Approving locks this exact set of inputs.</span>
           <div className="row">
-            <span className="gate bad" id="confirm-hint">
-              {sheet && !ready ? 'Finish steps 4 and 5 first.' : ''}
+            <span className={checking ? 'gate' : 'gate bad'} id="confirm-hint">
+              {hint}
             </span>
             {onCancel && context === 'run-again' && (
               <button className="btn sec" type="button" onClick={onCancel}>
@@ -154,7 +170,7 @@ export function ConfirmSheet({ projectId, inputs, risks, context, starting, star
             <button className="btn sec" type="button" onClick={() => navigateToStep('constraints')}>
               &larr; Adjust Constraints
             </button>
-            <button className="btn" id="btn-approve-inputs" type="button" disabled={!ready || starting} onClick={onApprove}>
+            <button className="btn" id="btn-approve-inputs" type="button" disabled={!ready || !fresh || starting} onClick={onApprove}>
               {starting ? 'Starting\u2026' : 'Approve inputs & run'}
             </button>
           </div>

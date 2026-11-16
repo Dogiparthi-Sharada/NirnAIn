@@ -3,9 +3,10 @@
  *
  * Purpose: Scope Review, WBS Builder and Constraints share the same solver inputs and the rules on
  * them (utilization, worker types and cost rates, skill gaps); any change to them must refresh the
- * step 6 confirmation sheet and the coverage views.
+ * step 6 confirmation sheet and the coverage views, and step 6 must see a save still on its way.
  * How it fits: Types and hooks used by `screens/Constraints.tsx`, `screens/constraints/*`,
- * `screens/ScopeReview.tsx` and `lib/constraints.ts`; layer: hook/lib.
+ * `screens/ScopeReview.tsx` and `lib/constraints.ts`; `lib/optimize.ts` watches the saves' mutation
+ * key; layer: hook/lib.
  * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
 
@@ -172,6 +173,17 @@ export const inputKeys = {
   planVersions: (projectId: string) => ['projects', projectId, 'plan-versions'] as const,
 }
 
+/**
+ * First element of the mutation key of every team and skill-list save (the second is the project
+ * id), so step 6 can tell that a change to its sheet is still on its way.
+ */
+export const INPUT_SAVE_KEY = 'input-save'
+
+/** The mutation key of this project's team and skill-list saves. */
+function inputSaveKey(projectId: string) {
+  return [INPUT_SAVE_KEY, projectId] as const
+}
+
 /** Solver inputs changed: the confirmation sheet on step 6 and coverage views must refresh. */
 function inputsChanged(queryClient: QueryClient, projectId: string) {
   void queryClient.invalidateQueries({ queryKey: inputKeys.team(projectId) })
@@ -218,6 +230,7 @@ export function useTeam(projectId: string) {
 export function useAddTeamMember(projectId: string) {
   const queryClient = useQueryClient()
   return useMutation({
+    mutationKey: inputSaveKey(projectId),
     mutationFn: (member: TeamMemberInput) =>
       apiFetch<ProjectTeamMember>(projectPath(projectId, '/team'), { method: 'POST', json: member }),
     onSuccess: () => inputsChanged(queryClient, projectId),
@@ -228,6 +241,7 @@ export function useAddTeamMember(projectId: string) {
 export function useUpdateTeamMember(projectId: string) {
   const queryClient = useQueryClient()
   return useMutation({
+    mutationKey: inputSaveKey(projectId),
     mutationFn: ({ employeeId, patch }: { employeeId: string; patch: Partial<TeamMemberInput> }) =>
       apiFetch<ProjectTeamMember>(projectPath(projectId, `/team/${encodeURIComponent(employeeId)}`), {
         method: 'PATCH',
@@ -246,6 +260,7 @@ export function useUpdateTeamMember(projectId: string) {
 export function useRemoveTeamMember(projectId: string) {
   const queryClient = useQueryClient()
   return useMutation({
+    mutationKey: inputSaveKey(projectId),
     mutationFn: (employeeId: string) =>
       apiFetch<void>(projectPath(projectId, `/team/${encodeURIComponent(employeeId)}`), { method: 'DELETE' }),
     onSuccess: (_, employeeId) => {
@@ -270,6 +285,7 @@ export function useProjectSkills(projectId: string) {
 export function useAddSkill(projectId: string) {
   const queryClient = useQueryClient()
   return useMutation({
+    mutationKey: inputSaveKey(projectId),
     mutationFn: (skill: { name: string; required: boolean }) =>
       apiFetch<ProjectSkill>(projectPath(projectId, '/skills'), { method: 'POST', json: skill }),
     onSuccess: () => inputsChanged(queryClient, projectId),
@@ -280,6 +296,7 @@ export function useAddSkill(projectId: string) {
 export function useUpdateSkill(projectId: string) {
   const queryClient = useQueryClient()
   return useMutation({
+    mutationKey: inputSaveKey(projectId),
     mutationFn: ({ skillId, patch }: { skillId: string; patch: { name?: string; required?: boolean } }) =>
       apiFetch<ProjectSkill>(projectPath(projectId, `/skills/${encodeURIComponent(skillId)}`), {
         method: 'PATCH',
@@ -293,6 +310,7 @@ export function useUpdateSkill(projectId: string) {
 export function useRemoveSkill(projectId: string) {
   const queryClient = useQueryClient()
   return useMutation({
+    mutationKey: inputSaveKey(projectId),
     mutationFn: (skillId: string) =>
       apiFetch<void>(projectPath(projectId, `/skills/${encodeURIComponent(skillId)}`), { method: 'DELETE' }),
     onSuccess: () => inputsChanged(queryClient, projectId),

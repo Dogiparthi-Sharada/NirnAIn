@@ -4,16 +4,19 @@
  * Purpose: The results screen needs the confirmation sheet (`GET …/optimization/inputs`), runs
  * started with a remedy, the specialist-rate confirmation, apply and export. Every key sits under
  * `['projects', id, 'optimization']`, which the input screens invalidate whenever a solver input
- * changes, so the sheet refreshes itself.
+ * changes, so the sheet refreshes itself; step 6 also reloads the sheet and the skill list on
+ * every visit and says when what it shows may be out of date (a reload or a save is on its way).
  * How it fits: Used by `screens/OptimizationResults.tsx` and `screens/optimization/*`; reuses the
- * shared run hooks from `lib/queries` and re-exports the wire types from `optimizeTypes.ts`;
+ * shared run hooks from `lib/queries`, watches the input saves of `lib/inputs.ts` and
+ * `lib/constraints.ts` by mutation key and re-exports the wire types from `optimizeTypes.ts`;
  * layer: hook/lib.
  * Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useIsMutating, useMutation, useQuery, useQueryClient, type MutationKey } from '@tanstack/react-query'
 import { apiDownload, apiFetch, isApiError, type ApiError } from './api'
 import type { PolicyInputs } from './constraintPolicy'
+import { INPUT_SAVE_KEY } from './inputs'
 import type { ConstraintAnswers, ExportFormat, OptimizationInputs, PlanRun, ProjectSkill, Remedy, RunRequest } from './optimizeTypes'
 import { queryKeys } from './queries'
 import { projectPath } from './queries/paths'
@@ -31,12 +34,21 @@ const optimizationKeys = {
   planVersions: (projectId: string) => ['projects', projectId, 'plan-versions'] as const,
 }
 
-/** The confirmation sheet for the next run. */
+/*
+ * The sheet and the skill list are reloaded on every visit, even when the cached copy is younger
+ * than the 30 s default: it may predate a change saved on step 5 moments ago. Their query
+ * functions don't take the AbortSignal on purpose. With it, leaving step 5 cancelled the reload a
+ * save had started and put the cache back to the sheet from before the save; without it, the
+ * reload finishes and step 6 picks it up (the API builds the sheet either way).
+ */
+
+/** The confirmation sheet for the next run, reloaded whenever a screen showing it mounts. */
 export function useOptimizationInputs(projectId: string) {
   return useQuery({
     queryKey: optimizationKeys.inputs(projectId),
-    queryFn: ({ signal }) => apiFetch<OptimizationInputs>(projectPath(projectId, '/optimization/inputs'), { signal }),
+    queryFn: () => apiFetch<OptimizationInputs>(projectPath(projectId, '/optimization/inputs')),
     enabled: Boolean(projectId),
+    refetchOnMount: 'always',
   })
 }
 
@@ -44,9 +56,50 @@ export function useOptimizationInputs(projectId: string) {
 export function useProjectSkillList(projectId: string) {
   return useQuery({
     queryKey: optimizationKeys.skills(projectId),
-    queryFn: ({ signal }) => apiFetch<ProjectSkill[]>(projectPath(projectId, '/skills'), { signal }),
+    queryFn: () => apiFetch<ProjectSkill[]>(projectPath(projectId, '/skills')),
     enabled: Boolean(projectId),
+    refetchOnMount: 'always',
   })
+}
+
+/**
+ * First element of the mutation keys of the saves that change the sheet: the team and the skill
+ * list (`INPUT_SAVE_KEY`, `lib/inputs.ts`) and the constraint editor (`['save-constraints',
+ * projectId]`, `lib/constraints.ts`). The second element is the project id.
+ */
+const SHEET_CHANGING_SAVES: ReadonlySet<unknown> = new Set([INPUT_SAVE_KEY, 'save-constraints'])
+
+/** True for the mutation key of a save of this project's team, skill list or constraint set. */
+function changesSheet(mutationKey: MutationKey | undefined, projectId: string): boolean {
+  return mutationKey !== undefined && SHEET_CHANGING_SAVES.has(mutationKey[0]) && mutationKey[1] === projectId
+}
+
+/** The step 6 sheet and skill list, and whether the sheet on screen can be trusted as current. */
+export interface FreshInputs {
+  inputs: ReturnType<typeof useOptimizationInputs>
+  skills: ReturnType<typeof useProjectSkillList>
+  /**
+   * A sheet is on screen but may be out of date: it or the skill list is reloading, or a save
+   * that changes it is still on its way (its reload starts when the save answers).
+   */
+  checking: boolean
+  /** The sheet on screen is the latest one: loaded, not checking, and its last reload worked. */
+  fresh: boolean
+}
+
+/**
+ * The sheet and the skill list for step 6 (both reloaded on every visit), with whether they are
+ * still being checked. Approving needs a fresh sheet: the server refuses a stale `reviewedHash`
+ * with 409, but the PM must not review an old summary in the first place.
+ */
+export function useFreshInputs(projectId: string): FreshInputs {
+  const inputs = useOptimizationInputs(projectId)
+  const skills = useProjectSkillList(projectId)
+  const savesOnTheirWay = useIsMutating({ predicate: (mutation) => changesSheet(mutation.options.mutationKey, projectId) }) > 0
+  const checking = inputs.data !== undefined && (inputs.isFetching || skills.isFetching || savesOnTheirWay)
+  // After a failed reload `isSuccess` is false while the old sheet is still in `data`.
+  const fresh = inputs.isSuccess && !checking
+  return { inputs, skills, checking, fresh }
 }
 
 /* ───────────────────────────── Mutations ───────────────────────────── */

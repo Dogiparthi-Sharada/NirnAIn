@@ -5,7 +5,8 @@
  * (nothing runs until the PM approves this exact set of inputs; the server refuses with 409 when
  * they changed since), solving, infeasible (conflicts and priced remedies) and plan. The plan in
  * force says when the inputs changed after it was applied, and a plan solved from other inputs
- * can't be applied.
+ * can't be applied. The sheet is reloaded on every visit and can't be approved while it may still
+ * be out of date.
  * How it fits: Port of the mockup's views/optimize*.js; route `projects/:projectId/optimization`
  * in `App.tsx`; the states live in `screens/optimization/*` and the data in `lib/optimize.ts` and
  * `lib/queries`; layer: screen.
@@ -21,8 +22,7 @@ import {
   policyInputsOf,
   shortHash,
   solvedOnOtherInputs,
-  useOptimizationInputs,
-  useProjectSkillList,
+  useFreshInputs,
   useStartOptimization,
   type ConstraintAnswers,
   type PlanRun,
@@ -51,9 +51,9 @@ function SolverChip({ run }: { run: PlanRun }) {
 export default function OptimizationResults() {
   const { projectId = '' } = useParams()
   const latest = useLatestRun(projectId)
-  const inputs = useOptimizationInputs(projectId)
+  // Reloaded on every visit; `checking` while what the sheet shows may predate a step 5 change.
+  const { inputs, skills, checking: checkingInputs, fresh: inputsFresh } = useFreshInputs(projectId)
   const constraintsQuery = useConstraints(projectId)
-  const skills = useProjectSkillList(projectId)
   const startRun = useStartOptimization(projectId)
   // Set in the click itself: `startRun.isPending` (which disables the buttons) only arrives with
   // the next render, after a double-click's second click (NFR-005).
@@ -125,9 +125,13 @@ export default function OptimizationResults() {
         inputs={inputs}
         risks={risks}
         context={!run ? 'first-run' : sheetRequested ? 'run-again' : 'inputs-changed'}
+        checking={checkingInputs}
         starting={startRun.isPending}
         startError={startRun.error}
-        onApprove={() => start({ reviewedHash: inputs.data?.hash })}
+        onApprove={() => {
+          // Approval is for the sheet on screen: never while it may still be out of date.
+          if (inputsFresh) start({ reviewedHash: inputs.data?.hash })
+        }}
         onCancel={run ? backToResults : undefined}
       />
     )
