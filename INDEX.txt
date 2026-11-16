@@ -248,6 +248,7 @@ wbs_validate.py - WBS validation: the deterministic structure checks behind AI V
     working_days() - Working days in [start, end], counting the first `per_week` weekdays (Mon=0).
     critical_path_days() - Length of the longest chain of work packages (None when the links form a cycle).
     planning_start() - First day work can still happen: the start date, or today once it has passed (D4).
+    window_start_label() - 'Dec 1, 2026 (project start)', or why the window starts today instead (D4).
     _deadline_issue() - The critical path against the working days left between the planning start and the
     _skill_issues() - Without a team, one info line naming the skills the WBS needs (matched on step 5);
     check_structure() - Checks that need no AI: tree shape, names, durations and the deadline; owners and
@@ -273,6 +274,7 @@ deps.py - FastAPI dependency providers: one repository or job runner per request
     get_ai_runner() - Provide the in-process AI job runner; 503 when it is not available.
     get_assistant_repo() - Provide the assistant's read-only project context repository.
     get_assistant_llm() - Provide the Claude client the assistant uses.
+    get_ai_usage_connections() - Provide where AI features record their token use: one service-connection transaction per
     get_document_repo() - Provide the uploaded documents repository on the caller's connection.
 
 [backend/app/api/v1/]
@@ -354,7 +356,7 @@ planning.py - Planning endpoints: constraints and milestones, capacity, skill co
     _project() - Return the project; 404 when it is hidden.
     _writable_project() - Return the project; 404 when hidden, 403 when the caller can't edit its plan.
     get_constraints() - Return the project's constraints (defaults from the project until saved).
-    put_constraints() - Save the constraints and milestones and return them.
+    put_constraints() - Save the constraints and milestones and return them; the dates become the project's too.
     get_capacity() - Return the active employees with their average weekly hours booked on other projects.
     get_skills_coverage() - Return the skills the WBS needs and whether someone in the organization covers them.
     list_employees() - Return the organization's active employees (the resource pool); 404 for non-members.
@@ -371,7 +373,7 @@ projects.py - Project endpoints: list, create, read, update and delete projects.
     list_projects() - Return a page of the organization's projects, newest first, by status and search.
     create_project() - Create a project in the organization and return it with its `Location`.
     get_project() - Return the project; 404 when it does not exist or is not visible.
-    update_project() - Apply a partial update and return the project.
+    update_project() - Apply a partial update and return the project; new dates also become step 5's.
     delete_project() - Delete the project for good; 404 when hidden, 403 when the caller may not delete it.
 router.py - The `/api/v1` router that collects every resource router.
 team.py - Team endpoints: who is on the project, their hours, type and rate, and the skills it needs.
@@ -473,7 +475,9 @@ llm.py - Claude reading of new meeting notes (when ANTHROPIC_API_KEY is set).
     _proposal_to_change() - Turn one proposal into a change, or None when its value or target doesn't check out.
     _newcomer() - A person brought in: needs a role; the name defaults to the role, skills must be the
     class ChangeDetector - Claude when configured, else (or when the call fails) the deterministic rules.
+      ChangeDetector.model() - The Claude model id this detector calls (None without a client).
       ChangeDetector.detect() - Changes in the notes and who read them (`rules` or the Claude model id).
+      ChangeDetector.detect_with_usage() - The changes, who read them and the tokens of a successful Claude call (else None).
 parsing.py - Text helpers for reading meeting notes: sentences, money, dates, durations, hours, names.
     class Sentence - A sentence of the notes; `body` is what gets quoted, `speaker` the "Name:" prefix.
     sentences() - Split notes into sentences (and lines), dropping bullets and keeping text verbatim.
@@ -695,6 +699,7 @@ optimization.py - Optimization run schemas: the stored result, the run request a
     class RunSummary - Plain numbers the results headline and advice are built from.
     class RemedyChange - One thing the combined option changes, e.g. a later go-live or a contractor.
     class Remedy - A priced way to keep the target date, or out of an infeasible run.
+    class TriedRemedy - An option tried (or skipped) but not offered, and why, in plain English.
     class RunResult - The stored result of a run: KPIs, reassignments, schedule, summary and remedies.
     class Conflict - One conflicting hard constraint of an infeasible run, in plain English.
     class OptimizationRun - An optimization run as the API returns it.
@@ -761,6 +766,13 @@ planning.py - API models and pure rules of the planning steps: constraints, reso
     average_weekly_hours() - Average over the window (weeks without allocations count as 0), to the nearest 0.5.
     skill_coverage() - Coverage of required skills (name, max min_proficiency) by held skills (name, max level).
     cycle_path() - The cycle a new link `predecessor` → `successor` would close, as nodes from the
+project_dates.py - One start date and one deadline per project: the project's dates and step 5's stay in sync.
+    project_columns() - The project columns a step-5 save writes: only the dates it gives (empty ones are kept).
+    step5_columns() - The step-5 columns a project edit writes: only the dates it sets (cleared ones are kept).
+    merged() - The date after a save: the given one, else the one already stored.
+    inverted() - Whether the end would fall before the start (what both tables' CHECKs forbid).
+    step5_conflict() - Why saving these step-5 dates would invert the project's dates, or None when it can't.
+    project_conflict() - Why this project edit would invert step 5's saved dates, or None when it can't.
 projects.py - API models of projects: the project record, creating one and editing one.
     _check_dates() - Raise when the target end date is before the start date.
     class Project - A project as the API returns it.
@@ -814,7 +826,7 @@ ai.py - Project drafts read by Claude: prompt, output schema and the checks on i
     _date() - Return a checked ISO date field, or a missing one when the value isn't a date.
     _money() - Return a checked amount in cents, or a missing one when it isn't a positive safe amount.
     to_fields() - Claude's answer as draft fields, after the quote, date and money checks.
-    ai_draft() - One structured Claude call (blocking: run it with `asyncio.to_thread`).
+    ai_draft() - One structured Claude call and its token use (blocking: run it with `asyncio.to_thread`).
 dates.py - Date mentions for the rules reader: exact dates, quarters and months, and what they are for.
     class DateHit - A date mention in a sentence; a quarter or month spans `first`..`last`.
     _month() - Return the month number (1..12) of an English month name or abbreviation.
@@ -836,6 +848,7 @@ reader.py - Turns source text into a `ProjectDraft`: Claude when configured, els
     class DraftReader - Reads drafts with `llm` when it is configured (key set), else with the rules.
       DraftReader.from_settings() - Claude (`AI_MODEL`) when ANTHROPIC_API_KEY is set; the assistant's request timeout.
       DraftReader.read() - The draft of `text`; never raises for AI failures (logged, then the rules answer).
+      DraftReader.read_with_usage() - The draft of `text` and the tokens Claude used for it (None when the rules read it).
     get_draft_reader() - FastAPI dependency (tests override it): one reader per app, built on first use.
 rules.py - Deterministic project-draft reader (model "rules").
     lines() - Non-empty lines without their bullet / list markers.
@@ -899,6 +912,7 @@ __init__.py - Background jobs package: the in-process runners for optimization, 
 ai_jobs.py - In-process worker for AI jobs: WBS generation and validation.
     class JobFailedError - Ends a job with a user-facing message.
     class AiJobRunner - Runs queued WBS generate / validate jobs as background tasks on the API's event loop.
+      AiJobRunner._record_usage() - Record a successful Claude call of the job for its project (never raises).
       AiJobRunner.ai_configured() - Tell whether Claude is configured (else the template and rules run).
       AiJobRunner._run() - Claim a queued job and run it; failures end the job with a user-facing error.
       AiJobRunner._generate() - Generate the WBS (Claude, else the template), suggest owners and write it.
@@ -929,7 +943,7 @@ optimizer.py - In-process optimization worker (plan.md §0: no Redis yet).
     _slips() - Whether the plan finishes after its target date (`summary.slipDays`).
     class OptimizationRunner - Solves queued optimization runs in the background, then prices remedies when needed.
       OptimizationRunner._run() - Claim a queued run, solve its frozen input, add remedies if needed and store the report.
-      OptimizationRunner._with_remedies() - Add the priced remedies to an infeasible or late report (`result.remedies`).
+      OptimizationRunner._with_remedies() - Add the priced remedies to an infeasible or late report (`result.remedies`), and the
       OptimizationRunner.recover_stale() - Fail runs orphaned by a previous process (after `OPTIMIZER_STALE_AFTER_S`).
       OptimizationRunner._stop_blocking_work() - Stop the CP-SAT solves running on worker threads.
 
@@ -1116,7 +1130,8 @@ remedies.py - Priced ways to keep the target date ("Your call"), or out of an in
     change_together() - What every kind of blocker needs at once ("Change these together", R6).
     apply_remedy() - The option a PM picked ("Use this option"), applied up front to one run.
     variants() - The relaxed inputs worth re-solving for a plan that slips (`solved`) or none.
-    price_remedies() - Re-solve each relaxed variant; return the ones worth offering. CPU-bound.
+    class PricedRemedies - The options worth offering, and those tried (or skipped) but not offered, with why.
+    price_remedies() - Re-solve each relaxed variant; return the ones worth offering and why the others aren't.
 remedy_options.py - Each priced option's numbers and wording ("Your call", round-2 D2 and round 3 R6).
     class Change - One thing the combined option changes, e.g. ('deadline', 'Move go-live to Jun 11').
     class Remedy - One priced option; `cost_cents` is extra against this plan (whole plan if none).
@@ -1135,6 +1150,15 @@ remedy_options.py - Each priced option's numbers and wording ("Your call", round
     _budget_changes() - The hard budget (less its reserve) or labor cap the relaxed plan goes over.
     _specialist_changes() - Specialists the project couldn't use (not allowed, or no rate to price them).
     combined_remedy() - The option to change these together: what the relaxed plan needs, all at once.
+    class TriedRemedy - An option tried (or skipped) but not offered, with why, for the "Also tried" list.
+      TriedRemedy.to_json() - The camelCase shape stored in `result.triedRemedies`.
+    tried() - The "Also tried" entry of an option, under its plain title.
+    _sentence() - 'A, and b.' with the first letter in upper case (clauses may hold commas themselves).
+    no_plan_reason() - Why a relaxed copy found no plan: the run's blockers this option doesn't lift.
+    not_earlier_reason() - A slipping plan's option whose plan finishes no earlier than the plan itself.
+    not_used_reason() - An option whose plan doesn't use what the option adds (no contractor hours, no overtime).
+    skipped_reasons() - The options an infeasible run doesn't try, and why (`remedies.variants` skips them).
+    combined_not_needed() - "Change these together" isn't tried once a single option already gets a plan.
 report_context.py - Lookups behind the report of a solved plan (`explain.build_report`).
     planned_days() - Working days the plan gives the task (its WBS duration, or longer for a part-timer).
     class ReportContext - Lookups shared by every part of the report (tasks, resources, calendar, load).
@@ -1211,7 +1235,7 @@ access.py - Project lookups shared by the planning repositories (all under the c
 ai_jobs.py - AI jobs (WBS generate / validate): queueing and reading them, and the worker's job rows.
     class ActiveJobExistsError - The one-active-job-per-(project, kind) unique index rejected the insert.
     class ActiveJob - A queued or running AI job and whether it has been active for too long (orphaned).
-    class ClaimedJob - A job the worker has started: its project and kind.
+    class ClaimedJob - A job the worker has started: its project, kind and who asked for it.
     _job_select() - Return the select of the AI job columns the API shows.
     class AiJobRepository - User-facing queries: everything runs under the caller's RLS session.
       AiJobRepository.project_exists() - Tell whether the caller can see the project.
@@ -1222,7 +1246,7 @@ ai_jobs.py - AI jobs (WBS generate / validate): queueing and reading them, and t
       AiJobRepository.get() - Return one of the project's AI jobs, or None.
       AiJobRepository.latest() - Return the project's newest job of this kind, or None.
     class AiJobStore - Reads and writes made by the background worker on a service connection (bypasses RLS).
-      AiJobStore.claim() - Move a queued job to running; returns its project and kind (None if it is not queued).
+      AiJobStore.claim() - Move a queued job to running; returns its project, kind and requester.
       AiJobStore.finish() - Store a job's result, the model that made it and its token use, and mark it succeeded.
       AiJobStore.fail() - Mark an active job failed with the error shown to the user.
       AiJobStore.fail_stale() - Fail jobs active for over `older_than_s` (orphaned by a restart); return the count.
@@ -1230,6 +1254,12 @@ ai_jobs.py - AI jobs (WBS generate / validate): queueing and reading them, and t
       AiJobStore.team() - The project's team, or every active org employee when it has none.
       AiJobStore.generation_input() - Return what WBS generation reads: the project, its scope, the org's skills and the team.
       AiJobStore.validation_input() - The checks' input (`wbs_checks.py`, the same as `GET …/wbs/checks`) plus the
+ai_usage.py - Token use of every Claude call (table `ai_usage_events`), written on the service connection.
+    class AiUsageEvent - One successful Claude call: the feature, the model, its tokens and whom it served.
+    class AiUsageRepository - Writes usage rows on a service connection; users only read them (RLS).
+      AiUsageRepository._org_of() - The event's workspace: given, else the project's, else the user's first workspace.
+      AiUsageRepository.add() - Insert the call's row; False (nothing written) when its workspace can't be found.
+    record_ai_usage() - Record one Claude call on its own service-connection transaction; never raises.
 ai_wbs_writer.py - Writes an AI-generated WBS into a project (the WBS generate job's service connection).
     project_has_wbs() - Tell whether the project already has any WBS node.
     _node_row() - Return the insert values of one AI-made WBS node with a fresh id.
@@ -1340,7 +1370,7 @@ intake.py - AI intake, user side: intake runs and scope items under the caller's
       IntakeRepository.create_item() - Add a manual, accepted item at the end of its category.
       IntakeRepository.update_item() - Apply a partial update (text / status); None when the item is not visible.
 intake_jobs.py - AI intake, worker side: claim a run, read its notes and store the extracted scope items.
-    class ClaimedRun - A run the worker has started: its project and the notes to analyze.
+    class ClaimedRun - A run the worker has started: its project, the notes to analyze and who asked for it.
     _unedited() - Return the filter for scope items nobody has edited since the AI wrote them.
     class IntakeJobStore - Writes made by the background worker on a service connection (bypasses RLS).
       IntakeJobStore.claim() - Move a queued run to running; returns its project and the notes to analyze.
@@ -1448,6 +1478,7 @@ projects.py - Repository of projects: paging, reading, creating, updating, delet
       ProjectRepository.get() - Return the project, or None when missing or not visible.
       ProjectRepository.create() - Insert a project and return its new id.
       ProjectRepository.update() - Update the given columns; archiving stamps `archived_at`, other statuses clear it.
+      ProjectRepository.step5_dates() - Return step 5's saved (start date, must-finish-by), or None before step 5 is saved.
       ProjectRepository.delete() - Delete the project; False when RLS left nothing to delete.
       ProjectRepository.dashboard() - Return the KPI cards over the organization's active (non-archived) projects.
 tables.py - SQLAlchemy Core mappings of the existing Supabase tables, views and enum types.
@@ -1550,7 +1581,7 @@ test_runner.py - Tests of the AI job runner: WBS generation and validation with 
       FakeLLM.parse() - Record the prompt and return the fixed output, or raise the fixed error.
     gen_input() - Return a generation input for project CRM with the given scope and Ana (Salesforce 4).
     deliverable() - Return a deliverable scope item with the given text and status.
-    _run() - Run one job through a fresh runner and wait for it to finish.
+    _run() - Run one job through a fresh runner (recording token use in `usage`) and wait for it.
     test_generate_without_a_key_uses_the_template() - Without a key, generation writes the template plan (design, build, test).
     test_generate_without_deliverables_fails_with_guidance() - Without deliverable scope the job fails with guidance and writes nothing.
     test_generate_with_claude_writes_its_plan_and_suggests_owners() - Claude's plan is written with its scope links; the skilled member is suggested as owner.
@@ -1576,6 +1607,10 @@ test_api.py - Tests of the step 7 change endpoints on the in-memory change repos
     test_change_flow_notes_to_approved_plan() - Notes become questions; answers become overrides; the solved re-plan becomes Plan v2.
     test_edits_reject_and_permissions() - Edits that change nothing or name unknown tasks are 422; progress needs no questions.
     test_outdated_replan_is_not_approved() - R1: a re-plan solved on inputs edited since, or on another baseline, never goes into
+    class _ClaudeReader - A configured Claude stand-in: finds no change, reports 120 input and 30 output tokens.
+      _ClaudeReader.configured() - Report a configured key, so the detector asks Claude.
+      _ClaudeReader.parse() - Return no changes with the call's token use.
+    test_a_claude_reading_records_its_tokens() - Reading notes with Claude records one usage row for the project, its workspace and the
 test_compare.py - Tests of the plan comparison shown before a change is approved.
     test_comparison_shows_what_moved_and_why() - Done work leaves the plan; changed effort and its successors shift with their reasons.
     test_comparison_uses_the_days_each_plan_schedules() - QA pack CHANGE-009: ETL moves one day (Jan 11 → Jan 12), not a whole week.
@@ -1585,6 +1620,7 @@ test_llm.py - Tests of the Claude change detector and the checks on its output.
       _FakeLLM.configured() - Report a configured key, so the detector asks Claude.
       _FakeLLM.parse() - Record the prompt and return the fixed changes, or raise the fixed error.
     test_claude_may_report_a_newcomer_and_hours() - A newcomer keeps only the project's skills; team members and roleless newcomers drop.
+    test_detector_returns_the_tokens_of_a_claude_call() - A Claude read returns its tokens (for the usage log); the rules use none.
     test_detector_falls_back_to_rules() - A failing or missing Claude falls back to the rules reader.
 test_pack_notes.py - Tests of the rules change detection against the QA pack's meetings M02 and M03.
     pack_context() - PRJ-QA-1042 with Plan v1 in force (before M02) or Plan v2 (M02 applied).
@@ -1719,6 +1755,8 @@ conftest.py - Fixtures of the planning endpoint tests.
     plan_client() - Provide a test client whose planning repository is the fake.
 test_constraints.py - Tests of the project constraints endpoint and the answers to the plan-changing questions.
     test_constraints_defaults_and_put() - Constraints default from the project; PUT validates and saves them; viewers only read.
+    test_put_constraints_refuses_dates_crossing_the_projects() - Step-5 dates become the project's; one left empty keeps the project's, so a new start after
+    test_repo_save_constraints_syncs_the_project_dates() - Saving step 5 writes its start and must-finish-by on the project in the same transaction;
     test_repo_constraints_default_from_project() - Without a saved set the repository returns the project's budget, dates and defaults.
     test_constraint_answers() - Saving the answers sets the deadline mode and whether contractors are allowed.
 test_dependencies.py - Tests of the dependency endpoints and the cycle check.
@@ -1744,6 +1782,11 @@ ai_jobs.py - Fake AI job repository for the AI job endpoint tests.
       FakeJobs.create() - Queue a job, or raise `ActiveJobExistsError` when the test simulates a lost race.
       FakeJobs.get() - Return a job by id.
       FakeJobs.latest() - Return the newest visible job of a kind for the project.
+ai_usage.py - A fake place to record AI token use: service-connection transactions that keep what was written.
+    class UsageLog - Factory of fake service transactions; `rows` are the usage rows written so far.
+      UsageLog._transaction() - Yield a recording connection; keep its statements once the block ends.
+      UsageLog.rows() - The values of every usage row inserted, in order.
+      UsageLog.summary() - (feature, model, input tokens, output tokens) of every row, for short assertions.
 changes.py - Shared step 7 test data and the in-memory change repository.
     project_context() - Plan v1 in force: $375,000 budget, Sep 30, 2025 deadline, SAP → ETL dependency.
     qa_context() - QA's project: Leo, Ana and Sam; Sam owns the compliance review; Plan v2 in force.
@@ -1773,6 +1816,7 @@ connections.py - Fake database connections that record SQL and answer queries wi
       Result.all() - Return every row.
       Result.first() - Return the first row, or None.
       Result.one() - Return the only row (the test fails unless there is exactly one).
+      Result.scalars() - Return the first column of every row (no rows: an empty list).
     class Conn - Connection that records compiled SQL and parameters and replays scripted results.
       Conn.execute() - Record the statement as Postgres SQL with its parameters and return the next result.
     class UniqueViolationError - Driver error carrying Postgres's unique-violation SQLSTATE.
@@ -1890,6 +1934,7 @@ store.py - In-memory model of the core tables and the RLS rules the API relies o
       FakeProjects.get() - Return a visible project, or None.
       FakeProjects.create() - Insert a draft project with the next code; viewers and outsiders get an RLS error.
       FakeProjects.update() - Apply changes when the acting user may write; else False, as RLS filters it.
+      FakeProjects.step5_dates() - Return the step-5 dates the test saved for the project, or None.
       FakeProjects.delete() - Delete when the acting user is owner, admin or the creator; False otherwise.
       FakeProjects.dashboard() - Return the KPI cards over the organization's non-archived projects.
     class FakeNotifications - Stand-in for `NotificationRepository`: users see only their own notifications.
@@ -1966,6 +2011,8 @@ test_ai_generate.py - Tests of the pure WBS generation logic.
     test_suggest_owners_most_coverage_then_load_then_name() - Owners cover the most skills, then carry the least load, then sort by name.
     test_prompt_wraps_project_text_as_escaped_data() - Project text goes into the prompt escaped inside one data block, with scope references.
     test_one_line_and_as_data() - `one_line` collapses and shortens text; `as_data` escapes markup.
+test_ai_usage.py - Tests of the AI usage repository's edge cases: nothing to attribute the call to, no database.
+    test_usage_without_a_workspace_or_a_database_writes_nothing() - An unknown project or no owner at all writes no row; without a database nothing runs.
 test_ai_validate.py - Tests of the deterministic WBS checks and of the Claude review's normalization.
     tree() - Root + `deliverables` level-2 nodes; packages all go under the first deliverable.
     run() - The job result of the rules alone, without the `source` tags (all 'rules' here).
@@ -1976,6 +2023,7 @@ test_ai_validate.py - Tests of the deterministic WBS checks and of the Claude re
     test_owner_outside_the_project_team_is_only_an_info_line() - An owner who isn't on the project team is only an info line.
     test_critical_path_longer_than_the_window_warns() - A critical path longer than the working days to the deadline is a warning.
     test_critical_path_window_starts_today_once_the_start_has_passed() - The window starts today once the start has passed; a passed deadline is said so.
+    test_schedule_warning_names_the_window_start_and_why() - The PO's case: a passed step-5 start says the window starts today and why; a future
     test_critical_path_dependency_types_and_cycles() - SS, FF and lags lengthen the path as their type says; a cycle has no critical path.
     test_working_days() - Working days count Monday to Friday (or six days) in the window; a reversed one has none.
     test_skills_without_a_team_are_one_info_line() - Without a team the needed skills are one info line, shortened when there are many.
@@ -2021,6 +2069,7 @@ test_assistant.py - Tests of the planning assistant: the endpoint, the prompt an
     _ask() - Post a chat message on the WBS page as a new user; extra keywords change the body.
     test_answers_with_project_context() - The reply comes with the project's WBS and the current page in the system prompt.
     test_without_project_and_unknown_project() - Without a project the prompt says so; an unknown project is 404.
+    test_each_answer_records_its_tokens() - Every answer records one usage row (project and caller; the workspace is looked up), and
     test_not_configured_is_503() - Without a configured model the assistant is 503 and calls nothing.
     test_default_app_without_key_is_503() - The app without an AI key answers 503 "not configured".
     test_timeout_and_errors_are_503_without_leaking() - Timeouts and model errors are 503 with a fixed message, never the error text.
@@ -2080,6 +2129,7 @@ test_drafts.py - Tests of project drafts: text extraction, the rules reader, AI 
     test_extract_from_pasted_text() - Pasted notes come back as a rules draft; blank text is 422 and outsiders 404.
     test_extract_from_files() - Caption files are read; audio, images and video are 415; bad uploads are 422 or 415.
     test_extract_uses_ai_and_falls_back_to_rules() - Claude's draft is used when it answers; on failure the rules reader takes over.
+    test_a_claude_draft_records_its_tokens() - A Claude read records one usage row for the organization and caller; the rules record
     test_extract_refuses_files_over_the_limit() - Files over the upload limit are 413 with the size in the message.
 test_errors.py - Tests of mapping database errors to problem+json responses.
     db_error() - Return a SQLAlchemy error wrapping an asyncpg error with the given SQLSTATE.
@@ -2157,7 +2207,7 @@ test_optimization_explain.py - Tests of the run report: KPIs, reassignments, sch
     test_infeasible_report_has_iis_and_no_result() - An infeasible run reports its conflicts and no plan.
     _outcome() - Return a timed-out solve outcome for the input, changed by `fields`.
     test_timeout_and_time_limited_feasible() - A timeout reports its message; a time-limited plan reports its gap to optimal.
-    test_conflict_dataclass_is_plain() - Conflicts serialize as plain name and explanation.
+    test_conflicts_are_stored_as_plain_name_and_explanation() - A conflict's kind and brief are for the remedies only: the run stores name and
 test_optimization_inputs.py - Tests of the optimizer's confirmation sheet: facts, rows, sources and blockers.
     _ready_facts() - Return the facts of a project ready to run, changed by `changes`.
     test_ready_sheet_rows_and_sources() - A ready project's sheet lists every input with its value, source and origin.
@@ -2208,6 +2258,8 @@ test_optimization_remedies.py - Tests of the remedies for infeasible plans and o
     test_tight_hard_deadline_offers_moving_go_live() - A tight hard deadline offers moving go-live by the days needed.
     test_hard_milestone_is_relaxed_with_the_deadline() - A hard milestone is relaxed together with the deadline.
     test_a_budget_no_single_option_fixes_is_offered_combined() - A budget no single remedy fixes is offered as a combined change.
+    test_options_tried_but_not_offered_name_the_blockers_they_leave() - The PO's case: the chain runs past the hard deadline and the cheapest staffing is over the
+    test_tried_reasons_cap_the_blockers_and_say_when_time_ran_out() - At most three blockers are named, then a count; a variant out of time says so.
     test_run_with_remedy_applies_it() - Each remedy relaxes the input it names; no remedy keeps the input.
     test_overrides_change_only_this_run() - Overrides change budget, dates, durations (effort scales) and hours of this run only.
     test_overrides_set_the_deadline_and_budget_modes() - Overrides may set the deadline and budget modes; otherwise they are kept.
@@ -2280,6 +2332,7 @@ test_projects_api.py - Tests of the project endpoints: create, list, read, updat
     test_list_projects_pagination_and_filters() - Projects page newest first, hide archived, filter by status and search by name.
     test_list_projects_foreign_org_is_404() - Listing another organization's projects is 404.
     test_patch_project() - Status, step, progress and sponsor change; dates are checked with stored ones.
+    test_patch_project_dates_respect_step_5() - New project dates are mirrored on step 5, so one that would cross step 5's other saved
     test_viewer_cannot_patch_or_delete() - Viewers read but can't change or delete a project.
     test_delete_project() - A deleted project is gone; deleting again is 404.
     test_project_invisible_to_outsider() - Outsiders get 404; a malformed id is 422.
@@ -2290,6 +2343,8 @@ test_repositories.py - Tests of the project, organization, profile and notificat
     test_project_list_status_filter() - A status filter lists exactly those statuses; a short page has no next cursor.
     test_project_create_generates_id_without_returning() - A project gets its id in Python, so the insert needs no RETURNING under RLS.
     test_project_update_archives() - Archiving stamps the time once; other statuses clear it; other edits leave it.
+    test_project_update_mirrors_dates_on_step_5() - New dates also update the constraint set (start, must-finish-by) in the same transaction;
+    test_project_step5_dates() - Step 5's saved dates are read from the constraint set; None before it is saved.
     test_project_get_and_delete() - A project is read by id and deleted; a missing one is None.
     test_dashboard_sql() - The dashboard counts with filters over active projects in one query.
     test_org_repository() - Visibility, membership, members (with profiles) and the user's organizations are read.
@@ -2642,7 +2697,7 @@ WbsEditCells.tsx - The inline editor of one WBS row: Name, Duration, Owner, skil
     save() - Checks the typed values, focuses the first problem, else saves the changes (skills only when changed).
     editKeys() - Enter saves and Escape cancels; the keys don't reach the table's own shortcuts.
 WbsEmptyState.tsx - What the WBS Builder shows in place of the table while a project has no WBS.
-    WbsEmptyState() - One status line for the empty table; `onRetry` starts the AI generation again.
+    WbsEmptyState() - One status line for the empty table. `needsScope`: no scope item is accepted, so nothing is
 WbsSkillPicks.tsx - Work-package skills on the WBS Builder: the chips a row shows and the picker of its edit row.
     WbsSkillChips() - A package's skills as chips: red = nobody on the team has it, green = covered, grey = off the list.
     WbsSkillPicks() - The edit row's skill picker, with its loading, error, empty and not-supported states.
@@ -2807,6 +2862,8 @@ inputs.ts - Planning inputs for steps 3–5: the team, the project's skill list,
     perHourText() - "$95/h", "$175.50/h".
     costRateText() - Where a person's cost comes from, as the team table shows it: "Employee · company rate",
     skillGaps() - Required skills nobody on the team has.
+    INPUT_SAVE_KEY() - First element of the mutation key of every team and skill-list save (the second is the project
+    inputSaveKey() - The mutation key of this project's team and skill-list saves.
     inputsChanged() - Solver inputs changed: the confirmation sheet on step 6 and coverage views must refresh.
     usePlanVersions() - Applied plan versions, oldest first. An older server without the endpoint means none.
     useConstraintInputs() - Fetches the constraint set including the step 5 answers.
@@ -2820,8 +2877,11 @@ inputs.ts - Planning inputs for steps 3–5: the team, the project's skill list,
     useRemoveSkill() - Removes a skill from the project's list.
 optimize.ts - Step 6, Optimization Results: queries, mutations and derived values beyond the latest run.
     DEFAULT_SPECIALIST_RATE_CENTS() - Rate the backend uses for an outside specialist when Constraints has none ($175/h).
-    useOptimizationInputs() - The confirmation sheet for the next run.
+    useOptimizationInputs() - The confirmation sheet for the next run, reloaded whenever a screen showing it mounts.
     useProjectSkillList() - The project's skill list with holders, used to find required skills nobody on the team has.
+    SHEET_CHANGING_SAVES() - First element of the mutation keys of the saves that change the sheet: the team and the skill
+    changesSheet() - True for the mutation key of a save of this project's team, skill list or constraint set.
+    useFreshInputs() - The sheet and the skill list for step 6 (both reloaded on every visit), with whether they are
     useStartOptimization() - Starts a run (optionally with a remedy for an infeasible plan) and shows it straight away.
     useRefreshAfterApply() - After a plan is applied: plan versions (step 7, dashboard) and the sheet are out of date.
     useRefreshInputs() - After the constraint set is saved the sheet's specialist row changes ("estimated" goes away).
@@ -3208,7 +3268,8 @@ KeepDateCard.tsx - "Ways to keep the date": the priced, re-solved options when a
     changeCount() - "1 change" / "3 changes": how many inputs an option changes.
     RemedyChanges() - The changes of the combined option, one per line (nothing for a single option).
     optionCost() - What an option costs against the plan. Overtime is paid (1.5x for employees), so it always
-    KeepDateCard() - The card; `onUse` re-runs the solver with the picked remedy.
+    AlsoTried() - "Also tried": each option the backend tried (or skipped) but doesn't offer, with why, in muted
+    KeepDateCard() - The card; `onUse` re-runs the solver with the picked remedy; `tried` lists the options not offered.
 PlanDetails.tsx - The plan's detail tabs on Optimization Results: task reassignments, schedule changes and resource utilization.
     UtilizationBar() - Utilization bar: wine up to 80%, amber above 80%, red at 100% or more (as the mockup's `ubar`).
     EmptyTab() - The empty state of a tab.
@@ -3265,7 +3326,8 @@ items.ts - Scope Review's own list of scope items, removed ones included.
 
 [src/screens/wbs/]
 useWbsAiJobs.ts - The WBS Builder's AI jobs (generate and validate) and when they start by themselves.
-    useWbsAiJobs() - The WBS Builder's two AI jobs and when they start by themselves: one generation when the project
+    failedBeforeScope() - A failed generation that predates the accepted scope: an item was accepted (or added accepted)
+    useWbsAiJobs() - The WBS Builder's two AI jobs and when they start by themselves: one generation per visit when
 
 [src/]
 vite-env.d.ts - Types of the build-time `VITE_*` variables the app reads.
@@ -3389,6 +3451,53 @@ suite_settings.py - Command line and environment settings of the API end-to-end 
     build_parser() - The suite's command line; every flag falls back to a NIRNAIN_* environment variable.
     parse_settings() - Parses flags and environment; exits with a usage error when a required value is missing.
 
+[tests/e2e/browser/]
+browser_support.py - Shared setup of the browser regression tests: settings, accounts, test projects and the browser.
+    class BrowserSettings - Where the web app, the API and Auth run, and which account signs in.
+    class Account - A signed-in account: its credentials, an API client with its token and its workspace.
+    class CheckLog - PASS/FAIL lines of one test run; the exit code is 1 when any check failed.
+      CheckLog.check() - Records and prints one check; returns whether it passed.
+      CheckLog.note() - Prints an observation that is not a verdict.
+      CheckLog.exit_code() - 0 when every check passed, else 1, after printing the totals.
+    load_settings() - Reads the NIRNAIN_* environment variables; the anon key is the only required one.
+    sign_in_account() - Signs in the configured account, or signs up a throwaway one with its own workspace.
+    create_project() - Creates a planning project that starts next week; returns its id.
+    run_rules_intake() - Runs the intake on the API suite's meeting notes (rules, no key); returns the item count.
+    scope_items() - The project's scope items as the API lists them.
+    accept_all_scope() - Accepts every scope item, as "Accept all" on Scope Review does; returns how many.
+    latest_ai_job() - The newest AI job of a kind, or None when the project has none (404).
+    start_wbs_generation() - Starts WBS generation (a template without a key) and waits for the job to finish.
+    wbs_nodes() - The project's WBS as a flat list of nodes.
+    confirm_estimates() - Confirms every AI estimate, as "Confirm all estimates" on step 4 does.
+    add_required_skills() - Adds Required skills to the project's list (step 5).
+    answer_questions() - Answers the step 5 questions (the deadline can move, no outside specialists).
+    browser_page() - A Chromium page for the web app that can reach no API but the configured one.
+    only_api() - Lets API calls to the configured API through and aborts any other (e.g. a paid-key API).
+    sign_in_page() - Signs in through the login screen and waits for the dashboard.
+    open_step() - Clicks a planning step in the sidebar, as a user moves between steps (no page reload).
+    save_screenshot() - Saves a full-page screenshot in the report folder; returns its path.
+test_stale_step6_inputs.py - Browser regression test: step 6 never shows an out-of-date inputs sheet as current (C1).
+    class Member - A person added through the step 5 member form.
+    class Sample - What the sheet showed at one moment.
+    build_project() - A project ready for step 6 but for its team: WBS confirmed, six Required skills.
+    server_skills_row() - The "Required skills" value of the sheet as the API builds it right now.
+    slow_down_api() - Delays the sheet and every team save the way the hosted API is slow.
+    slow_sheet() - Holds the sheet request before the API sees it (a busy server builds it late).
+    slow_save() - Lets the API save a new team member at once but delivers its answer late.
+    add_member() - Adds a person with the step 5 form, waiting for the save only when asked.
+    read_sheet() - What the confirmation sheet shows right now.
+    watch_step6() - Samples the sheet until it shows `expected` as current; returns all samples and the last.
+    judge_step6() - Logs the verdicts of one path from its samples.
+    run() - Builds the project, then drives both paths in one browser session.
+    main() - Runs the test; exit code 0 = passed, 1 = a check failed, 2 = setup failed.
+test_wbs_empty_state.py - Browser regression test: the WBS Builder never generates without accepted scope (C2).
+    open_wbs() - Opens step 4 of a project and waits for the screen.
+    try_again_button() - The empty table's Try again button (shown after a failed generation).
+    no_accepted_scope() - (a) Intake done, nothing accepted: an empty state that sends the PM to Scope Review.
+    failed_before_scope() - (b) Generation failed before the intake; scope accepted since: the WBS appears by itself.
+    other_failure() - (c) Generation failed with the scope already accepted: Try again, no automatic retry.
+    main() - Runs the three scenarios; exit code 0 = passed, 1 = a check failed, 2 = setup failed.
+
 [supabase/migrations/] - the database schema, applied in this order (never edited once merged)
     20260924000100_foundation.sql
     20260924000200_projects.sql
@@ -3407,3 +3516,4 @@ suite_settings.py - Command line and environment settings of the API end-to-end 
     20261113000600_apply_allocation_hours.sql
     20261114000100_cross_project_links.sql
     20261114000200_source_documents_truncated.sql
+    20261116000100_ai_usage_events.sql
