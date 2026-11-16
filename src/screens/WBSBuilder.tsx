@@ -6,6 +6,7 @@
  * opens `#wbs-banner` listing them, each linking to its Confirm button, plus "Confirm all". Each
  * work package names the skills it needs (D6); a server without that field hides the picker with a
  * reason. The WBS stays editable after a plan is applied; changes take effect on the next run.
+ * Without accepted scope nothing is generated: the empty table sends the PM to Scope Review.
  * How it fits: Port of the mockup's views/wbs.js; route `projects/:projectId/wbs` in `App.tsx`;
  * uses the WBS query hooks, `lib/wbs.ts`, the AI jobs in `wbs/useWbsAiJobs.ts` and the
  * `components/Wbs*` parts; layer: screen.
@@ -63,9 +64,10 @@ export default function WBSBuilder() {
   const packages = nodes.filter((node) => node.level === 3)
   const blockers = wbsBlockers(nodes)
 
-  const { generateJob, validateJob, startGenerate, startValidate, generateStatus, generating, validating } = useWbsAiJobs(
+  const { generateJob, validateJob, startGenerate, startValidate, generateStatus, generating, validating, needsScope } = useWbsAiJobs(
     projectId,
     wbsQuery,
+    scope,
     nodes.length,
   )
   const actionError =
@@ -266,7 +268,9 @@ export default function WBSBuilder() {
               loading={wbsQuery.isPending}
               loadError={wbsQuery.isError ? errorMessage(wbsQuery.error) : null}
               generating={generating}
+              needsScope={needsScope}
               generateError={generateStatus === 'failed' ? (generateJob.data?.error ?? 'AI generation failed.') : null}
+              onOpenScope={() => goToStep('scope')}
               onRetry={() => startGenerate.mutate()}
             />
           )}
