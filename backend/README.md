@@ -189,10 +189,11 @@ speaker turn), each as `<document title="…">` inside one `<project_notes>` blo
 characters; longer notes are cut longest-document-first, with a note saying so).
 The worker (`app/jobs/intake.py`) writes results on a service connection:
 
-- With `ANTHROPIC_API_KEY`, Claude (`INTAKE_MODEL`) returns each scope item with
-  its evidence. A quote is kept only if it really occurs in the notes (ignoring
-  case, whitespace and typographic quotes); otherwise the item becomes
-  `inferred` with "No exact quote found in the notes." (`app/ai/evidence.py`).
+- With `ANTHROPIC_API_KEY`, Claude (`INTAKE_MODEL`, by default the same
+  `claude-sonnet-5-5` as `AI_MODEL`) returns each scope item with its evidence.
+  A quote is kept only if it really occurs in the notes (ignoring case,
+  whitespace and typographic quotes); otherwise the item becomes `inferred` with
+  "No exact quote found in the notes." (`app/ai/evidence.py`).
 - Without a key, or when the Claude call fails (API error, refusal, invalid
   answer; logged), a rule-based extractor runs (`app/ai/intake_rules.py`, run
   `model = "rules"`, no tokens). Every item is `stated` and quotes the notes
@@ -210,6 +211,13 @@ The worker (`app/jobs/intake.py`) writes results on a service connection:
 `ScopeItem` carries `sourceQuote`, `evidence` (`stated` | `inferred` | `flagged` |
 null for items added by hand), `evidenceNote`, `suggestedText` (flagged items: the
 version the quote supports) and `sourceDocumentId` (the upload the quote is from).
+
+Token use: every successful Claude call (project drafts, intake, WBS generate and
+validate, step-7 change detection, the assistant) writes one `ai_usage_events` row
+(feature, model, input and output tokens, workspace, project, user) on its own
+service-connection transaction (`app/repositories/ai_usage.py`). Workspace members
+can read the rows; only the backend writes them. A failure to record is logged and
+never fails the request or job. Intake runs and AI jobs keep their own token columns.
 
 ## Deploy (Render)
 

@@ -3,7 +3,9 @@
 Purpose: Catch structural problems for free on every WBS change; only the Claude review
 (wbs_review.py) costs tokens. Rules the checks apply:
 * Deadline (round-2 D4): planning starts today, so once the start date has passed (or isn't
-  set) only the working days from today to the deadline count, as in the optimizer.
+  set) only the working days from today to the deadline count, as in the optimizer. The warning
+  says which date the window starts from and why ("Nov 15, 2026 (today; the start date Nov 1,
+  2026 has passed)" or "Dec 1, 2026 (project start)"), with dates written as the UI shows them.
 * Step 4 doesn't warn about step 5: owners are optional (the optimizer assigns people), so a
   missing owner is no issue; once there is a team, an owner who isn't on it is an info line.
 * Skills: without a team one info line names the skills the WBS needs; with a team each skill
@@ -25,6 +27,7 @@ from typing import Any, Literal
 
 from app.ai.wbs_generate import ScopeEntry
 from app.domain.common import DependencyType
+from app.optimization import formatting as fmt
 
 IssueType = Literal["missing", "duplicate", "warning", "info"]
 IssueSource = Literal["rules", "ai"]
@@ -178,26 +181,37 @@ def planning_start(checks_input: ValidationInput) -> date | None:
     return max(days, default=None)
 
 
+def window_start_label(checks_input: ValidationInput, first: date) -> str:
+    """'Dec 1, 2026 (project start)', or why the window starts today instead (D4)."""
+    start = checks_input.start_date
+    if start is not None and start >= first:
+        return f"{fmt.day(first)} (project start)"
+    if start is None:
+        return f"{fmt.day(first)} (today; no start date is set)"
+    return f"{fmt.day(first)} (today; the start date {fmt.day(start)} has passed)"
+
+
 def _deadline_issue(checks_input: ValidationInput, packages: Sequence[NodeInfo]) -> Issue | None:
     """The critical path against the working days left between the planning start and the
     deadline (None when it fits, or when the dates or the packages aren't there yet)."""
     first = planning_start(checks_input)
-    if first is None or checks_input.deadline is None or not packages:
+    deadline = checks_input.deadline
+    if first is None or deadline is None or not packages:
         return None
     length = critical_path_days(packages, checks_input.dependencies)
-    window = working_days(first, checks_input.deadline, checks_input.working_days_per_week)
+    window = working_days(first, deadline, checks_input.working_days_per_week)
     if length is None or length <= window:
         return None
-    if checks_input.deadline < first:
+    if deadline < first:
         return Issue(
             "warning",
             f"The critical path takes {length} working days, but the deadline "
-            f"{checks_input.deadline} has already passed.",
+            f"{fmt.day(deadline)} has already passed.",
         )
     return Issue(
         "warning",
         f"The critical path takes {length} working days, but only {window} are "
-        f"available between {first} and {checks_input.deadline}.",
+        f"available between {window_start_label(checks_input, first)} and {fmt.day(deadline)}.",
     )
 
 

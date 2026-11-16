@@ -26,6 +26,7 @@ from app.domain.changes import (
     PlanOverrides,
 )
 from app.domain.common import ConstraintMode, SolverStatus
+from app.domain.project_dates import project_columns
 from app.repositories.access import ProjectRef
 from app.repositories.change_team import ChangeTeamWrites
 from app.repositories.tables import (
@@ -205,7 +206,10 @@ class ChangeRepository(ChangeTeamWrites):
         await self.write_team(project, overrides)
 
     async def _write_limits(self, project: ProjectRef, overrides: PlanOverrides) -> None:
-        """Upsert the new budget / deadline (and stated policies) and mirror them on the project."""
+        """Upsert the new budget / deadline (and stated policies) and mirror them on the project.
+
+        A new constraint set starts from the project's start date, so both keep one start date.
+        """
         changes: dict[str, Any] = {"updated_at": sa.func.now()}
         if overrides.budget_total_cents is not None:
             changes["budget_total_cents"] = overrides.budget_total_cents
@@ -236,12 +240,11 @@ class ChangeRepository(ChangeTeamWrites):
                 index_elements=[constraint_sets.c.project_id], set_=changes
             )
         )
-        # Mirror on the project row so lists and the dashboard show the approved values.
-        mirror: dict[str, Any] = {}
+        # Mirror on the project row so lists, the dashboard and the WBS checks show the approved
+        # values: the deadline maps to the target end date exactly as a step-5 save does.
+        mirror: dict[str, Any] = project_columns(None, overrides.must_finish_by)
         if overrides.budget_total_cents is not None:
             mirror["budget_cents"] = overrides.budget_total_cents
-        if overrides.must_finish_by is not None:
-            mirror["target_end_date"] = overrides.must_finish_by
         await self._connection.execute(
             sa.update(projects).where(projects.c.id == project.id).values(**mirror)
         )

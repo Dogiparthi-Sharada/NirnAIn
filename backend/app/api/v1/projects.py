@@ -19,6 +19,7 @@ from app.core.errors import ForbiddenError, NotFoundError, UnprocessableError
 from app.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, Cursor
 from app.core.security import CurrentPrincipal
 from app.domain.common import Page, ProjectStatus
+from app.domain.project_dates import project_conflict
 from app.domain.projects import Project, ProjectCreate, ProjectUpdate
 
 router = APIRouter(tags=["projects"])
@@ -117,10 +118,10 @@ async def get_project(project_id: ProjectId, projects: Projects) -> Project:
 async def update_project(
     project_id: ProjectId, body: ProjectUpdate, orgs: Orgs, projects: Projects
 ) -> Project:
-    """Apply a partial update and return the project.
+    """Apply a partial update and return the project; new dates also become step 5's.
 
-    Returns 422 for a non-member PM or an end date before the start, 403 when the caller can read
-    but not write the project.
+    Returns 422 for a non-member PM or an end date before the start (the project's, or step 5's
+    once the edit is mirrored there), 403 when the caller can read but not write the project.
     """
     existing = await projects.get(project_id)
     if existing is None:
@@ -133,6 +134,11 @@ async def update_project(
     end = changes.get("target_end_date", existing.target_end_date)
     if start is not None and end is not None and end < start:
         raise UnprocessableError("targetEndDate must be on or after startDate")
+    if changes.keys() & {"start_date", "target_end_date"}:
+        saved = await projects.step5_dates(project_id)
+        conflict = project_conflict(changes, saved) if saved is not None else None
+        if conflict is not None:
+            raise UnprocessableError(conflict)
 
     if not await projects.update(project_id, changes):
         # Readable but the UPDATE policy filtered it out: caller can't write.

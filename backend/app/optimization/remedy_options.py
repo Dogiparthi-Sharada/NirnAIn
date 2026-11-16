@@ -1,15 +1,18 @@
 """Each priced option's numbers and wording ("Your call", round-2 D2 and round 3 R6).
 
 Purpose: Say what each relaxed plan takes (contractor hours and rate, overtime, the new go-live, the
-extra cost) and offer an option only when its plan uses what the option adds.
+extra cost) and offer an option only when its plan uses what the option adds. An option tried (or
+skipped) but not offered gets a plain-English reason for the "Also tried" list: the run's own
+blockers it leaves in place, that it finishes no earlier, or why it wasn't needed.
 How it fits: `remedies.price_remedies` re-solves relaxed copies and calls these to build the
-`Remedy` entries; `combined_remedy` lists the changes "Change these together" needs;
-layer: optimization.
+`Remedy` and `TriedRemedy` entries; `combined_remedy` lists the changes "Change these together"
+needs; blockers come from conflicts.py; layer: optimization.
 Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Literal
@@ -19,7 +22,7 @@ from app.optimization.calendar import workday_date, workdays_late
 from app.optimization.costing import overtime_hours, plan_cost, spend_limit_cents
 from app.optimization.load import allocation_blocks
 from app.optimization.model import PlanningInput, target_of
-from app.optimization.outcome import Resource, SolveOutcome
+from app.optimization.outcome import Conflict, Resource, SolveOutcome
 from app.optimization.resources import CONTRACTOR_ID
 
 DEFAULT_SPECIALIST_RATE_CENTS = 17_500  # $175/h until the PM confirms a rate
@@ -314,3 +317,116 @@ DESCRIBE = {
     "move_deadline": _deadline_remedy,
     "combined": combined_remedy,
 }
+
+
+# --------------------------------------------------------------------------- tried, not offered
+ORDER: tuple[RemedyId, ...] = ("specialist", "overtime", "move_deadline", "combined")
+TRIED_TITLES: dict[RemedyId, str] = {
+    "specialist": "Bring in a contractor",
+    "overtime": "Overtime up to 25% over people's hours",
+    "move_deadline": "Move go-live",
+    "combined": "Change these together",
+}
+# The blocker kinds (conflicts.py) each option lifts: contractors cover missing skills and add
+# hours; overtime adds hours; a later date lifts the date limits and the hours they squeeze.
+RELAXES: dict[RemedyId, frozenset[str]] = {
+    "specialist": frozenset({"skill", "capacity"}),
+    "overtime": frozenset({"capacity"}),
+    "move_deadline": frozenset({"deadline", "milestone", "capacity"}),
+    "combined": frozenset({"deadline", "milestone", "capacity", "budget", "labor", "skill"}),
+}
+# A dependency only blocks together with a date it pushes past, which is named instead.
+UNNAMED_KINDS = frozenset({"dependency"})
+MAX_NAMED_BLOCKERS = 3
+NOT_USED: dict[RemedyId, str] = {
+    "specialist": "Not needed: the best plan with it uses no contractor hours.",
+    "overtime": "Not needed: the best plan with it needs no overtime.",
+    "move_deadline": "Not needed: the best plan with it keeps every date.",
+    "combined": "Not needed: the best plan with it changes nothing.",
+}
+NO_PLAN = "Not enough on its own: no plan meets every hard limit with only this change."
+OUT_OF_TIME = "Not priced: the solver ran out of time before it found a plan with this change."
+
+
+@dataclass(frozen=True, slots=True)
+class TriedRemedy:
+    """An option tried (or skipped) but not offered, with why, for the "Also tried" list."""
+
+    id: RemedyId
+    title: str
+    reason: str
+
+    def to_json(self) -> dict[str, str]:
+        """The camelCase shape stored in `result.triedRemedies`."""
+        return {"id": self.id, "title": self.title, "reason": self.reason}
+
+
+def tried(remedy_id: RemedyId, reason: str) -> TriedRemedy:
+    """The "Also tried" entry of an option, under its plain title."""
+    return TriedRemedy(remedy_id, TRIED_TITLES[remedy_id], reason)
+
+
+def _sentence(clauses: Sequence[str]) -> str:
+    """'A, and b.' with the first letter in upper case (clauses may hold commas themselves)."""
+    joined = clauses[0] if len(clauses) == 1 else ", ".join(clauses[:-1]) + ", and " + clauses[-1]
+    return joined[:1].upper() + joined[1:] + "."
+
+
+def no_plan_reason(
+    remedy_id: RemedyId, outcome: SolveOutcome, conflicts: Sequence[Conflict]
+) -> TriedRemedy:
+    """Why a relaxed copy found no plan: the run's blockers this option doesn't lift.
+
+    Reuses the infeasible run's own conflicts (no extra solve); without any that the option
+    leaves in place, it says only that the change isn't enough on its own.
+    """
+    if outcome.status in ("timeout", "failed"):
+        return tried(remedy_id, OUT_OF_TIME)
+    briefs: list[str] = []
+    for conflict in conflicts:
+        lifted = conflict.kind in RELAXES[remedy_id] or conflict.kind in UNNAMED_KINDS
+        if conflict.brief and not lifted and conflict.brief not in briefs:
+            briefs.append(conflict.brief)
+    if not briefs:
+        return tried(remedy_id, NO_PLAN)
+    named = briefs[:MAX_NAMED_BLOCKERS]
+    rest = len(briefs) - len(named)
+    if rest:
+        named.append(f"{fmt.plural(rest, 'other limit')} also stand{'s' if rest == 1 else ''}")
+    return tried(remedy_id, f"Not enough on its own. {_sentence(named)}")
+
+
+def not_earlier_reason(remedy_id: RemedyId, base_finish: date) -> TriedRemedy:
+    """A slipping plan's option whose plan finishes no earlier than the plan itself."""
+    return tried(
+        remedy_id, f"Doesn't finish earlier than this plan's go-live, {fmt.day(base_finish)}."
+    )
+
+
+def not_used_reason(remedy_id: RemedyId) -> TriedRemedy:
+    """An option whose plan doesn't use what the option adds (no contractor hours, no overtime)."""
+    return tried(remedy_id, NOT_USED[remedy_id])
+
+
+def skipped_reasons(
+    planning_input: PlanningInput, tried_ids: Sequence[RemedyId]
+) -> list[TriedRemedy]:
+    """The options an infeasible run doesn't try, and why (`remedies.variants` skips them)."""
+    found: list[TriedRemedy] = []
+    if "overtime" not in tried_ids:
+        found.append(tried("overtime", "Not needed: overtime is already allowed under Can flex."))
+    if "move_deadline" not in tried_ids:
+        deadline = planning_input.constraints.must_finish_by
+        reason = (
+            f"Not needed: go-live may already move past {fmt.day(deadline)} (Can flex), "
+            "and no phase milestone must hold."
+            if deadline is not None
+            else "Not needed: there is no go-live date or phase milestone that must hold."
+        )
+        found.append(tried("move_deadline", reason))
+    return found
+
+
+def combined_not_needed() -> TriedRemedy:
+    """ "Change these together" isn't tried once a single option already gets a plan."""
+    return tried("combined", "Not needed: one change on its own already gets a plan.")

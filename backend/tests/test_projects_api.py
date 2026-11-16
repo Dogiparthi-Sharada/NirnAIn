@@ -10,6 +10,7 @@ Created: 2026-11-14 · Version: 1.0 (NirnAIn demo release)
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
 from fastapi.testclient import TestClient
 
@@ -196,6 +197,27 @@ def test_patch_project(client: TestClient, store: Store, auth: Auth) -> None:
     for bad in ({}, {"name": None}, {"progressPct": 101}, {"code": "P-999"}):
         response = client.patch(f"/api/v1/projects/{project_id}", json=bad, headers=auth(user))
         assert response.status_code == 422, bad
+
+
+def test_patch_project_dates_respect_step_5(client: TestClient, store: Store, auth: Auth) -> None:
+    """New project dates are mirrored on step 5, so one that would cross step 5's other saved
+    date is refused (422) unless both are set; without a saved step 5 nothing is checked."""
+    user, org = user_with_org(store)
+    project_id = post_project(client, auth, user, org, startDate="2026-12-01").json()["id"]
+    url = f"/api/v1/projects/{project_id}"
+    store.step5[uuid.UUID(project_id)] = (date(2026, 12, 1), date(2027, 5, 28))
+
+    response = client.patch(url, json={"startDate": "2027-06-01"}, headers=auth(user))
+    assert response.status_code == 422
+    assert "set targetEndDate as well" in response.json()["detail"]
+    both = {"startDate": "2027-06-01", "targetEndDate": "2027-09-30"}
+    assert client.patch(url, json=both, headers=auth(user)).status_code == 200
+    store.step5[uuid.UUID(project_id)] = (date(2027, 6, 1), date(2027, 9, 30))
+    response = client.patch(url, json={"targetEndDate": "2027-05-01"}, headers=auth(user))
+    assert response.status_code == 422  # before the project's own start too
+    store.step5.clear()
+    response = client.patch(url, json={"startDate": "2027-01-04"}, headers=auth(user))
+    assert response.status_code == 200
 
 
 def test_viewer_cannot_patch_or_delete(client: TestClient, store: Store, auth: Auth) -> None:

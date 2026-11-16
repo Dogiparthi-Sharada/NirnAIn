@@ -59,7 +59,7 @@ The repo is a **front-end-only prototype** (React 19 + Vite + Tailwind v4, built
 | Validation | Pydantic v2 | Shared by the API schemas and LLM structured output. |
 | Background jobs | **Redis + arq** (or Celery if the team knows it) | AI analysis (10–60 s) and optimization (seconds to minutes) must not run inside an HTTP request. |
 | File storage | S3-compatible (AWS S3 / MinIO locally) | Uploaded PDFs, DOCX, and audio; generated PDF / MS Project exports. |
-| LLM | **Anthropic Claude** — `claude-sonnet-5` by default, `claude-opus-5-5` for the harder WBS generation and validation step | Strong at long-document extraction; tool use with JSON schemas gives reliable structured output. Keep the model ID in config. |
+| LLM | **Anthropic Claude** — `claude-sonnet-5-5` for every feature by default (`AI_MODEL`; intake's `INTAKE_MODEL` defaults to the same model) | Strong at long-document extraction; tool use with JSON schemas gives reliable structured output. Keep the model ID in config. |
 | Speech-to-text | Separate STT provider (e.g. Whisper, or a cloud STT) | Needed only for the Audio tile. Put it behind an interface and ship it last. |
 | Optimization | **Gurobi 11+** via `gurobipy` (student academic license), with an **OR-Tools CP-SAT fallback** | Gurobi is what the UI promises. The fallback lets CI and teammates without a license run the solver. See §6.6 for how to use the student license. |
 | Auth | Our own JWT (email/password, argon2) + **OIDC** for SSO | The UI has both buttons. OIDC covers Okta, Azure AD, and Google Workspace. |

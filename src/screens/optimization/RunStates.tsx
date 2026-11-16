@@ -3,8 +3,8 @@
  *
  * Purpose: Solving mirrors the run's real status (queued → "Building model", running → "Solving")
  * while the screen polls it. Infeasible lists the constraints that can't all hold and the priced
- * remedies the backend computed; "Re-solve with this change" starts a new run with the chosen
- * remedy.
+ * remedies the backend computed, then why the other options aren't offered ("Also tried");
+ * "Re-solve with this change" starts a new run with the chosen remedy.
  * How it fits: Port of `#opt-solving` and `#opt-infeasible` in the mockup's views/optimize.js;
  * rendered by `screens/OptimizationResults.tsx`; shares wording with `KeepDateCard.tsx`;
  * layer: screen.
@@ -16,7 +16,7 @@ import { Link } from 'react-router'
 import { formatDate, formatMoney } from '@/lib/format'
 import type { PlanRun, Remedy, RemedyId } from '@/lib/optimize'
 import { stepPath } from '@/lib/steps'
-import { blockerWording, changeCount, RemedyChanges } from './KeepDateCard'
+import { AlsoTried, blockerWording, changeCount, RemedyChanges } from './KeepDateCard'
 import { ProblemAlert } from './ui'
 
 const SOLVE_STEPS = ['Building model', 'Solving', 'Preparing results']
@@ -90,9 +90,12 @@ export function InfeasibleState({ projectId, run, resolving, resolveError, onRes
       <div className="card">
         <h3>What it would take</h3>
         {remedies.length === 0 ? (
-          <p className="small muted" style={{ margin: 0 }}>
-            {wording.problem} {wording.none} Edit the constraints on step 5 and run again.
-          </p>
+          <>
+            <p className="small muted" style={{ margin: 0 }}>
+              {wording.problem} {wording.none} Edit the constraints on step 5 and run again.
+            </p>
+            <AlsoTried tried={run.result?.triedRemedies} />
+          </>
         ) : (
           <>
             <p className="small muted" id="remedy-help" style={{ margin: '0 0 4px' }}>
@@ -118,6 +121,7 @@ export function InfeasibleState({ projectId, run, resolving, resolveError, onRes
                 </button>
               ))}
             </div>
+            <AlsoTried tried={run.result?.triedRemedies} />
             {resolveError != null && (
               <div className="mt8">
                 <ProblemAlert title="The solver didn't start" error={resolveError} />

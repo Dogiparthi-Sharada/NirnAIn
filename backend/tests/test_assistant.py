@@ -34,6 +34,7 @@ from app.ai.assistant import (
 from app.ai.llm import ChatMessage, Usage
 from app.api import deps
 from app.repositories.assistant import AssistantRepository
+from tests.support.ai_usage import UsageLog
 from tests.support.connections import Conn, Rows
 from tests.support.store import Store
 from tests.support.tokens import Auth
@@ -53,6 +54,7 @@ class FakeLLM:
         """Reply with `reply` (or raise it) after `delay_s` seconds."""
         self.reply, self.delay_s = reply, delay_s
         self.configured = True
+        self.model = "claude-test"
         self.calls: list[tuple[str, list[ChatMessage]]] = []
 
     def text(
@@ -115,6 +117,26 @@ def test_without_project_and_unknown_project(
     assert _ask(chat, auth, store).status_code == 200
     assert "No project is open." in llm.calls[0][0]
     assert _ask(chat, auth, store, projectId=str(uuid.uuid4())).status_code == 404
+
+
+def test_each_answer_records_its_tokens(
+    app: FastAPI, chat: TestClient, auth: Auth, store: Store
+) -> None:
+    """Every answer records one usage row (project and caller; the workspace is looked up), and
+    a recording failure still returns the answer."""
+    usage = UsageLog()
+    app.dependency_overrides[deps.get_ai_usage_connections] = lambda: usage
+    assert _ask(chat, auth, store, projectId=str(VISIBLE)).status_code == 200
+    assert usage.summary() == [("assistant", "claude-test", 1, 1)]
+    ((row),) = usage.rows
+    assert (row["project_id"], row["org_id"]) == (VISIBLE, usage.org_id)
+    assert "FROM public.projects" in usage.statements[0][0]
+    assert _ask(chat, auth, store).status_code == 200  # no project: the caller's workspace
+    assert "FROM public.organization_members" in usage.statements[2][0]
+
+    app.dependency_overrides[deps.get_ai_usage_connections] = lambda: UsageLog(fail=True)
+    response = _ask(chat, auth, store)
+    assert (response.status_code, response.json()) == (200, {"reply": "Sure."})
 
 
 def test_not_configured_is_503(chat: TestClient, auth: Auth, store: Store, llm: FakeLLM) -> None:

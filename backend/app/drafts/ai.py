@@ -17,7 +17,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.ai.llm import LLM
+from app.ai.llm import LLM, Usage
 from app.ai.prompting import DATA_RULE, as_data, data_block, one_line
 from app.domain.drafts import (
     DateField,
@@ -156,13 +156,13 @@ def to_fields(answer: AiDraft, text: str) -> ProjectDraftFields:
     )
 
 
-def ai_draft(llm: LLM, text: str, timeout_s: float) -> ProjectDraftFields:
-    """One structured Claude call (blocking: run it with `asyncio.to_thread`)."""
-    answer, _usage = llm.parse(
+def ai_draft(llm: LLM, text: str, timeout_s: float) -> tuple[ProjectDraftFields, Usage]:
+    """One structured Claude call and its token use (blocking: run it with `asyncio.to_thread`)."""
+    answer, usage = llm.parse(
         system=SYSTEM_PROMPT,
         prompt=build_prompt(text),
         output=AiDraft,
         max_tokens=MAX_TOKENS,
         timeout_s=timeout_s,
     )
-    return to_fields(answer, text)
+    return to_fields(answer, text), usage

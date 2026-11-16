@@ -187,7 +187,9 @@ def test_finished_run_result_is_camel_case(
         "schedule",
         "summary",
         "remedies",
+        "triedRemedies",
     }
+    assert body["result"]["triedRemedies"] == []  # stored before the field existed
     assert body["result"]["kpis"][1] == {"label": "Solve", "value": "x"}  # no null `sub`
     assert body["result"]["scheduleChanges"][0]["delta"] == "—"
 

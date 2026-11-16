@@ -215,7 +215,16 @@ export function PlanView({
         </div>
       )}
 
-      {slip && <KeepDateCard slip={slip} starting={remedyStarting} startError={remedyError} onUse={onUseRemedy} accept={accept} />}
+      {slip && (
+        <KeepDateCard
+          slip={slip}
+          starting={remedyStarting}
+          startError={remedyError}
+          onUse={onUseRemedy}
+          accept={accept}
+          tried={result?.triedRemedies}
+        />
+      )}
 
       {policy ? (
         <ConstraintCheckCard policy={policy} run={run} dateSlipShown={slip !== null} />

@@ -3,7 +3,8 @@
 Purpose: Run long AI work after the request: Claude runs on a worker thread (the SDK blocks) and
 results are written on a service connection scoped to the job's project. Without ANTHROPIC_API_KEY,
 generation uses the deterministic template (model 'template') and validation runs only the built-in
-checks (model 'rules').
+checks (model 'rules'). Each successful Claude call also records its tokens in `ai_usage_events`
+(the job keeps its own token columns too).
 How it fits: The API (app/api/v1/ai.py) commits a queued `ai_jobs` row and calls
 `AiJobRunner.submit`; reads and writes go through app/repositories/ai_jobs.py; lifecycle from
 app/jobs/background.py; layer: jobs.
@@ -43,6 +44,7 @@ from app.core.config import Settings
 from app.domain.common import AiJobKind
 from app.jobs.background import BackgroundRunner, RunnerMessages
 from app.repositories.ai_jobs import AiJobStore, ClaimedJob
+from app.repositories.ai_usage import AiFeature, AiUsageEvent, ServiceConnections, record_ai_usage
 
 logger = logging.getLogger("app.jobs.ai")
 
@@ -76,11 +78,26 @@ class AiJobRunner(BackgroundRunner[AiJobStore]):
     restart_error = RESTART_ERROR
 
     def __init__(
-        self, store: StoreFactory | None, settings: Settings, llm: LLM | None = None
+        self,
+        store: StoreFactory | None,
+        settings: Settings,
+        llm: LLM | None = None,
+        usage_log: ServiceConnections | None = None,
     ) -> None:
-        """Keep the store factory and the Claude client (`AI_MODEL` unless one is given)."""
+        """Keep the store factory, the Claude client (`AI_MODEL` unless one is given) and where
+        token use is recorded (None: not recorded)."""
         super().__init__(store)
         self._llm = llm or LLM(make_client(settings), settings.ai_model)
+        self._usage_log = usage_log
+
+    async def _record_usage(self, feature: AiFeature, job: ClaimedJob, usage: Usage | None) -> None:
+        """Record a successful Claude call of the job for its project (never raises)."""
+        if usage is None:
+            return
+        event = AiUsageEvent(
+            feature, self._llm.model, usage, project_id=job.project_id, user_id=job.requested_by
+        )
+        await record_ai_usage(self._usage_log, event)
 
     @property
     def ai_configured(self) -> bool:
@@ -134,6 +151,7 @@ class AiJobRunner(BackgroundRunner[AiJobStore]):
                 generated, usage = await asyncio.to_thread(
                     self._llm.parse, system=GENERATE_SYSTEM, prompt=prompt, output=GeneratedWbs
                 )
+                await self._record_usage("wbs_generate", job, usage)
                 plan = plan_from_model(generated, refs)
                 if plan.empty:
                     raise JobFailedError(EMPTY_PLAN_ERROR)
@@ -182,6 +200,7 @@ class AiJobRunner(BackgroundRunner[AiJobStore]):
                     output=WbsReview,
                     max_tokens=4000,
                 )
+                await self._record_usage("wbs_validate", job, usage)
                 extra = review_issues(review)
                 model = self._llm.model
             except Exception:

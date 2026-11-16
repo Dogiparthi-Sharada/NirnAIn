@@ -10,7 +10,6 @@ Created: 2026-10-14 · Version: 1.0 (NirnAIn demo release)
 
 from __future__ import annotations
 
-import dataclasses
 from datetime import date
 
 from app.domain.optimization import RunResult
@@ -300,7 +299,13 @@ def test_timeout_and_time_limited_feasible() -> None:
     assert solve_kpi["sub"] == "Best plan found, within 9.1% of optimal"
 
 
-def test_conflict_dataclass_is_plain() -> None:
-    """Conflicts serialize as plain name and explanation."""
-    assert dataclasses.asdict(Conflict("a", "b")) == {"name": "a", "explanation": "b"}
+def test_conflicts_are_stored_as_plain_name_and_explanation() -> None:
+    """A conflict's kind and brief are for the remedies only: the run stores name and
+    explanation, and they don't change what makes two conflicts equal."""
+    conflict = Conflict("a", "b", "deadline", "the dependency chain alone runs until Oct 23")
+    assert conflict == Conflict("a", "b")
+    report = build_report(
+        make_input(), _outcome(make_input(), status="infeasible", conflicts=(conflict,))
+    )
+    assert report.iis == [{"name": "a", "explanation": "b"}]
     assert MONDAY.weekday() == 0

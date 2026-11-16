@@ -4,7 +4,8 @@
  * Purpose: The project manager decides and nothing is chosen automatically: the card says by how
  * much the plan slips, lists each way to keep the date (a contractor, overtime up to 25%, or
  * several changes together) with its finish date and extra cost, and offers to accept the later
- * date instead (contract D2). The wording follows the kind of limit the plan runs into.
+ * date instead (contract D2). The wording follows the kind of limit the plan runs into. Under the
+ * offered options, "Also tried" says why each other option isn't offered.
  * How it fits: Styled as the mockup's "Your call" advice card (views/optimize-advice.js); rendered
  * by `PlanView.tsx` and shared with `RunStates.tsx` and step 7's `screens/changes/KeepDate.tsx`;
  * layer: screen.
@@ -12,7 +13,7 @@
  */
 
 import { formatDate, formatMoney } from '@/lib/format'
-import type { DateSlip, RemedyId } from '@/lib/optimize'
+import type { DateSlip, RemedyId, TriedRemedy } from '@/lib/optimize'
 import { ProblemAlert } from './ui'
 
 /** The kind of limit an infeasible plan runs into. */
@@ -157,6 +158,42 @@ export function optionCost(option: PricedOption, wholePlan = false): string {
   return option.costCents < 0 ? `${formatMoney(-option.costCents)} less` : 'no extra cost'
 }
 
+// Up to this many short reasons stay open; a longer "Also tried" list starts folded.
+const ALSO_TRIED_OPEN_ENTRIES = 3
+const ALSO_TRIED_OPEN_CHARS = 480
+
+/**
+ * "Also tried": each option the backend tried (or skipped) but doesn't offer, with why, in muted
+ * text under the offered options (`result.triedRemedies`; nothing for older runs).
+ */
+export function AlsoTried({ tried }: { tried?: TriedRemedy[] | null }) {
+  if (!tried?.length) return null
+  const list = (
+    <ul className="small muted" style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+      {tried.map((entry) => (
+        <li key={entry.id} data-tried={entry.id}>
+          <span style={{ fontWeight: 600 }}>{entry.title}</span>: {entry.reason}
+        </li>
+      ))}
+    </ul>
+  )
+  const length = tried.reduce((total, entry) => total + entry.title.length + entry.reason.length, 0)
+  if (tried.length <= ALSO_TRIED_OPEN_ENTRIES && length <= ALSO_TRIED_OPEN_CHARS) {
+    return (
+      <div className="mt8 also-tried">
+        <div className="small muted" style={{ fontWeight: 600 }}>Also tried</div>
+        {list}
+      </div>
+    )
+  }
+  return (
+    <details className="mt8 also-tried">
+      <summary className="small muted">Also tried ({tried.length})</summary>
+      {list}
+    </details>
+  )
+}
+
 /** What "Accept" can do right now: apply, wait for something first (and why), or already done. */
 export type AcceptState =
   | { kind: 'ready'; applying: boolean; onAccept: () => void }
@@ -166,13 +203,14 @@ export type AcceptState =
 const REASON_ID = 'keep-date-accept-why'
 const STARTING_ID = 'keep-date-starting'
 
-/** The card; `onUse` re-runs the solver with the picked remedy. */
-export function KeepDateCard({ slip, starting, startError, onUse, accept }: {
+/** The card; `onUse` re-runs the solver with the picked remedy; `tried` lists the options not offered. */
+export function KeepDateCard({ slip, starting, startError, onUse, accept, tried }: {
   slip: DateSlip
   starting: boolean
   startError: unknown
   onUse: (remedy: RemedyId) => void
   accept: AcceptState
+  tried?: TriedRemedy[] | null
 }) {
   const target = formatDate(slip.targetDate)
   const finish = formatDate(slip.completionDate)
@@ -244,6 +282,8 @@ export function KeepDateCard({ slip, starting, startError, onUse, accept }: {
           )}
         </div>
       </div>
+
+      <AlsoTried tried={tried} />
 
       {startError != null && (
         <div className="mt8">

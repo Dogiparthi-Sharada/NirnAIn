@@ -1,6 +1,7 @@
 """Repository of projects: paging, reading, creating, updating, deleting and the dashboard KPIs.
 
-Purpose: Persist projects while letting RLS decide what the caller may see and change.
+Purpose: Persist projects while letting RLS decide what the caller may see and change; a new start
+or target end date is mirrored on the step-5 constraint set in the same transaction.
 How it fits: Used by app/api/v1/projects.py and app/api/v1/dashboard.py; returns
 app/domain/projects.py models; layer: repositories.
 Created: 2026-10-01 · Version: 1.0 (NirnAIn demo release)
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from datetime import date
 from typing import Any
 
 import sqlalchemy as sa
@@ -18,8 +20,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app.core.pagination import Cursor
 from app.domain.common import ProjectStatus
 from app.domain.dashboard import DashboardSummary
+from app.domain.project_dates import step5_columns
 from app.domain.projects import Project
-from app.repositories.tables import profiles, projects
+from app.repositories.tables import constraint_sets, profiles, projects
 
 TIMESTAMP_TZ = sa.DateTime(timezone=True)
 
@@ -118,7 +121,9 @@ class ProjectRepository:
     async def update(self, project_id: uuid.UUID, changes: dict[str, Any]) -> bool:
         """Update the given columns; archiving stamps `archived_at`, other statuses clear it.
 
-        Returns False if no row was updated (missing or not writable under RLS).
+        A new start or target end date also becomes the step-5 start or must-finish-by date when
+        a constraint set exists (a cleared date keeps step 5's). Returns False if no row was
+        updated (missing or not writable under RLS).
         """
         values = dict(changes)
         if "status" in values:
@@ -129,7 +134,28 @@ class ProjectRepository:
             )
         stmt = sa.update(projects).where(projects.c.id == project_id).values(**values)
         result = await self._conn.execute(stmt)
-        return result.rowcount > 0
+        if result.rowcount == 0:
+            return False
+        mirrored = step5_columns(changes)
+        if mirrored:
+            # No constraint set yet: nothing to update, step 5 starts from the project's dates.
+            await self._conn.execute(
+                sa.update(constraint_sets)
+                .where(constraint_sets.c.project_id == project_id)
+                .values(**mirrored)
+            )
+        return True
+
+    async def step5_dates(self, project_id: uuid.UUID) -> tuple[date | None, date | None] | None:
+        """Return step 5's saved (start date, must-finish-by), or None before step 5 is saved."""
+        row = (
+            await self._conn.execute(
+                sa.select(constraint_sets.c.start_date, constraint_sets.c.must_finish_by).where(
+                    constraint_sets.c.project_id == project_id
+                )
+            )
+        ).first()
+        return (row.start_date, row.must_finish_by) if row else None
 
     async def delete(self, project_id: uuid.UUID) -> bool:
         """Delete the project; False when RLS left nothing to delete."""

@@ -131,19 +131,24 @@ class OptimizationRunner(BackgroundRunner[OptimizationJobStore]):
         control: SolveControl,
         extra: dict[str, str],
     ) -> Report:
-        """Add the priced remedies to an infeasible or late report (`result.remedies`).
+        """Add the priced remedies to an infeasible or late report (`result.remedies`), and the
+        options tried but not offered with why (`result.triedRemedies`).
 
         Best effort: if pricing fails the run still reports its plan or conflicts.
         """
         current = outcome if outcome.plan is not None else None
         try:
-            remedies = await asyncio.to_thread(
-                price_remedies, planning_input, self._options, control, current
+            priced = await asyncio.to_thread(
+                price_remedies, planning_input, self._options, control, current, outcome.conflicts
             )
         except Exception:
             logger.exception("pricing remedies failed", extra=extra)
             return report
-        result = {**(report.result or {}), "remedies": [remedy.to_json() for remedy in remedies]}
+        result = {
+            **(report.result or {}),
+            "remedies": [remedy.to_json() for remedy in priced.offered],
+            "triedRemedies": [entry.to_json() for entry in priced.tried],
+        }
         return replace(report, result=result)
 
     async def recover_stale(self, stale_after_s: int | None = None) -> int:

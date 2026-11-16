@@ -48,7 +48,8 @@ def test_ways_to_keep_the_date_are_priced_against_this_plan() -> None:
     planning_input = _leo_cut_to_16_hours()
     current = solve(planning_input, FAST)
     remedies = {
-        remedy.id: remedy for remedy in price_remedies(planning_input, FAST, current=current)
+        remedy.id: remedy
+        for remedy in price_remedies(planning_input, FAST, current=current).offered
     }
     assert list(remedies) == ["specialist", "overtime", "move_deadline"]
 

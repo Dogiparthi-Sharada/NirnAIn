@@ -128,7 +128,7 @@ def test_critical_path_longer_than_the_window_warns() -> None:
         {
             "type": "warning",
             "text": "The critical path takes 20 working days, but only 10 are available "
-            "between 2026-11-16 and 2026-11-27.",
+            "between Nov 16, 2026 (project start) and Nov 27, 2026.",
         }
     ]
     ok = run(nodes, start_date=date(2026, 11, 16), deadline=date(2026, 11, 27))
@@ -151,7 +151,8 @@ def test_critical_path_window_starts_today_once_the_start_has_passed() -> None:
         {
             "type": "warning",
             "text": "The critical path takes 20 working days, but only 11 are available "
-            "between 2026-11-14 and 2026-11-30.",
+            "between Nov 14, 2026 (today; the start date Nov 2, 2026 has passed) "
+            "and Nov 30, 2026.",
         }
     ]
     # The same dates checked on the start day: 21 working days, so it fits.
@@ -171,9 +172,12 @@ def test_critical_path_window_starts_today_once_the_start_has_passed() -> None:
         deadline=date(2026, 11, 27),
         today=date(2026, 11, 2),
     )
-    assert "between 2026-11-16 and 2026-11-27" in str(future["issues"])
+    assert "between Nov 16, 2026 (project start) and Nov 27, 2026" in str(future["issues"])
     unset = run(nodes, dependencies=links, deadline=date(2026, 11, 27), today=date(2026, 11, 16))
-    assert "only 10 are available between 2026-11-16 and 2026-11-27" in str(unset["issues"])
+    assert (
+        "only 10 are available between Nov 16, 2026 (today; no start date is set) "
+        "and Nov 27, 2026" in str(unset["issues"])
+    )
     passed = run(
         nodes,
         dependencies=links,
@@ -184,10 +188,41 @@ def test_critical_path_window_starts_today_once_the_start_has_passed() -> None:
     assert passed["issues"] == [
         {
             "type": "warning",
-            "text": "The critical path takes 20 working days, but the deadline 2026-11-13 "
+            "text": "The critical path takes 20 working days, but the deadline Nov 13, 2026 "
             "has already passed.",
         }
     ]
+
+
+def test_schedule_warning_names_the_window_start_and_why() -> None:
+    """The PO's case: a passed step-5 start says the window starts today and why; a future
+    project start is named as such. Dates read like the UI's ("Nov 15, 2026")."""
+    nodes = tree(("A", 100, True), ("B", 90, True))
+    links = (DependencyInfo(nodes[2].id, nodes[3].id),)
+    passed = run(
+        nodes,
+        dependencies=links,
+        start_date=date(2026, 11, 1),
+        deadline=date(2027, 5, 28),
+        today=date(2026, 11, 15),
+    )
+    (warning,) = passed["issues"]  # type: ignore[misc]
+    assert warning["text"].startswith("The critical path takes 190 working days, but only ")
+    assert warning["text"].endswith(
+        " are available between Nov 15, 2026 (today; the start date Nov 1, 2026 has passed) "
+        "and May 28, 2027."
+    )
+    future = run(
+        nodes,
+        dependencies=links,
+        start_date=date(2026, 12, 1),
+        deadline=date(2027, 5, 28),
+        today=date(2026, 11, 15),
+    )
+    (warning,) = future["issues"]  # type: ignore[misc]
+    assert warning["text"].endswith(
+        " are available between Dec 1, 2026 (project start) and May 28, 2027."
+    )
 
 
 def test_critical_path_dependency_types_and_cycles() -> None:

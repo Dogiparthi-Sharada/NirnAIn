@@ -275,7 +275,7 @@ class ModelBuilder:
         # the budget less the reserve. The labor cap has no reserve.
         for key, label, amount, cap in (
             ("budget", "Budget cap", self.constraints.budget_total_cents, limit),
-            ("labor", "Labor cap", labor_cap, labor_cap),
+            ("labor", conflicts.LABOR_CAP, labor_cap, labor_cap),
         ):
             if amount is None or cap is None:
                 continue

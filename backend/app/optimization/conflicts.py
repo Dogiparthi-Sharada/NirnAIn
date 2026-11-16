@@ -2,9 +2,11 @@
 
 Purpose: Each text states a fact read off the `Problem` (the dependency chain's earliest finish, the
 cheapest qualified staffing, how long a part-timer needs) or, failing that, says the constraint
-can't hold together with the others listed; nothing is invented.
+can't hold together with the others listed; nothing is invented. Each conflict also carries its
+group's kind and the same fact as a short clause (`brief`), which the "Also tried" reasons reuse.
 How it fits: `builder.py` attaches these lazily (via `functools.partial`) to the explanation model's
-assumption literals; `blockers.explain_infeasibility` reports them; layer: optimization.
+assumption literals; `blockers.explain_infeasibility` reports them; remedy_options.py words the
+options that don't relax them; layer: optimization.
 Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
@@ -21,6 +23,7 @@ GENERIC = Conflict(
     "Hard constraints",
     "The hard constraints can't all hold at once. Try making the deadline or budget soft.",
 )
+LABOR_CAP = "Labor cap"  # the label builder.py gives the labor cap (the other is "Budget cap")
 
 
 def names(people: Sequence[str]) -> str:
@@ -39,11 +42,16 @@ def deadline(problem: Problem) -> Conflict:
         return Conflict(
             name,
             f"The dependency chain alone runs until {critical}, even with unlimited people.",
+            "deadline",
+            f"the dependency chain alone runs until {critical}",
         )
+    by = fmt.day(due) if due else "the deadline"
     return Conflict(
         name,
         "There isn't enough qualified capacity to finish all work by then "
         "together with the other constraints listed here.",
+        "deadline",
+        f"there isn't enough qualified capacity to finish by {by}",
     )
 
 
@@ -52,14 +60,18 @@ def milestone(problem: Problem, due: Milestone, tasks: Sequence[Task]) -> Confli
     name = f"Milestone: {due.name} by {fmt.day(due.due_date)}"
     earliest = max((problem.baseline.tasks[task.id].end for task in tasks), default=0)
     if earliest > problem.milestone_ends[due.id]:
+        finish = fmt.day(problem.finish_date(earliest))
         return Conflict(
             name,
-            f"Its work can't finish before {fmt.day(problem.finish_date(earliest))} "
-            "because of dependencies.",
+            f"Its work can't finish before {finish} because of dependencies.",
+            "milestone",
+            f"the work for {due.name} can't finish before {finish}",
         )
     return Conflict(
         name,
         "Its work can't be staffed in time together with the other constraints listed here.",
+        "milestone",
+        f"the work for {due.name} can't be staffed by {fmt.day(due.due_date)}",
     )
 
 
@@ -74,23 +86,35 @@ def budget(problem: Problem, label: str, amount: int, held: int = 0) -> Conflict
         for task in problem.tasks.values()
     )
     name = f"{label}: {fmt.money(amount)}"
+    kind = "labor" if label == LABOR_CAP else "budget"
     cap = amount - held
     room = (
         f"the {fmt.money(cap)} left after holding back the {fmt.money(held)} reserve"
         if held
         else "the cap"
     )
+    # The clause names the limit as the PM set it: the cap, what the reserve leaves, the budget.
+    if kind == "labor":
+        limit = f"the {fmt.money(cap)} labor cap"
+    elif held:
+        limit = f"the {fmt.money(cap)} the budget leaves after its reserve"
+    else:
+        limit = f"the {fmt.money(cap)} budget"
     if cheapest > cap:
         return Conflict(
             name,
             f"Even the cheapest qualified staffing costs about {fmt.money(cheapest)}, "
             f"{fmt.money(cheapest - cap)} more than {room}.",
+            kind,
+            f"the cheapest staffing costs {fmt.money(cheapest)}, over {limit}",
         )
     within = f" (the budget less its {fmt.money(held)} reserve)" if held else ""
     return Conflict(
         name,
         f"Staying within {fmt.money(cap)}{within} needs cheaper people than the other "
         "constraints listed here allow.",
+        kind,
+        f"staying within {limit} needs cheaper people",
     )
 
 
@@ -109,6 +133,8 @@ def skill(problem: Problem, task: Task, requirement: SkillRequirement) -> Confli
             name,
             f"Only {names(able)} qualify, and they can't take it on without breaking "
             "another constraint listed here.",
+            "skill",
+            f"only {names(able)} can do {task.label}, and they can't fit it in",
         )
     if not constraints.allow_contractors:
         tail = "and contractors are turned off."
@@ -120,6 +146,9 @@ def skill(problem: Problem, task: Task, requirement: SkillRequirement) -> Confli
         name,
         f"No one on the team has {requirement.skill_name} at level "
         f"{requirement.min_proficiency} or higher, {tail}",
+        "skill",
+        f"nobody on the team has {requirement.skill_name} at level "
+        f"{requirement.min_proficiency} or higher",
     )
 
 
@@ -157,6 +186,8 @@ def capacity(problem: Problem, resource: Resource) -> Conflict:
         f"Capacity: {resource.name} ({hours})",
         f"{resource.name} can't take on the work they're needed for within {hours}{tail}."
         + _stretched_example(problem, resource),
+        "capacity",
+        f"{resource.name} can't fit their work into {hours}",
     )
 
 
@@ -172,4 +203,6 @@ def dependency(link: Dependency, predecessor: Task, successor: Task) -> Conflict
         what += f", plus {fmt.plural(link.lag_days, 'working day')}"
     elif link.lag_days < 0:
         what += f", minus {fmt.plural(-link.lag_days, 'working day')}"
-    return Conflict(f"Dependency: {predecessor.label} → {successor.label}", what + ".")
+    return Conflict(
+        f"Dependency: {predecessor.label} → {successor.label}", what + ".", "dependency", what
+    )

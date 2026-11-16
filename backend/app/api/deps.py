@@ -21,6 +21,7 @@ from app.jobs.ai_jobs import AiJobRunner
 from app.jobs.intake import IntakeRunner
 from app.jobs.optimizer import OptimizationRunner
 from app.repositories.ai_jobs import AiJobRepository
+from app.repositories.ai_usage import ServiceConnections
 from app.repositories.assistant import AssistantRepository
 from app.repositories.documents import DocumentRepository
 from app.repositories.intake import IntakeRepository
@@ -131,6 +132,13 @@ def get_assistant_llm(request: Request) -> LLM:
     return llm
 
 
+def get_ai_usage_connections(request: Request) -> ServiceConnections | None:
+    """Provide where AI features record their token use: one service-connection transaction per
+    row, apart from the caller's own (None without a database: nothing is recorded)."""
+    engine = getattr(request.app.state, "engine", None)
+    return engine.begin if engine is not None else None
+
+
 def get_document_repo(db: UserDB) -> DocumentRepository:
     """Provide the uploaded documents repository on the caller's connection."""
     return DocumentRepository(db)
@@ -152,6 +160,7 @@ AiJobs = Annotated[AiJobRepository, Depends(get_ai_job_repo)]
 AiRunner = Annotated[AiJobRunner, Depends(get_ai_runner)]
 AssistantContexts = Annotated[AssistantRepository, Depends(get_assistant_repo)]
 AssistantLLM = Annotated[LLM, Depends(get_assistant_llm)]
+AiUsageLog = Annotated[ServiceConnections | None, Depends(get_ai_usage_connections)]
 Documents = Annotated[DocumentRepository, Depends(get_document_repo)]
 Team = Annotated[TeamRepository, Depends(get_team_repo)]
 

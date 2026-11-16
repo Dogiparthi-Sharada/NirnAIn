@@ -1,7 +1,8 @@
 """Tests of the remedies for infeasible plans and of per-run overrides.
 
 Purpose: When no plan meets the limits, each remedy (a contractor, a later go-live, slipping
-milestones, overtime, more budget) must be solved and priced; overrides change only one run.
+milestones, overtime, more budget) must be solved and priced, and each one not offered must say
+why; overrides change only one run.
 How it fits: Pure tests of app/optimization/remedies.py and overrides.py on tiny hand-built inputs;
 layer: tests.
 Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
@@ -13,8 +14,10 @@ from datetime import date
 
 from app.domain.optimization import RunOverrides
 from app.optimization.model import Constraints, Employee, Milestone, PlanningInput, Task
+from app.optimization.outcome import Conflict, Plan, SolveOutcome
 from app.optimization.overrides import apply_overrides, with_baseline
 from app.optimization.remedies import apply_remedy, price_remedies, variants
+from app.optimization.remedy_options import NO_PLAN, OUT_OF_TIME, no_plan_reason, skipped_reasons
 from app.optimization.solver import SolveOptions, solve
 from tests.support.solver_inputs import SAP, make_input, with_constraints
 
@@ -42,7 +45,7 @@ def test_missing_skill_offers_a_priced_contractor() -> None:
     planning_input = _sap_gap_input()
     assert solve(planning_input, TINY).status == "infeasible"
 
-    remedies = price_remedies(planning_input, TINY)
+    remedies = price_remedies(planning_input, TINY).offered
 
     # Moving the deadline alone can't fix a missing skill, so it is not offered.
     assert [remedy.id for remedy in remedies] == ["specialist"]
@@ -66,7 +69,7 @@ def test_tight_hard_deadline_offers_moving_go_live() -> None:
     )
     assert solve(planning_input, TINY).status == "infeasible"
 
-    (remedy,) = price_remedies(planning_input, TINY)
+    (remedy,) = price_remedies(planning_input, TINY).offered
 
     assert remedy.id == "move_deadline"
     assert remedy.title == "Move go-live to Oct 23 (+7 days)"
@@ -83,7 +86,7 @@ def test_hard_milestone_is_relaxed_with_the_deadline() -> None:
         "specialist",
         "move_deadline",
     ]
-    (remedy,) = price_remedies(planning_input, TINY)
+    (remedy,) = price_remedies(planning_input, TINY).offered
     assert remedy.title == "Let the phase milestones slip"
     assert remedy.detail.endswith("phase milestones may slip (soft)")
 
@@ -93,12 +96,69 @@ def test_a_budget_no_single_option_fixes_is_offered_combined() -> None:
     planning_input = with_constraints(make_input(), budget_total_cents=1, budget_mode="hard")
     # A contractor is always tried, but costs more: still over the cap.
     assert [remedy_id for remedy_id, _ in variants(planning_input, solved=False)] == ["specialist"]
-    (remedy,) = price_remedies(planning_input, TINY)
+    (remedy,) = price_remedies(planning_input, TINY).offered
     assert remedy.id == "combined"
     assert [(change.kind, change.label) for change in remedy.changes] == [
         ("budget", "Spend $12,000 more: this plan costs $12,000, the budget is $0"),
     ]
     assert remedy.cost_cents == 120 * 10_000
+
+
+def test_options_tried_but_not_offered_name_the_blockers_they_leave() -> None:
+    """The PO's case: the chain runs past the hard deadline and the cheapest staffing is over the
+    hard budget. Only "Change these together" gets a plan; the others say which of the run's own
+    blockers they leave in place (no extra solve), or why they weren't tried."""
+    planning_input = with_constraints(
+        make_input(), must_finish_by=date(2026, 10, 16), budget_total_cents=500_000
+    )
+    base = solve(planning_input, TINY)
+    assert base.status == "infeasible"
+
+    priced = price_remedies(planning_input, TINY, conflicts=base.conflicts)
+
+    assert [remedy.id for remedy in priced.offered] == ["combined"]
+    assert [entry.to_json() for entry in priced.tried] == [
+        {
+            "id": "specialist",
+            "title": "Bring in a contractor",
+            "reason": "Not enough on its own. The dependency chain alone runs until "
+            "Oct 23, 2026, and the cheapest staffing costs $12,000, over the $5,000 budget.",
+        },
+        {
+            "id": "overtime",
+            "title": "Overtime up to 25% over people's hours",
+            "reason": "Not needed: overtime is already allowed under Can flex.",
+        },
+        {
+            "id": "move_deadline",
+            "title": "Move go-live",
+            "reason": "Not enough on its own. "
+            "The cheapest staffing costs $12,000, over the $5,000 budget.",
+        },
+    ]
+    # Without the run's conflicts (an older caller) the reason stays general.
+    (first, *_) = price_remedies(planning_input, TINY).tried
+    assert first.reason == NO_PLAN
+
+
+def test_tried_reasons_cap_the_blockers_and_say_when_time_ran_out() -> None:
+    """At most three blockers are named, then a count; a variant out of time says so."""
+    planning_input = make_input()
+    blockers = [
+        Conflict(f"Skill {number}", "x", "skill", f"nobody has skill {number}")
+        for number in range(5)
+    ]
+    outcome = SolveOutcome("infeasible", "x", "x", 0.0, (), Plan({}))
+    reason = no_plan_reason("move_deadline", outcome, blockers).reason
+    assert reason == (
+        "Not enough on its own. Nobody has skill 0, nobody has skill 1, nobody has skill 2, "
+        "and 2 other limits also stand."
+    )
+    late = SolveOutcome("timeout", "x", "x", 0.0, (), Plan({}))
+    assert no_plan_reason("specialist", late, blockers).reason == OUT_OF_TIME
+    assert skipped_reasons(planning_input, ["specialist", "overtime"])[0].reason == (
+        "Not needed: there is no go-live date or phase milestone that must hold."
+    )
 
 
 def test_run_with_remedy_applies_it() -> None:

@@ -54,7 +54,7 @@ The parts and where they run:
 
 • Website – Technology: React 19, Vite, Tailwind v4, TypeScript, React Router 7, TanStack Query, supabase-js (sign-in only). Folder: src/. Hosted on (demo): Render static site (https://nirnain-web.onrender.com).
 • API – Technology: Python 3.12, FastAPI, SQLAlchemy 2 Core (async, asyncpg), OR-Tools CP-SAT, pydantic v2. Folder: backend/. Hosted on (demo): Render web service (Docker, backend/Dockerfile, Virginia; https://nirnain-api.onrender.com).
-• Database and sign-in – Technology: Supabase: Postgres 17, Auth, Row Level Security. Folder: supabase/ (17 migrations, pgTAP tests 001–014). Hosted on (demo): Supabase free project (us-east-1).
+• Database and sign-in – Technology: Supabase: Postgres 17, Auth, Row Level Security. Folder: supabase/ (18 migrations, pgTAP tests 001–015). Hosted on (demo): Supabase free project (us-east-1).
 • AI – Technology: Anthropic Claude through backend/app/ai/llm.py only. Folder: backend/app/ai/, drafts/, changes/. Hosted on (demo): Anthropic API (key set on the hosted API only).
 • Automation – Technology: GitHub Actions: web, api and db checks (currently disabled; run them locally) and a daily keep-alive. Folder: .github/workflows/ci.yml, .github/workflows/keepalive.yml. Hosted on (demo): GitHub.
 
@@ -74,7 +74,7 @@ The website has one screen per step (src/screens/) plus the landing page, sign-i
 
 2. Data model highlights
 
-The schema lives only in supabase/migrations/ (17 files, 20260924000100_foundation.sql to 20261114000200_source_documents_truncated.sql). It has 25 tables in public. The most important ones:
+The schema lives only in supabase/migrations/ (18 files, 20260924000100_foundation.sql to 20261116000100_ai_usage_events.sql). It has 26 tables in public. The most important ones:
 
 Organizations own projects, people and skills. Each project has its intake (source documents, intake runs, scope items, AI jobs), its WBS (WBS nodes, dependencies, skill requirements, milestones), its team and skills (project team members, project skills; employees, employee skills and allocations are organization-wide), and its planning (constraint set, optimization runs with their planned assignments and recommendations, change requests).
 
@@ -82,7 +82,7 @@ The tables by area:
 
 • Tenancy – Tables: organizations, organization_members, profiles. Notes: A sign-up creates a profile and a workspace ("<name>'s Workspace") by trigger. Roles: owner, admin, pm, member, viewer.
 • Projects – Tables: projects, notifications, audit_events. Notes: Project codes P-001, P-002… per workspace.
-• Intake – Tables: source_documents, intake_runs, scope_items, ai_jobs. Notes: Only the text of an upload is kept (up to 200,000 characters per file, with a truncated flag). Scope items carry source_quote, evidence (stated, inferred, flagged) and suggested_text.
+• Intake – Tables: source_documents, intake_runs, scope_items, ai_jobs, ai_usage_events. Notes: Only the text of an upload is kept (up to 200,000 characters per file, with a truncated flag). Scope items carry source_quote, evidence (stated, inferred, flagged) and suggested_text. ai_usage_events holds the tokens of every successful Claude call (feature, model, input and output tokens).
 • WBS – Tables: wbs_nodes (+ view wbs_nodes_with_code), dependencies, task_skill_requirements, milestones. Notes: WBS codes such as 1.2.3 are computed from tree position, not stored. Dependencies point at stable ids. AI estimates count only once confirmed (estimate_confirmed_at).
 • Resources – Tables: employees, employee_skills, skills, allocations, project_team_members, project_skills. Notes: People are organization-wide; project_team_members.hours_per_week (1–80) is what they give this project. employees.is_contractor is the worker type.
 • Constraints – Tables: constraint_sets. Notes: Budget, reserve, caps, deadline, modes (hard = Must hold, soft = Can flex), the specialist and deadline answers, contractor rate.
@@ -193,7 +193,7 @@ Settings: OPTIMIZER_TIME_LIMIT_S (default 20 s), OPTIMIZER_WORKERS (default 4; 1
 
 5. AI features and their rule-based fallbacks
 
-All Claude calls go through backend/app/ai/llm.py. Model ids are settings: INTAKE_MODEL (default claude-opus-5-5) for intake and AI_MODEL (default claude-sonnet-5-5) for the rest. Without ANTHROPIC_API_KEY every feature below still works through its fallback, which uses 0 Claude tokens. Optimization, apply and approve never call Claude.
+All Claude calls go through backend/app/ai/llm.py. Model ids are settings: INTAKE_MODEL for intake and AI_MODEL for the rest, both claude-sonnet-5-5 by default. Every successful call records its tokens in ai_usage_events (feature, model, input and output tokens, workspace, project, user): members of the workspace can read the rows, only the backend writes them, and a failure to record never fails the request. Without ANTHROPIC_API_KEY every feature below still works through its fallback, which uses 0 Claude tokens. Optimization, apply and approve never call Claude.
 
 Each AI feature, with Claude and without it:
 
@@ -212,7 +212,7 @@ Safety rules for AI:
 
 6. Security
 
-• Row Level Security on every table. All 25 tables in public have RLS and explicit policies (supabase/README.md). The backend runs user requests as authenticated with the caller's claims, so the policies are the real authorization layer. pgTAP tests 001–014 prove another workspace can't read or write.
+• Row Level Security on every table. All 26 tables in public have RLS and explicit policies (supabase/README.md). The backend runs user requests as authenticated with the caller's claims, so the policies are the real authorization layer. pgTAP tests 001–015 prove another workspace can't read or write.
 • Cross-project checks (round 4, QA pack SEC-001, a P0). Another workspace could file a dependency between your work packages. Now:
   ◦ the API accepts only work packages of the same project that the caller can see;
   ◦ the database checks every link (dependencies, WBS parents, owners, scope items, milestones, team members, skills) in SECURITY DEFINER trigger functions with an empty search_path, so RLS can't hide the other row;
@@ -255,3 +255,4 @@ The decisions, in order:
 • Decision 23: Not built for the demo. Choice: Effective-dated availability, leave, holidays, actual hours / EAC, fixed costs, Gurobi, an as-of clock, sub-day scheduling, audio transcription. Why: PO decision, to keep the demo to about a day. Date: Nov 13 evening.
 • Decision 24: Keeping the free demo awake. Options considered: Accept the pauses; a paid plan; a scheduled health check. Choice: A daily GitHub Actions workflow (keepalive.yml, 13:17 UTC) wakes the API, checks /health/ready (the database) and Supabase Auth health, and loads the website. It reads the repository variables SUPABASE_PROJECT_REF and SUPABASE_PUBLISHABLE_KEY. Why: A free Supabase project pauses after a week without activity. The workflow calls health endpoints only, so it spends no Claude tokens. Date: Nov 14.
 • Decision 25: Claude on the hosted demo. Options considered: Rules only; a key on the API service only. Choice: ANTHROPIC_API_KEY set on the Render API service, never on the static site; a monthly spend limit in the Anthropic Console (Settings → Limits). Why: The live demo shows the real AI features; without a key every feature falls back to the rules. Date: Nov 14.
+• Decision 26: What Claude costs (PO test of the hosted demo, bug 6). Options considered: Opus for intake; Sonnet for every feature, and every call's tokens recorded. Choice: INTAKE_MODEL defaults to the same claude-sonnet-5-5 as AI_MODEL; every successful call writes one ai_usage_events row. Why: Intake ran on Opus, the most expensive model, while every other feature used Sonnet; drafts, change detection and the assistant recorded no tokens at all. Date: Nov 15.
