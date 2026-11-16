@@ -1,7 +1,8 @@
 """Repository of a project's constraints, resource pool, capacity and skill coverage.
 
-Purpose: Persist the constraint set and milestones the PM sets on step 5 and read the people, their
-spare capacity and the skills the WBS needs, all under the caller's RLS session.
+Purpose: Persist the constraint set and milestones the PM sets on step 5 (its dates also become the
+project's, in the same transaction) and read the people, their spare capacity and the skills the
+WBS needs, all under the caller's RLS session.
 How it fits: Used by app/api/v1/planning.py; dependency links come from the mixed-in
 `DependencyQueries` (app/repositories/dependency_links.py); layer: repositories.
 Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
@@ -30,6 +31,7 @@ from app.domain.planning import (
     PoolEmployee,
     average_weekly_hours,
 )
+from app.domain.project_dates import project_columns
 from app.repositories import access
 from app.repositories.access import ProjectRef
 from app.repositories.dependency_links import DependencyQueries
@@ -39,6 +41,7 @@ from app.repositories.tables import (
     employee_skills,
     employees,
     milestones,
+    projects,
     skills,
     task_skill_requirements,
     wbs_nodes,
@@ -146,8 +149,9 @@ class PlanningRepository(DependencyQueries):
     async def save_constraints(self, project_id: uuid.UUID, body: ConstraintSetInput) -> None:
         """Upsert the constraint set and replace the milestones with the body's list.
 
-        Milestones with a known id are updated, the others inserted; any not in the body are
-        deleted.
+        The start and must-finish-by dates also become the project's start and target end date
+        (a date left empty keeps the project's), so the project has one start date. Milestones
+        with a known id are updated, the others inserted; any not in the body are deleted.
         """
         values = body.values()
         values["contingency_pct"] = Decimal(str(round(values["contingency_pct"], 2)))
@@ -156,6 +160,11 @@ class PlanningRepository(DependencyQueries):
             .values(project_id=project_id, **values)
             .on_conflict_do_update(index_elements=[constraint_sets.c.project_id], set_=values)
         )
+        dates = project_columns(body.start_date, body.must_finish_by)
+        if dates:
+            await self._conn.execute(
+                sa.update(projects).where(projects.c.id == project_id).values(**dates)
+            )
 
         existing: set[uuid.UUID] = set(
             (

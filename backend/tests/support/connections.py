@@ -43,6 +43,10 @@ class Result:
         assert len(self._rows) == 1
         return self._rows[0]
 
+    def scalars(self) -> list[Any]:
+        """Return the first column of every row (no rows: an empty list)."""
+        return [next(iter(row._mapping.values())) for row in self._rows]
+
 
 class Conn:
     """Connection that records compiled SQL and parameters and replays scripted results."""

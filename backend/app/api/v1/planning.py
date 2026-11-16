@@ -30,6 +30,7 @@ from app.domain.planning import (
     planning_weeks,
     skill_coverage,
 )
+from app.domain.project_dates import step5_conflict
 from app.repositories.access import ProjectRef
 
 router = APIRouter(tags=["planning"])
@@ -72,9 +73,10 @@ async def get_constraints(project_id: ProjectId, planning: Planning) -> Constrai
 async def put_constraints(
     project_id: ProjectId, body: ConstraintSetInput, planning: Planning
 ) -> ConstraintSet:
-    """Save the constraints and milestones and return them.
+    """Save the constraints and milestones and return them; the dates become the project's too.
 
-    Returns 422 when a milestone names a WBS node outside the project.
+    Returns 422 when a milestone names a WBS node outside the project, or when a date left empty
+    keeps a project date that the other one would cross.
     """
     project = await _writable_project(planning, project_id)
     nodes = {
@@ -82,6 +84,11 @@ async def put_constraints(
     }
     if nodes - await planning.node_ids(project_id, nodes):
         raise UnprocessableError("Milestone wbsNodeId must be a WBS node of this project")
+    conflict = step5_conflict(
+        body.start_date, body.must_finish_by, project.start_date, project.target_end_date
+    )
+    if conflict is not None:
+        raise UnprocessableError(conflict)
     await planning.save_constraints(project_id, body)
     return await planning.constraints(project)
 

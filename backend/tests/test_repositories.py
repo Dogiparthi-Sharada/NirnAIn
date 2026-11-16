@@ -19,7 +19,7 @@ from app.repositories.me import ProfileRepository
 from app.repositories.notifications import NotificationRepository
 from app.repositories.orgs import OrgRepository
 from app.repositories.projects import ProjectRepository, escape_like
-from tests.support.connections import Conn, Result
+from tests.support.connections import Conn, Result, Rows
 
 NOW = datetime(2026, 9, 24, 12, 0, tzinfo=UTC)
 
@@ -118,6 +118,43 @@ async def test_project_update_archives() -> None:
     assert "archived_at=" in conn.sql[1]
     assert await repo.update(uuid.uuid4(), {"name": "N"}) is True
     assert "archived_at" not in conn.sql[2]
+
+
+async def test_project_update_mirrors_dates_on_step_5() -> None:
+    """New dates also update the constraint set (start, must-finish-by) in the same transaction;
+    a cleared date keeps step 5's, other edits and refused updates write nothing there."""
+    project_id = uuid.uuid4()
+    conn = Conn(Result([], rowcount=1), Result([], rowcount=1))
+    repo = ProjectRepository(conn)  # type: ignore[arg-type]
+    changes = {"start_date": date(2026, 12, 1), "target_end_date": date(2027, 5, 28)}
+    assert await repo.update(project_id, changes) is True
+    assert conn.sql[1].startswith("UPDATE public.constraint_sets SET start_date=")
+    assert "must_finish_by=" in conn.sql[1]
+    assert (conn.params[1]["start_date"], conn.params[1]["must_finish_by"]) == (
+        date(2026, 12, 1),
+        date(2027, 5, 28),
+    )
+    assert conn.params[1]["project_id_1"] == project_id
+
+    cleared = Conn(Result([], rowcount=1), Result([], rowcount=1))
+    await ProjectRepository(cleared).update(  # type: ignore[arg-type]
+        project_id, {"start_date": date(2026, 12, 1), "target_end_date": None}
+    )
+    assert "must_finish_by" not in cleared.sql[1]
+    other = Conn(Result([], rowcount=1))
+    await ProjectRepository(other).update(project_id, {"name": "N"})  # type: ignore[arg-type]
+    refused = Conn(Result([], rowcount=0))
+    assert await ProjectRepository(refused).update(project_id, changes) is False  # type: ignore[arg-type]
+    assert len(other.sql) == len(refused.sql) == 1
+
+
+async def test_project_step5_dates() -> None:
+    """Step 5's saved dates are read from the constraint set; None before it is saved."""
+    saved = Conn(Rows([{"start_date": date(2026, 12, 1), "must_finish_by": None}]))
+    repo = ProjectRepository(saved)  # type: ignore[arg-type]
+    assert await repo.step5_dates(uuid.uuid4()) == (date(2026, 12, 1), None)
+    assert "FROM public.constraint_sets" in saved.sql[0]
+    assert await ProjectRepository(Conn(Result([]))).step5_dates(uuid.uuid4()) is None  # type: ignore[arg-type]
 
 
 async def test_project_get_and_delete() -> None:

@@ -15,6 +15,7 @@ from datetime import date
 from fastapi.testclient import TestClient
 
 from app.domain.common import OrgRole
+from app.domain.planning import ConstraintSetInput
 from app.repositories.access import ProjectRef
 from app.repositories.planning import PlanningRepository
 from tests.support.connections import Conn, Rows
@@ -78,7 +79,58 @@ def test_constraints_defaults_and_put(plan_client: TestClient, store: Store, aut
     assert plan_client.get(url, headers=auth(outsider)).status_code == 404
 
 
+def test_put_constraints_refuses_dates_crossing_the_projects(
+    plan_client: TestClient, store: Store, auth: Auth
+) -> None:
+    """Step-5 dates become the project's; one left empty keeps the project's, so a new start after
+    the project's end (or a deadline before its start) is refused rather than half-saved."""
+    user, _, project_id = create_project(
+        plan_client, store, auth, startDate="2026-11-02", targetEndDate="2027-01-29"
+    )
+    url = f"/api/v1/projects/{project_id}/constraints"
+    late_start = {**CONSTRAINTS, "startDate": "2027-02-01", "mustFinishBy": None}
+    response = plan_client.put(url, json=late_start, headers=auth(user))
+    assert response.status_code == 422
+    assert "set mustFinishBy as well" in response.json()["detail"]
+    early_end = {**CONSTRAINTS, "startDate": None, "mustFinishBy": "2026-10-30"}
+    response = plan_client.put(url, json=early_end, headers=auth(user))
+    assert response.status_code == 422
+    assert "set startDate as well" in response.json()["detail"]
+    moved = {**CONSTRAINTS, "startDate": "2027-02-01", "mustFinishBy": "2027-06-30"}
+    assert plan_client.put(url, json=moved, headers=auth(user)).status_code == 200
+
+
 # --------------------------------------------------------------------------- repository SQL
+async def test_repo_save_constraints_syncs_the_project_dates() -> None:
+    """Saving step 5 writes its start and must-finish-by on the project in the same transaction;
+    a cleared date keeps the project's."""
+    project_id = uuid.uuid4()
+    conn = Conn()
+    body = ConstraintSetInput.model_validate({**CONSTRAINTS, "milestones": []})
+    await PlanningRepository(conn).save_constraints(project_id, body)  # type: ignore[arg-type]
+    (update,) = [index for index, sql in enumerate(conn.sql) if "UPDATE public.projects" in sql]
+    assert (conn.params[update]["start_date"], conn.params[update]["target_end_date"]) == (
+        date(2026, 11, 16),
+        date(2026, 12, 31),
+    )
+    assert conn.params[update]["id_1"] == project_id
+
+    cleared = Conn()
+    body = ConstraintSetInput.model_validate(
+        {**CONSTRAINTS, "milestones": [], "mustFinishBy": None}
+    )
+    await PlanningRepository(cleared).save_constraints(project_id, body)  # type: ignore[arg-type]
+    (sql,) = [sql for sql in cleared.sql if "UPDATE public.projects" in sql]
+    assert "start_date=" in sql
+    assert "target_end_date" not in sql
+    neither = Conn()
+    body = ConstraintSetInput.model_validate(
+        {**CONSTRAINTS, "milestones": [], "startDate": None, "mustFinishBy": None}
+    )
+    await PlanningRepository(neither).save_constraints(project_id, body)  # type: ignore[arg-type]
+    assert not [sql for sql in neither.sql if "UPDATE public.projects" in sql]
+
+
 async def test_repo_constraints_default_from_project() -> None:
     """Without a saved set the repository returns the project's budget, dates and defaults."""
     project = ProjectRef(uuid.uuid4(), uuid.uuid4(), "CRM", date(2026, 11, 2), None, 900)

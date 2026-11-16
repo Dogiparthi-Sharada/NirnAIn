@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from app.core.pagination import Cursor
@@ -35,6 +35,8 @@ class Store:
     members: dict[tuple[uuid.UUID, uuid.UUID], OrgRole] = field(default_factory=dict)
     projects: dict[uuid.UUID, Project] = field(default_factory=dict)
     notifications: dict[uuid.UUID, tuple[uuid.UUID, Notification]] = field(default_factory=dict)
+    # Saved step-5 (start date, must-finish-by) per project, as the constraint set holds them.
+    step5: dict[uuid.UUID, tuple[date | None, date | None]] = field(default_factory=dict)
     next_code: int = 1
 
     def role(self, org_id: uuid.UUID, user_id: uuid.UUID) -> OrgRole | None:
@@ -219,6 +221,10 @@ class FakeProjects:
             return False
         self.store.projects[project_id] = project.model_copy(update=changes)
         return True
+
+    async def step5_dates(self, project_id: uuid.UUID) -> tuple[date | None, date | None] | None:
+        """Return the step-5 dates the test saved for the project, or None."""
+        return self.store.step5.get(project_id)
 
     async def delete(self, project_id: uuid.UUID) -> bool:
         """Delete when the acting user is owner, admin or the creator; False otherwise."""
