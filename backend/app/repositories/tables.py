@@ -176,6 +176,7 @@ intake_runs = sa.Table(
     sa.Column("output_tokens", sa.Integer),
     sa.Column("items_extracted", sa.Integer),
     sa.Column("error", sa.Text),
+    sa.Column("requested_by", _uuid),
     sa.Column("created_at", _timestamptz, nullable=False),
     sa.Column("started_at", _timestamptz),
     sa.Column("finished_at", _timestamptz),
@@ -424,6 +425,21 @@ ai_jobs = sa.Table(
     sa.Column("created_at", _timestamptz, nullable=False),
     sa.Column("started_at", _timestamptz),
     sa.Column("finished_at", _timestamptz),
+)
+
+# One row per successful Claude call; only the service connection writes it.
+ai_usage_events = sa.Table(
+    "ai_usage_events",
+    metadata,
+    sa.Column("id", _uuid, primary_key=True),
+    sa.Column("org_id", _uuid, nullable=False),
+    sa.Column("project_id", _uuid),
+    sa.Column("user_id", _uuid),
+    sa.Column("feature", sa.Text, nullable=False),
+    sa.Column("model", sa.Text, nullable=False),
+    sa.Column("input_tokens", sa.Integer, nullable=False),
+    sa.Column("output_tokens", sa.Integer, nullable=False),
+    sa.Column("created_at", _timestamptz, nullable=False, server_default=sa.FetchedValue()),
 )
 
 # --------------------------------------------------------------------------- workflow inputs

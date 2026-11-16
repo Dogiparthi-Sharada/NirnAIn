@@ -19,7 +19,7 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Depends, Path, Query, Request, Response, status
 
 from app.ai.llm import LLM, make_client
-from app.api.deps import ProjectId
+from app.api.deps import AiUsageLog, ProjectId
 from app.changes.compare import build_comparison
 from app.changes.derive import InvalidEditError, build_impact, from_edits, requirements_to_add
 from app.changes.llm import RULES_MODEL, ChangeDetector
@@ -27,6 +27,7 @@ from app.changes.questions import validate_answers
 from app.changes.team import reserved_employees, unused_reservations
 from app.core.db import UserDB
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableError
+from app.core.security import CurrentPrincipal
 from app.domain.changes import (
     DECIDED,
     ChangeAnswers,
@@ -39,6 +40,7 @@ from app.domain.changes import (
 )
 from app.domain.common import SolverStatus
 from app.repositories.access import ProjectRef
+from app.repositories.ai_usage import AiUsageEvent, record_ai_usage
 from app.repositories.change_plans import InForce, RunState
 from app.repositories.changes import SUCCESS, ChangeRepository
 
@@ -125,6 +127,8 @@ async def create_change(
     response: Response,
     changes: Changes,
     detector: Detector,
+    principal: CurrentPrincipal,
+    usage_log: AiUsageLog,
 ) -> ChangeRequest:
     """Record a change and find what it affects.
 
@@ -132,7 +136,8 @@ async def create_change(
     analysis runs inside the request, so the 202 response already carries the impact);
     edits and progress are taken as given (422 when they change nothing, or when a
     newcomer is already on the team, someone to remove isn't, or nobody would be left).
-    The change is measured against the run in force (`baseRunId`).
+    The change is measured against the run in force (`baseRunId`). A Claude read records
+    its tokens (never failing the request).
     """
     project = await _writable_project(changes, project_id)
     in_force = await changes.in_force(project_id)
@@ -144,7 +149,17 @@ async def create_change(
     if body.source == "notes":
         if not body.text:
             raise UnprocessableError("Paste the new meeting notes (or upload a file) first.")
-        found, model = await detector.detect(body.text, context)
+        found, model, usage = await detector.detect_with_usage(body.text, context)
+        if usage is not None and detector.model is not None:
+            event = AiUsageEvent(
+                "change_detection",
+                detector.model,
+                usage,
+                project_id=project_id,
+                org_id=project.org_id,
+                user_id=principal.user_id,
+            )
+            await record_ai_usage(usage_log, event)
     else:
         if body.edits is None:
             raise UnprocessableError("Enter at least one change first.")

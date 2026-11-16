@@ -4,7 +4,8 @@ Purpose: The model only proposes changes; each is kept only if its quote appears
 notes, its work package or person exists (a newcomer must not) and its value parses. Questions are
 always derived by rules, so answering them maps to overrides deterministically.
 How it fits: `ChangeDetector` is used by app/api/v1/changes.py and falls back to the rules in
-detect.py when Claude is off, slow or fails; layer: changes.
+detect.py when Claude is off, slow or fails; a Claude read also returns its token use, which the
+endpoint records; layer: changes.
 Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
@@ -18,7 +19,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-from app.ai.llm import LLM
+from app.ai.llm import LLM, Usage
 from app.ai.prompting import DATA_RULE, as_data, data_block, one_line
 from app.changes import detect, parsing
 from app.changes.context import ChangeContext
@@ -242,15 +243,32 @@ class ChangeDetector:
         """Keep the Claude client (None or unconfigured: rules only)."""
         self._llm = llm
 
+    @property
+    def model(self) -> str | None:
+        """The Claude model id this detector calls (None without a client)."""
+        return self._llm.model if self._llm is not None else None
+
     async def detect(self, notes: str, context: ChangeContext) -> tuple[list[DetectedChange], str]:
         """Changes in the notes and who read them (`rules` or the Claude model id).
 
         Never raises for AI problems: a failed or slow Claude call falls back to the rules.
         """
+        found, model, _usage = await self.detect_with_usage(notes, context)
+        return found, model
+
+    async def detect_with_usage(
+        self, notes: str, context: ChangeContext
+    ) -> tuple[list[DetectedChange], str, Usage | None]:
+        """The changes, who read them and the tokens of a successful Claude call (else None).
+
+        A Claude answer that can't be used still cost its tokens, so they are returned with
+        the rules' reading.
+        """
         llm = self._llm
+        usage: Usage | None = None
         if llm is not None and llm.configured:
             try:
-                parsed, _usage = await asyncio.wait_for(
+                parsed, usage = await asyncio.wait_for(
                     asyncio.to_thread(
                         llm.parse,
                         system=SYSTEM_PROMPT,
@@ -261,7 +279,7 @@ class ChangeDetector:
                     ),
                     timeout=TIMEOUT_S + 5,
                 )
-                return to_changes(parsed, notes, context), llm.model
+                return to_changes(parsed, notes, context), llm.model, usage
             except Exception:
                 logger.exception("change detection with Claude failed; using the rules")
-        return detect.detect(notes, context), RULES_MODEL
+        return detect.detect(notes, context), RULES_MODEL, usage

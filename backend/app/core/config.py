@@ -60,8 +60,9 @@ class Settings(BaseSettings):
     optimizer_stale_after_s: int = Field(default=180, ge=30)
 
     # AI intake (Claude). Without ANTHROPIC_API_KEY, intake uses the rule-based extractor.
+    # The same Sonnet model as `ai_model` by default (bug 6: Opus cost far more for intake).
     anthropic_api_key: SecretStr | None = None
-    intake_model: str = "claude-opus-5-5"
+    intake_model: str = "claude-sonnet-5-5"
     # Queued/running runs older than this are treated as orphaned (server restarted).
     intake_stale_after_s: int = Field(default=180, ge=30)
     # WBS generate/validate and the assistant. Without a key, WBS generation falls back

@@ -3,7 +3,8 @@
 Purpose: Step 1b ("Create from a transcript or document") pre-fills the project form with each
 field's verbatim quote and status; nothing is stored, and only organization members may call it.
 How it fits: Reads files with app/api/v1/documents.py `uploaded_file` and app/drafts, then
-`DraftReader` (Claude or the rules reader); layer: api.
+`DraftReader` (Claude or the rules reader); a Claude read's tokens go to
+app/repositories/ai_usage.py; layer: api.
 Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
@@ -16,9 +17,10 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
-from app.api.deps import OrgId, Orgs
+from app.api.deps import AiUsageLog, OrgId, Orgs
 from app.api.v1.documents import uploaded_file
 from app.api.v1.projects import ensure_org_visible
+from app.core.security import CurrentPrincipal
 from app.domain.drafts import MAX_DRAFT_TEXT, ProjectDraft, ProjectDraftTextIn
 from app.drafts.extract_text import (
     UnsupportedFileError,
@@ -26,6 +28,7 @@ from app.drafts.extract_text import (
     normalize,
 )
 from app.drafts.reader import DraftReader, get_draft_reader
+from app.repositories.ai_usage import AiUsageEvent, record_ai_usage
 
 router = APIRouter(tags=["projects"])
 
@@ -80,9 +83,17 @@ async def _text_source(request: Request) -> tuple[str, str]:
     openapi_extra={"requestBody": _REQUEST_BODY},
 )
 async def extract_project_draft(
-    org_id: OrgId, request: Request, orgs: Orgs, reader: DraftReaders
+    org_id: OrgId,
+    request: Request,
+    orgs: Orgs,
+    reader: DraftReaders,
+    principal: CurrentPrincipal,
+    usage_log: AiUsageLog,
 ) -> ProjectDraft:
-    """Read a draft with Claude when configured, else with the labelled rules reader."""
+    """Read a draft with Claude when configured, else with the labelled rules reader.
+
+    A Claude read records its tokens for the organization (never failing the request).
+    """
     await ensure_org_visible(orgs, org_id)
     content_type = request.headers.get("content-type", "").lower()
     if content_type.startswith("multipart/form-data"):
@@ -92,4 +103,10 @@ async def extract_project_draft(
     else:
         raise UnsupportedFileError(BODY_DETAIL)
     # Same ceiling as intake notes, so the text can be analyzed as-is after "Create".
-    return await reader.read(text[:MAX_DRAFT_TEXT], source_name)
+    draft, usage = await reader.read_with_usage(text[:MAX_DRAFT_TEXT], source_name)
+    if usage is not None:
+        event = AiUsageEvent(
+            "project_draft", draft.model, usage, org_id=org_id, user_id=principal.user_id
+        )
+        await record_ai_usage(usage_log, event)
+    return draft

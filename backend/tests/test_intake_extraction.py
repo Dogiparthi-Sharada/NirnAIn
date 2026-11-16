@@ -26,6 +26,7 @@ from app.jobs.intake import (
     IntakeRunner,
 )
 from app.repositories.intake_jobs import ClaimedRun
+from tests.support.ai_usage import UsageLog
 from tests.support.intake_jobs import FakeJobStore, extracted_item, fake_extract, runner_settings
 from tests.support.runners import drain
 
@@ -42,7 +43,10 @@ async def test_run_extracts_and_writes_items(monkeypatch: pytest.MonkeyPatch) ->
     )
     monkeypatch.setattr(IntakeRunner, "_extract", fake_extract(result))
     store = FakeJobStore(text="We must Ship the thing soon.")
-    runner = IntakeRunner(store, runner_settings())  # type: ignore[arg-type]
+    assert store.claimed is not None
+    project_id = store.claimed.project_id
+    usage = UsageLog()
+    runner = IntakeRunner(store, runner_settings(), usage_log=usage)  # type: ignore[arg-type]
     run_id = uuid.uuid4()
     await runner.submit(run_id)
     assert runner.active == 1
@@ -51,7 +55,7 @@ async def test_run_extracts_and_writes_items(monkeypatch: pytest.MonkeyPatch) ->
         store.finished
     )
     assert finished_run_id == run_id
-    assert model == "claude-opus-5-5"
+    assert model == "claude-sonnet-5-5"  # intake uses the same Sonnet model as AI_MODEL
     assert [(item.text, item.source_quote, item.evidence) for item in suggestions] == [
         ("Ship the thing", "Ship the thing", Evidence.STATED),
         ("Vendor may slip", None, Evidence.INFERRED),
@@ -59,6 +63,9 @@ async def test_run_extracts_and_writes_items(monkeypatch: pytest.MonkeyPatch) ->
     assert suggestions[1].evidence_note == NO_QUOTE_NOTE
     assert (input_tokens, output_tokens) == (100, 50)
     assert store.failed == []
+    # The call is also recorded once in the usage log, for the run's project.
+    assert usage.summary() == [("intake", "claude-sonnet-5-5", 100, 50)]
+    assert usage.rows[0]["project_id"] == project_id
 
 
 async def test_blank_notes_fail_without_calling_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,12 +131,14 @@ class FailingClient:
 async def test_claude_failure_falls_back_to_the_rules(client: FailingClient) -> None:
     """API errors, missing or invalid answers from Claude fall back to the rules."""
     store = FakeJobStore(text="RISKS:\n- Vendor delay")
-    runner = IntakeRunner(store, runner_settings())  # type: ignore[arg-type]
-    runner._llm = LLM(client, "claude-opus-5-5")  # type: ignore[arg-type]
+    usage = UsageLog()
+    runner = IntakeRunner(store, runner_settings(), usage_log=usage)  # type: ignore[arg-type]
+    runner._llm = LLM(client, "claude-sonnet-5-5")  # type: ignore[arg-type]
     await runner.submit(uuid.uuid4())
     await drain(runner)
     ((_run_id, _project_id, model, suggestions, input_tokens, output_tokens),) = store.finished
     assert (model, input_tokens, output_tokens) == ("rules", 0, 0)
+    assert usage.rows == []  # a failed call records nothing
     assert [(item.category, item.text) for item in suggestions] == [
         (ScopeCategory.RISK, "Vendor delay")
     ]
@@ -194,7 +203,10 @@ async def test_uploads_alone_can_be_analyzed(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(IntakeRunner, "_extract", fake_extract(ExtractionOutput(items=[])))
     store = FakeJobStore()
     store.claimed = ClaimedRun(uuid.uuid4(), [Source(uuid.uuid4(), "call.vtt", "Go-live in Q3")])
-    runner = IntakeRunner(store, runner_settings())  # type: ignore[arg-type]
+    # Recording the tokens fails (database down): the run still finishes.
+    usage = UsageLog(fail=True)
+    runner = IntakeRunner(store, runner_settings(), usage_log=usage)  # type: ignore[arg-type]
     await runner.submit(uuid.uuid4())
     await drain(runner)
     assert len(store.finished) == 1
+    assert store.failed == []

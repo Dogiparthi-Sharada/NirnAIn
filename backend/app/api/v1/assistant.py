@@ -3,7 +3,7 @@
 Purpose: Answer questions about the open project with Claude, using only what the caller can see; it
 is unavailable (503) rather than wrong when AI is not configured or does not answer in time.
 How it fits: Context from app/repositories/assistant.py, prompt from app/ai/assistant.py, model call
-through app/ai/llm.py; layer: api.
+through app/ai/llm.py, its tokens recorded through app/repositories/ai_usage.py; layer: api.
 Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 """
 
@@ -15,9 +15,11 @@ import logging
 from fastapi import APIRouter, Request
 
 from app.ai.assistant import NOT_CONFIGURED, TIMED_OUT, UNAVAILABLE, chat_messages, system_prompt
-from app.api.deps import AssistantContexts, AssistantLLM
+from app.api.deps import AiUsageLog, AssistantContexts, AssistantLLM
 from app.core.errors import NotFoundError, ServiceUnavailableError
+from app.core.security import CurrentPrincipal
 from app.domain.ai import AssistantReply, AssistantRequest
+from app.repositories.ai_usage import AiUsageEvent, record_ai_usage
 
 router = APIRouter(tags=["assistant"])
 logger = logging.getLogger("app.api.assistant")
@@ -29,11 +31,17 @@ logger = logging.getLogger("app.api.assistant")
     summary="Ask the planning assistant about the open project (503 when AI is not configured)",
 )
 async def ask_assistant(
-    body: AssistantRequest, request: Request, llm: AssistantLLM, contexts: AssistantContexts
+    body: AssistantRequest,
+    request: Request,
+    llm: AssistantLLM,
+    contexts: AssistantContexts,
+    principal: CurrentPrincipal,
+    usage_log: AiUsageLog,
 ) -> AssistantReply:
     """Answer the conversation's last question about the page (and project) the user is on.
 
     Returns 404 for a project the caller cannot see and 503 when AI is off, slow or fails.
+    Every answered call records its tokens (never failing the request).
     """
     if not llm.configured:
         raise ServiceUnavailableError(NOT_CONFIGURED)
@@ -61,6 +69,11 @@ async def ask_assistant(
     except Exception as exc:
         logger.exception("assistant call failed")
         raise ServiceUnavailableError(UNAVAILABLE) from exc
+    # Recorded before the empty-reply check: an empty answer still cost its tokens.
+    event = AiUsageEvent(
+        "assistant", llm.model, usage, project_id=body.project_id, user_id=principal.user_id
+    )
+    await record_ai_usage(usage_log, event)
     if not reply:
         raise ServiceUnavailableError(UNAVAILABLE)
     logger.info(

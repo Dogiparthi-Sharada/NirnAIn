@@ -76,9 +76,9 @@ async def test_create_without_pasted_text_stores_no_notes_document() -> None:
 
 async def test_claim_reads_the_runs_pasted_notes_and_readable_uploads() -> None:
     """Claiming reads the run's own notes and the uploads whose text was read."""
-    project_id, upload_id = uuid.uuid4(), uuid.uuid4()
+    project_id, upload_id, requester = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     conn = Conn(
-        Rows([{"project_id": project_id, "created_at": NOW}]),
+        Rows([{"project_id": project_id, "created_at": NOW, "requested_by": requester}]),
         Rows([{"content_text": "Kickoff notes"}]),
         Rows([{"id": upload_id, "title": "brief.pdf", "content_text": "Budget $375K"}]),
     )
@@ -89,8 +89,11 @@ async def test_claim_reads_the_runs_pasted_notes_and_readable_uploads() -> None:
             Source(None, "Pasted notes", "Kickoff notes"),
             Source(upload_id, "brief.pdf", "Budget $375K"),
         ],
+        requester,
     )
     claim, pasted, uploads = conn.sql
+    assert "RETURNING public.intake_runs.project_id" in claim
+    assert "public.intake_runs.requested_by" in claim
     assert claim.startswith("UPDATE public.intake_runs")
     assert "public.source_documents.created_at = " in pasted
     assert conn.params[1]["created_at_1"] == NOW

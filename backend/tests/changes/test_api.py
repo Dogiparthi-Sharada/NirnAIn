@@ -11,11 +11,18 @@ Created: 2026-11-13 · Version: 1.0 (NirnAIn demo release)
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.ai.llm import LLM, Usage
+from app.api import deps
+from app.api.v1 import changes as changes_api
+from app.changes.llm import ChangeDetector, ProposedChanges
 from app.domain.changes import PlanOverrides
 from app.domain.common import OrgRole, SolverStatus
+from tests.support.ai_usage import UsageLog
 from tests.support.changes import (
     NOTES,
     SALESFORCE,
@@ -199,3 +206,43 @@ def test_outdated_replan_is_not_approved(
     response = change_client.post(approve_url, headers=headers)
     assert (response.status_code, response.json()["status"]) == (200, "approved")
     assert change_store.applied == [fresh]
+
+
+class _ClaudeReader(LLM):
+    """A configured Claude stand-in: finds no change, reports 120 input and 30 output tokens."""
+
+    def __init__(self) -> None:
+        """Answer as the default AI model, without a client."""
+        super().__init__(client=None, model="claude-sonnet-5-5")
+
+    @property
+    def configured(self) -> bool:
+        """Report a configured key, so the detector asks Claude."""
+        return True
+
+    def parse(self, **fields: Any) -> Any:
+        """Return no changes with the call's token use."""
+        return ProposedChanges(changes=[]), Usage(120, 30)
+
+
+def test_a_claude_reading_records_its_tokens(
+    app: FastAPI, change_client: TestClient, store: Store, change_store: ChangeStore, auth: Auth
+) -> None:
+    """Reading notes with Claude records one usage row for the project, its workspace and the
+    caller; a recording failure still records the change."""
+    user, org, project_id = create_project(change_client, store, auth, name="EDP")
+    add_run(change_store, project_id, applied=True, version=1)
+    usage = UsageLog()
+    app.dependency_overrides[changes_api.get_change_detector] = lambda: ChangeDetector(
+        _ClaudeReader()
+    )
+    app.dependency_overrides[deps.get_ai_usage_connections] = lambda: usage
+    url = f"/api/v1/projects/{project_id}/changes"
+    body = {"source": "notes", "text": NOTES}
+    assert change_client.post(url, json=body, headers=auth(user)).status_code == 202
+    assert usage.summary() == [("change_detection", "claude-sonnet-5-5", 120, 30)]
+    ((row),) = usage.rows
+    assert (row["project_id"], row["org_id"], row["user_id"]) == (uuid.UUID(project_id), org, user)
+
+    app.dependency_overrides[deps.get_ai_usage_connections] = lambda: UsageLog(fail=True)
+    assert change_client.post(url, json=body, headers=auth(user)).status_code == 202

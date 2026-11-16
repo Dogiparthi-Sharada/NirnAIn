@@ -2,7 +2,8 @@
 
 Purpose: Analyze a run's notes (pasted text plus readable uploads) with Claude on a worker thread,
 or with the labelled rule-based extractor when there is no key or the call fails (the run's model is
-then 'rules'), and write the scope items on a service connection.
+then 'rules'), and write the scope items on a service connection. A successful Claude call also
+records its tokens in `ai_usage_events` (the run keeps its own token columns too).
 How it fits: The API (app/api/v1/intake.py) commits a queued intake run and calls
 `IntakeRunner.submit`; writes go through app/repositories/intake_jobs.py; lifecycle from
 app/jobs/background.py; layer: jobs.
@@ -31,7 +32,8 @@ from app.ai.intake_rules import RULES_MODEL, extract_by_rules
 from app.ai.llm import LLM, Usage, make_client
 from app.core.config import Settings
 from app.jobs.background import BackgroundRunner, RunnerMessages
-from app.repositories.intake_jobs import IntakeJobStore
+from app.repositories.ai_usage import AiUsageEvent, ServiceConnections, record_ai_usage
+from app.repositories.intake_jobs import ClaimedRun, IntakeJobStore
 
 logger = logging.getLogger("app.jobs.intake")
 
@@ -56,10 +58,17 @@ class IntakeRunner(BackgroundRunner[IntakeJobStore]):
     id_key = "run_id"
     restart_error = RESTART_ERROR
 
-    def __init__(self, store: StoreFactory | None, settings: Settings) -> None:
-        """Keep the store factory and the Claude client intake uses (`INTAKE_MODEL`)."""
+    def __init__(
+        self,
+        store: StoreFactory | None,
+        settings: Settings,
+        usage_log: ServiceConnections | None = None,
+    ) -> None:
+        """Keep the store factory, the Claude client intake uses (`INTAKE_MODEL`) and where
+        token use is recorded (None: not recorded)."""
         super().__init__(store)
         self._llm = LLM(make_client(settings), settings.intake_model)
+        self._usage_log = usage_log
 
     async def _run(self, run_id: uuid.UUID) -> None:
         """Claim a queued run, read its notes, store the suggestions; failures end the run."""
@@ -83,7 +92,7 @@ class IntakeRunner(BackgroundRunner[IntakeJobStore]):
                     "truncated": sum(source.truncated for source in sources),
                 },
             )
-            model, suggestions, usage = await self._suggest(sources)
+            model, suggestions, usage = await self._suggest(claimed, sources)
             async with self._store() as store:
                 await store.finish(
                     run_id,
@@ -103,12 +112,24 @@ class IntakeRunner(BackgroundRunner[IntakeJobStore]):
             logger.exception("intake run failed", extra=log_extra)
             await self.fail(run_id, FAILED_ERROR)
 
-    async def _suggest(self, sources: Sequence[Source]) -> tuple[str, list[ScopeSuggestion], Usage]:
+    async def _suggest(
+        self, claimed: ClaimedRun, sources: Sequence[Source]
+    ) -> tuple[str, list[ScopeSuggestion], Usage]:
         """Scope suggestions from Claude; from the rules when no key is set or Claude fails."""
         if not self._llm.configured:
             return await self._suggest_by_rules(sources)
         try:
             output, usage = await asyncio.to_thread(self._extract, notes_block(sources))
+            # Recorded as soon as the call succeeds: the tokens are spent even if the answer
+            # turns out unusable below. Recording never raises.
+            event = AiUsageEvent(
+                "intake",
+                self._llm.model,
+                usage,
+                project_id=claimed.project_id,
+                user_id=claimed.requested_by,
+            )
+            await record_ai_usage(self._usage_log, event)
             suggestions = await asyncio.to_thread(suggestions_from_model, output.items, sources)
         except (anthropic.APIError, ValueError):
             # An API error, a refusal or an answer that fails validation

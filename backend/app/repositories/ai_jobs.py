@@ -60,10 +60,11 @@ class ActiveJob:
 
 @dataclass(frozen=True, slots=True)
 class ClaimedJob:
-    """A job the worker has started: its project and kind."""
+    """A job the worker has started: its project, kind and who asked for it."""
 
     project_id: uuid.UUID
     kind: AiJobKind
+    requested_by: uuid.UUID | None = None
 
 
 def _job_select() -> sa.Select[Any]:
@@ -166,15 +167,18 @@ class AiJobStore(GeneratedWbsWriter):
 
     # ----------------------------------------------------------------- job rows
     async def claim(self, job_id: uuid.UUID) -> ClaimedJob | None:
-        """Move a queued job to running; returns its project and kind (None if it is not queued)."""
+        """Move a queued job to running; returns its project, kind and requester.
+
+        None when the job is not queued.
+        """
         stmt = (
             sa.update(ai_jobs)
             .where(ai_jobs.c.id == job_id, ai_jobs.c.status == JobStatus.QUEUED)
             .values(status=JobStatus.RUNNING, started_at=sa.func.now())
-            .returning(ai_jobs.c.project_id, ai_jobs.c.kind)
+            .returning(ai_jobs.c.project_id, ai_jobs.c.kind, ai_jobs.c.requested_by)
         )
         row = (await self._conn.execute(stmt)).first()
-        return ClaimedJob(row.project_id, AiJobKind(row.kind)) if row else None
+        return ClaimedJob(row.project_id, AiJobKind(row.kind), row.requested_by) if row else None
 
     async def finish(
         self,

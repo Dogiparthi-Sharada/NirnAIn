@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
 from app.ai.documents import TOO_LARGE_DETAIL, VIDEO_DETAIL
+from app.api import deps
 from app.api.v1 import documents as documents_api
 from app.domain.common import OrgRole
 from app.drafts import ai as draft_ai
@@ -33,6 +34,7 @@ from app.drafts.extract_text import (
 )
 from app.drafts.reader import DraftReader, get_draft_reader
 from app.drafts.rules import rules_draft
+from tests.support.ai_usage import UsageLog
 from tests.support.drafts import FakeDraftLLM
 from tests.support.store import Store
 from tests.support.tokens import Auth
@@ -334,6 +336,35 @@ def test_extract_uses_ai_and_falls_back_to_rules(
     response = draft_client.post(_url(org), json={"text": KICKOFF}, headers=auth(user))
     assert response.json()["model"] == "rules"
     assert response.json()["fields"]["name"]["value"] == "Enterprise Data Platform"
+
+
+def test_a_claude_draft_records_its_tokens(
+    app: FastAPI,
+    draft_client: TestClient,
+    store: Store,
+    auth: Auth,
+    reader_box: dict[str, DraftReader],
+) -> None:
+    """A Claude read records one usage row for the organization and caller; the rules record
+    nothing; a recording failure still returns the draft."""
+    user = store.add_user()
+    org = store.add_org(user)
+    usage = UsageLog()
+    app.dependency_overrides[deps.get_ai_usage_connections] = lambda: usage
+    reader_box["reader"] = DraftReader(FakeDraftLLM(_ai_answer()), 5)
+    assert draft_client.post(_url(org), json={"text": KICKOFF}, headers=auth(user)).is_success
+    assert usage.summary() == [("project_draft", "claude-test", 10, 10)]
+    ((row),) = usage.rows
+    assert (row["org_id"], row["user_id"], row["project_id"]) == (org, user, None)
+
+    reader_box["reader"] = DraftReader(None, 5)
+    assert draft_client.post(_url(org), json={"text": KICKOFF}, headers=auth(user)).is_success
+    assert len(usage.rows) == 1
+
+    app.dependency_overrides[deps.get_ai_usage_connections] = lambda: UsageLog(fail=True)
+    reader_box["reader"] = DraftReader(FakeDraftLLM(_ai_answer()), 5)
+    response = draft_client.post(_url(org), json={"text": KICKOFF}, headers=auth(user))
+    assert (response.status_code, response.json()["model"]) == (200, "claude-test")
 
 
 def test_extract_refuses_files_over_the_limit(

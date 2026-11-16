@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.ai.llm import LLM
+from app.ai.llm import LLM, Usage
 from app.changes.llm import ChangeDetector, ProposedChange, ProposedChanges, to_changes
 from tests.support.changes import (
     NOTES,
@@ -120,6 +120,29 @@ async def test_claude_may_report_a_newcomer_and_hours() -> None:
         ("capacity", None, 16, None),
     ]
     assert "- Security & Compliance Review" in llm.prompts[0]
+
+
+async def test_detector_returns_the_tokens_of_a_claude_call() -> None:
+    """A Claude read returns its tokens (for the usage log); the rules use none."""
+
+    class _CountingLLM(_FakeLLM):
+        """Answers like `_FakeLLM` and reports the call's token use."""
+
+        def parse(self, **fields: Any) -> Any:
+            """Return the fixed changes with 120 input and 30 output tokens."""
+            out, _ = super().parse(**fields)
+            return out, Usage(120, 30)
+
+    detector = ChangeDetector(_CountingLLM(ProposedChanges(changes=[])))
+    found, model, usage = await detector.detect_with_usage(NOTES, project_context())
+    assert (found, model, usage, detector.model) == (
+        [],
+        "claude-sonnet-5-5",
+        Usage(120, 30),
+        "claude-sonnet-5-5",
+    )
+    _, model, usage = await ChangeDetector(None).detect_with_usage(NOTES, project_context())
+    assert (model, usage) == ("rules", None)
 
 
 async def test_detector_falls_back_to_rules() -> None:

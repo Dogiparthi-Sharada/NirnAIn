@@ -26,10 +26,11 @@ from app.repositories.tables import intake_runs, scope_items, source_documents
 
 @dataclass(frozen=True, slots=True)
 class ClaimedRun:
-    """A run the worker has started: its project and the notes to analyze."""
+    """A run the worker has started: its project, the notes to analyze and who asked for it."""
 
     project_id: uuid.UUID
     sources: list[Source]
+    requested_by: uuid.UUID | None = None
 
 
 def _unedited() -> sa.ColumnElement[bool]:
@@ -65,7 +66,9 @@ class IntakeJobStore:
             sa.update(intake_runs)
             .where(intake_runs.c.id == run_id, intake_runs.c.status == JobStatus.QUEUED)
             .values(status=JobStatus.RUNNING, started_at=sa.func.now())
-            .returning(intake_runs.c.project_id, intake_runs.c.created_at)
+            .returning(
+                intake_runs.c.project_id, intake_runs.c.created_at, intake_runs.c.requested_by
+            )
         )
         row = (await self._conn.execute(stmt)).first()
         if row is None:
@@ -94,7 +97,7 @@ class IntakeJobStore:
             )
         ).all()
         sources += [Source(upload.id, upload.title, upload.content_text) for upload in uploads]
-        return ClaimedRun(project_id, sources)
+        return ClaimedRun(project_id, sources, row.requested_by)
 
     async def finish(
         self,

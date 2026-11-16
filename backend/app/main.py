@@ -87,14 +87,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.engine = create_engine(settings)
     app.state.token_verifier = TokenVerifier.from_settings(settings)
     engine = app.state.engine
+    # Each Claude call's tokens are recorded on a service-connection transaction of their own.
+    usage_log = engine.begin if engine is not None else None
     app.state.optimizer = OptimizationRunner(
         service_stores(engine, OptimizationJobStore) if engine is not None else None, settings
     )
     app.state.intaker = IntakeRunner(
-        service_stores(engine, IntakeJobStore) if engine is not None else None, settings
+        service_stores(engine, IntakeJobStore) if engine is not None else None,
+        settings,
+        usage_log=usage_log,
     )
     app.state.ai_runner = AiJobRunner(
-        service_stores(engine, AiJobStore) if engine is not None else None, settings
+        service_stores(engine, AiJobStore) if engine is not None else None,
+        settings,
+        usage_log=usage_log,
     )
     app.state.assistant_llm = LLM(make_client(settings), settings.ai_model)
     if app.state.engine is None:

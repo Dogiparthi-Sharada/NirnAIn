@@ -39,6 +39,7 @@ from app.jobs.ai_jobs import (
     AiJobRunner,
 )
 from app.repositories.ai_jobs import ClaimedJob
+from tests.support.ai_usage import UsageLog
 from tests.support.runners import drain
 
 
@@ -156,9 +157,16 @@ def deliverable(text: str, status: ScopeStatus = ScopeStatus.ACCEPTED) -> ScopeE
     return ScopeEntry(uuid.uuid4(), ScopeCategory.DELIVERABLE, text, status)
 
 
-async def _run(store: FakeStore, llm: FakeLLM | None = None) -> AiJobRunner:
-    """Run one job through a fresh runner and wait for it to finish."""
-    runner = AiJobRunner(store, Settings(_env_file=None), llm=llm or FakeLLM())  # type: ignore[arg-type, call-arg]
+async def _run(
+    store: FakeStore, llm: FakeLLM | None = None, usage: UsageLog | None = None
+) -> AiJobRunner:
+    """Run one job through a fresh runner (recording token use in `usage`) and wait for it."""
+    runner = AiJobRunner(
+        store,  # type: ignore[arg-type]
+        Settings(_env_file=None),  # type: ignore[call-arg]
+        llm=llm or FakeLLM(),  # type: ignore[arg-type]
+        usage_log=usage,
+    )
     await runner.submit(uuid.uuid4())
     await drain(runner)
     return runner
@@ -217,8 +225,17 @@ async def test_generate_with_claude_writes_its_plan_and_suggests_owners() -> Non
     )
     item = deliverable("CRM")
     store = FakeStore(AiJobKind.WBS_GENERATE, gen_input(item))
+    job = ClaimedJob(uuid.uuid4(), AiJobKind.WBS_GENERATE, uuid.uuid4())
+    store.claimed = job
     llm = FakeLLM(generated)
-    await _run(store, llm)
+    usage = UsageLog()
+    await _run(store, llm, usage)
+    # One usage row for the call, for the job's project and requester (the job keeps its own).
+    assert usage.summary() == [("wbs_generate", "claude-sonnet-5-5", 10, 5)]
+    assert (usage.rows[0]["project_id"], usage.rows[0]["user_id"]) == (
+        job.project_id,
+        job.requested_by,
+    )
     ((plan, owners),) = store.written
     assert plan.deliverables[0].scope_item_id == item.id
     assert owners == {plan.packages[0].key: SALESFORCE.id}
@@ -265,16 +282,24 @@ async def test_validate_with_claude_adds_its_issues_or_says_it_did_not_run() -> 
     """Claude's review issues are added as 'ai'; a failed review adds a "couldn't run" warning."""
     review = WbsReview(issues=[ReviewIssue(type="missing", text="No UAT work package.")])
     store = FakeStore(AiJobKind.WBS_VALIDATE, _validation_input())
-    await _run(store, FakeLLM(review))
+    usage = UsageLog()
+    await _run(store, FakeLLM(review), usage)
+    assert usage.summary() == [("wbs_validate", "claude-sonnet-5-5", 10, 5)]
     ((result, model, _, _),) = store.finished
     assert model == "claude-sonnet-5-5"
     assert result["issues"] == [{"type": "missing", "text": "No UAT work package.", "source": "ai"}]
     assert result["structureValid"] is False
 
     store = FakeStore(AiJobKind.WBS_VALIDATE, _validation_input())
-    await _run(store, FakeLLM(RuntimeError("secret internals")))
+    await _run(store, FakeLLM(RuntimeError("secret internals")), usage)
+    assert len(usage.rows) == 1  # a failed call records nothing
     ((result, model, _, _),) = store.finished
     assert model == "rules"
+    # A recording failure doesn't fail the job.
+    store = FakeStore(AiJobKind.WBS_VALIDATE, _validation_input())
+    await _run(store, FakeLLM(review), UsageLog(fail=True))
+    ((_, model, _, _),) = store.finished
+    assert (model, store.failed) == ("claude-sonnet-5-5", [])
     assert result["issues"] == [{"type": "warning", "text": REVIEW_UNAVAILABLE, "source": "ai"}]
 
 
