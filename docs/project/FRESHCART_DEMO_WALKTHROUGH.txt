@@ -1,0 +1,311 @@
+NirnAIn – AI-Assisted Project Planning Platform
+FreshCart demo: data sheet and walkthrough script
+
+Authors: Sharada Dogiparthi (Team Lead), Srilekha Budithi, Rakshitha Venigella. BAN 693 Capstone Project, California State University, East Bay. Date: November 14, 2026.
+
+This is the guide for the Zoom walkthrough recording of NirnAIn with the FreshCart story. Every screen name, button label, message, number and wait time below comes from a full rehearsal on the live site (https://nirnain-web.onrender.com) on November 18, 2026, with the two FreshCart meeting transcripts. Part A is the demo data sheet, Part B the checklist before recording, and Part C the screen-by-screen talking script for Sharada, Srilekha and Rakshitha.
+
+Rehearsal (backup) project: FreshCart in the account freshcart.rehearsal@nirnain.demo, with Plan v1 and Plan v2 already applied. If anything lags during recording, sign in there and continue from the same screen.
+
+Part A: FreshCart demo data sheet
+
+A1. Project
+
+• Project name – Value: FreshCart. Where it comes from: Read by AI from M1, confirmed on step 1.
+• Company – Value: Greenleaf Markets (regional grocery chain). Where it comes from: M1.
+• Department – Value: Digital Commerce. Where it comes from: Read by AI ("Stated").
+• Sponsor – Value: Daniel Brooks, VP of Digital Commerce. Where it comes from: Read by AI ("Stated").
+• Project manager – Value: Priya Nair (the signed-in user). Where it comes from: Default on step 1.
+• Type, priority, methodology – Value: Technology / IT; High; Agile (we changed priority and methodology from the defaults Medium and Waterfall, because M1 says two-week sprints). Where it comes from: Step 1, section 4 "More details".
+• Start date – Value: Monday, January 4, 2027. Where it comes from: Read by AI ("Stated").
+• Go-live (must finish by) – Value: October 1, 2027, hard deadline, Must hold. Where it comes from: Read by AI; deadline question answered "Hard deadline".
+• Budget – Value: $480,000, Must hold (M2 raises it to $520,000). Where it comes from: Read by AI ("Stated").
+• Contingency reserve – Value: 10% = $48,000 held back, so the plan must fit in $432,000. Where it comes from: Typed on step 5.
+• Capacity – Value: Can flex (up to 25% overtime, only when it saves the date). Where it comes from: Step 5 (Team & capacity switch).
+• Skills – Value: Must hold. Where it comes from: Step 5 (Required skills switch).
+• Working days – Value: 5 days (Mon-Fri). Where it comes from: Step 5 default.
+• Outside specialist – Value: First "No" (on purpose), then "Yes" at $160/h (confirmed). Where it comes from: Step 5 question.
+• Milestones (targets, from M1) – Value: Design sign-off Feb 26; backend APIs Apr 30; staff beta Jul 30; code freeze and security review Sep 10; app store submission Sep 15; launch Oct 1 (hard). Where it comes from: M1. Step 5 has no "add milestone" control on a project created from an upload, so these stay in the scope (constraints) and the sheet shows "Phase milestones: None".
+
+A2. Team
+
+Step 5 records each person's name, role, type (Employee or Contractor), hours and skill names. It does not record skill levels: every skill added on step 5 is stored at level 3, so the README levels below are for the story only. Employees have no rate field: the form says "Costed at their company rate, or the standard $85/h if none is on record", and the confirmation sheet says "6 employees at the standard $85/h (no company rate on record)". So the plans are costed at $85/h, not the $90/h finance rate from M1. At $90/h the employee part of each plan is about 5.9% higher (Plan v1 would be about $348,000 instead of $330,062; both stay far under the budget).
+
+Table (Name, Role, Hours/week, Type and rate, Skills (README level), Skills ticked on step 5):
+• Marcus Chen – Role: Tech Lead. Hours/week: 40. Type and rate: Employee, standard $85/h ($90/h per M1). Skills (README level): React Native 5, API design 4, Payments integration 3. Skills ticked on step 5: React Native, Mobile Development, Backend Development, Integration, Payments.
+• Sofia Ramirez – Role: Senior Mobile Developer. Hours/week: 40. Type and rate: Employee, $85/h. Skills (README level): React Native 4, iOS 4, Android 3, Payments integration 2. Skills ticked on step 5: React Native, Mobile Development, Payments.
+• Kevin O'Brien – Role: Mobile Developer. Hours/week: 32 (24 from Mar 15, M2). Type and rate: Employee, $85/h. Skills (README level): React Native 3, Android 4, Performance tuning 3. Skills ticked on step 5: React Native, Mobile Development, Performance Engineering.
+• Aisha Patel – Role: Backend Developer. Hours/week: 40. Type and rate: Employee, $85/h. Skills (README level): Node.js 4, API design 4, Databases 4, Payments integration 2. Skills ticked on step 5: Backend Development, Integration, Payments.
+• Hannah Lee – Role: UX/UI Designer. Hours/week: 24. Type and rate: Employee, $85/h. Skills (README level): UX design 5, UI design 5, Accessibility 4. Skills ticked on step 5: UX Design, UI Design, Accessibility.
+• Tom Wallace – Role: QA Lead. Hours/week: 40. Type and rate: Employee, $85/h. Skills (README level): QA testing 5, Test automation 4, Accessibility testing 3. Skills ticked on step 5: QA Testing, Accessibility.
+• Real-time maps specialist (Plan v1) – Role: Outside specialist. Hours/week: as needed. Type and rate: Contractor at $160/h (agreed in M1; NirnAIn's own estimate is $175/h until you confirm). Skills (README level): Real-time maps. Skills ticked on step 5: Booked by the optimizer: "Contractor: React Native / Real-time maps specialist", 160 hours.
+• Lucas Moreau (from M2) – Role: Maps contractor. Hours/week: 30. Type and rate: Contractor at $160/h, from March 15. Skills (README level): Real-time maps 5, React Native 4. Skills ticked on step 5: Added by the step-7 change ("Add Lucas Moreau · Maps contractor · 30 h/wk · contractor at $160/h").
+
+Required skills on step 5. The AI WBS names 18 skills. We keep 9 Required: Backend Development, Integration, Mobile Development, Payments, QA Testing, React Native, Real-time maps (renamed from the AI's "Maps"), UI Design, UX Design. We mark 9 Optional, because people outside the six-person delivery team do that work or it is coordination: Accessibility, Analytics, DevOps, Marketing, Performance Engineering, Project Management, Release Management, Security, Technical Writing. An Optional skill never blocks a work package. After this, the gap box says: "⚠ Nobody on the team has Real-time maps."
+
+A3. Task dependencies
+
+Business-level dependencies from M1, and how they appear in the rehearsal WBS:
+
+• Designs signed off before the mobile screens – In the AI WBS: 1.1.2 UI design → 1.3.1 App foundation (every screen package follows 1.3.1). What we did: Added 1.1.4 Design sign-off → 1.3.1 App foundation and sign-in.
+• Cart and order APIs before checkout integration – In the AI WBS: 1.2.4 Cart, checkout rules, delivery slot and order APIs → 1.3.3 Cart and one-page checkout. What we did: Present.
+• OMS order events, then the tracking API, then order tracking – In the AI WBS: 1.2.1 OMS order events → 1.2.6 Real-time order tracking and substitution APIs → 1.3.5 Live order tracking map. What we did: Present.
+• Order events before push notifications – In the AI WBS: 1.2.1 → 1.2.6 → 1.3.6 Notifications and substitution approval flow. What we did: Present (through 1.2.6).
+• Payments complete, then the 2-week security review, then app store submission – In the AI WBS: 1.2.5 Stripe payments and 1.3.3 → 1.6.1 Payments feature freeze → 1.6.2 Penetration test and two-week security review → 1.6.3 → 1.6.4 Security sign-off → 1.7.4 App store submission. What we did: Present.
+• All features complete before full regression testing – In the AI WBS: 1.3.5, 1.3.6, 1.4.1, 1.4.2, 1.4.3 → 1.5.2 Functional and regression testing. What we did: Added 1.3.4 Address entry and delivery slot booking → 1.5.2, and 1.4.4 In-app beta problem reporting → 1.5.2.
+
+Totals. The AI created 57 finish-to-start dependencies. We added 3 for Plan v1 (60 in total) and 6 for the loyalty work in M2 (66 in total). All are Finish-to-Start.
+
+The AI's WBS (step 4): 8 deliverables, 38 work packages, 101.4 weeks of effort.
+
+Table (Deliverable, Work packages (AI estimate)):
+• 1.1 UX research, designs and clickable prototype: 1.1.1 UX research (2w); 1.1.2 UI design and accessibility specifications (3.6w); 1.1.3 Clickable prototype and usability check (2w); 1.1.4 Design sign-off (0.4w).
+• 1.2 New backend APIs and OMS integration: 1.2.1 OMS order events integration and API contract (3w); 1.2.2 Dev, staging and production environments (2w); 1.2.3 Catalogue and typo-tolerant search APIs (4w); 1.2.4 Cart, checkout rules, delivery slot and order APIs (5w); 1.2.5 Stripe payments integration (4w); 1.2.6 Real-time order tracking and substitution APIs (4w).
+• 1.3 React Native iOS and Android app features: 1.3.1 App foundation and sign-in (4w); 1.3.2 Browse, search, filters and reorder (5w); 1.3.3 Cart and one-page checkout (5w); 1.3.4 Address entry and delivery slot booking (3w); 1.3.5 Live order tracking map (4w); 1.3.6 Notifications and substitution approval flow (5w).
+• 1.4 Cross-cutting app capabilities: 1.4.1 Account deletion and one-time code card verification (2w); 1.4.2 Consent-based analytics and funnel tracking (2w); 1.4.3 WCAG 2.1 AA accessibility implementation (3w); 1.4.4 In-app beta problem reporting (1w); 1.4.5 Performance and crash-rate optimisation (3w).
+• 1.5 Test plan and test reports: 1.5.1 Test plan and supported device matrix (2w); 1.5.2 Functional and regression testing (6w); 1.5.3 Load test for launch sign-up spike (2w); 1.5.4 Test reports and acceptance (1w).
+• 1.6 Security review sign-off: 1.6.1 Payments feature freeze and review preparation (0.4w); 1.6.2 Penetration test and two-week security review (2w); 1.6.3 Security findings remediation and retest (1.6w); 1.6.4 Security sign-off (0.4w).
+• 1.7 Staff beta, store releases and hypercare: 1.7.1 Staff beta with about 200 employees (3w); 1.7.2 Beta feedback triage and fixes (3w); 1.7.3 App store listing assets (3w); 1.7.4 App store submission and review handling (3w); 1.7.5 Production release and go-live (1w); 1.7.6 Post-launch hypercare (2w).
+• 1.8 Support runbook and store staff guide: 1.8.1 Support runbook (2w); 1.8.2 Store staff guide for app orders (1.6w); 1.8.3 Handover to support (0.4w).
+• 1.9 FreshPoints loyalty (added by us after M2): 1.9.1 Loyalty checkout design and customer test (1w, UX Design); 1.9.2 Loyalty platform API and caching layer (4w, Backend Development + Integration); 1.9.3 Card linking, points balance and redeem toggle (3w, React Native + Mobile Development); 1.9.4 Loyalty testing: rounding, refunds, cancelled orders (2w, QA Testing).
+
+One edit on step 4. The AI tagged 1.2.6 Real-time order tracking and substitution APIs with Backend Development and Maps. Aisha builds that API (M1); the maps skill is for the app's live map (1.3.5). We unticked Maps on 1.2.6, so the only real-time maps work is 1.3.5 Live order tracking map.
+
+Loyalty dependencies added after M2 (step 5): 1.2.4 → 1.9.2 (Aisha: cart and order APIs first); 1.9.1 → 1.9.3; 1.9.2 → 1.9.3; 1.9.3 → 1.9.4; 1.9.3 → 1.6.1 (the security review covers points redemption); 1.9.3 → 1.5.2 (feature complete before regression testing).
+
+A4. What M2 changes
+
+NirnAIn reported "What changed (8 found in the new notes)". Each row shows the quote from the meeting.
+
+Table (Change, Before → after, NirnAIn's label and question, Our answer):
+• Budget – Before → after: $480,000 → $520,000. NirnAIn's label and question: BUDGET, Stated. "This conflicts with a value you confirmed. Plan v1 uses $480,000. Which should the new plan use?". Our answer: Use $520,000.
+• UX designs done – Before → after: 1.1.2 UI design and accessibility specifications: done. NirnAIn's label and question: PROGRESS, "Done. Nothing left to plan.". Our answer: (no question).
+• Prototype done – Before → after: 1.1.3 Clickable prototype and usability check: done. NirnAIn's label and question: PROGRESS. Our answer: (no question).
+• Design sign-off done – Before → after: 1.1.4 Design sign-off: done (Feb 26). NirnAIn's label and question: PROGRESS. Our answer: (no question).
+• Kevin's hours – Before → after: 32h/week → 24h/week (from March 15). NirnAIn's label and question: TEAM, question "Hours per week for Kevin O'Brien. Why we ask: Plan v1 uses 32h a week.". Our answer: Use 24h.
+• FreshPoints loyalty in launch scope – Before → after: new requirement. NirnAIn's label and question: NEW REQUIREMENT, "Not re-planned": add its work in WBS Builder (step 4) before re-planning; it joins the scope when you approve. Our answer: We added deliverable 1.9 with 4 work packages and 6 dependencies.
+• Tablet layout – Before → after: open question → out of scope. NirnAIn's label and question: SCOPE, "Not re-planned" (no tablet work exists in the WBS). Our answer: Nothing to do.
+• Lucas Moreau joins – Before → after: new contractor. NirnAIn's label and question: TEAM: "Add Lucas Moreau · Maps contractor · 30 h/wk · contractor at $160/h". Our answer: Accepted with the change.
+
+Not detected as separate changes: the new stakeholder Olivia Grant (stakeholders aren't a change type), the unchanged October 1 date and 10% contingency (no change), and other finished work mentioned in M2 (catalogue API done, test strategy signed off, UX research). NirnAIn also applied Kevin's 24h and Lucas's start to the whole remaining plan, not from March 15.
+
+A5. Rehearsal results
+
+• Infeasible demo (step 6) – Inputs: Specialist "No", all M1 dependencies. Result: "This plan is infeasible as specified." Option: "Bring in a contractor · Go-live Oct 1, 2027 · about $330,062".
+• Plan v1 (applied) – Inputs: Specialist "Yes" at $160/h. Result: OPTIMAL (OR-Tools CP-SAT, 6.4 s). Cost $330,062 ($149,939 under budget). Completion Oct 1, 2027 ("Meets target date"). Utilization 37% average across 7 resources (Marcus 60%, Tom 52%, Hannah 42%, Sofia 37%, Aisha 34%, Kevin 23%, specialist 10%). Critical path 39 weeks. The constraint check notes that the plan uses overtime: "This plan already schedules Hannah Lee at 125% of their hours.".
+• Plan v2 (approved) – Inputs: M2 change: $520,000, Kevin 24h, Lucas joins, designs done, plus the loyalty WBS. Result: Completion Sep 8, 2027 (−23 days vs Plan v1). Cost $340,056 ($9,995 more than v1). Headroom $179,944 under $520,000 (was $149,939). 28 moved; 5 owners changed; 4 added; 3 done. 1.3.5 Live order tracking map moves from the specialist to Lucas Moreau.
+• Re-plan without loyalty work (for comparison) – Inputs: Same change, no loyalty WBS. Result: Sep 8, 2027, $306,056. So the loyalty work costs about $34,000 and no time in this plan.
+
+Exact blocker texts of the infeasible run (all M1 dependencies added). The run lists about 40 conflicting constraints. The important lines are:
+
+• "CONFLICTING CONSTRAINT · Deadline: must finish by Oct 1, 2027 · There isn't enough qualified capacity to finish all work by then together with the other constraints listed here."
+• "CONFLICTING CONSTRAINT · Skill: 1.3.5 Live order tracking map requires Real-time maps ≥ 2 · No one on the team has Real-time maps at level 2 or higher, and contractors are turned off."
+• Then skill lines for the people who must do the chained work, for example "Skill: 1.5.2 Functional and regression testing requires QA Testing ≥ 2 · Only Tom Wallace qualify, and they can't take it on without breaking another constraint listed here.", capacity lines such as "Capacity: Hannah Lee (24h/week) · Hannah Lee can't take on the work they're needed for within 24h/week. At those hours 1.1.1 UX research takes 15 working days instead of 10.", and the dependency chain (for example "Dependency: 1.1.4 Design sign-off → 1.3.1 App foundation and sign-in").
+• "What it would take: The deadline and the required skills can't both hold. Each option changes as little as possible. Pick one and the solver runs again."
+• Priced option: "Bring in a contractor · Go-live Oct 1, 2027 · about $330,062 · A contractor takes 160 hours of the work at $160/h, covering React Native / Real-time maps, which nobody on the team has · go-live Oct 1, 2027 (on the Oct 1 target)". In a fresh project where the rate isn't confirmed yet, this line says "$175/h (estimate)".
+• "Also tried (3)": "Overtime up to 25% over people's hours: Not needed: overtime is already allowed under Can flex." · "Move go-live: Not enough on its own. Only Hannah Lee can do 1.1.4 Design sign-off, and they can't fit it in, …, and 12 other limits also stand." · "Change these together: Not needed: one change on its own already gets a plan."
+
+Before we added the design sign-off dependency, the same "No" run listed a single conflict (the Real-time maps line) and the option "Go-live Sep 27, 2027 · about $329,376 … at $175/h (estimate)". Expect the longer list in the recording if you add all three dependencies first.
+
+Important note about dates in Plan v2. We replay a March 2027 meeting in November 2026. NirnAIn re-plans from today, and today is before the project start, so Plan v2 also re-schedules work in January and February 2027 (for example 1.9.1 Loyalty design Jan 4–Jan 14 and 1.3.1 App foundation Jan 4–Jan 27). That is why v2 finishes earlier. In real use on March 1, 2027, the re-plan starts from that day. In one experiment we moved the start date to March 1, 2027: the re-plan was infeasible ("The dependency chain alone runs until Oct 26, 2027, even with unlimited people"), with the option "Accept Nov 9, 2027". That run kept January and February work that M2 says is finished (catalogue API, test strategy) as still to do, so it is pessimistic. We restored January 4 and approved the plan described above.
+
+A6. Logins
+
+• Rehearsal (backup) – Email: freshcart.rehearsal@nirnain.demo. Password: FreshCart2026! Use: Name Priya Nair. FreshCart with Plan v1 (superseded) and Plan v2 (in force). Switch to it if a screen hangs.
+• PO's demo account – Email: jane.doe@nirnain.demo. Password: JaneDemo2026! Use: Jane Doe's workspace (Enterprise Data Platform and others). The recording can create FreshCart here or in a fresh account.
+
+Part B: Before recording
+
+1. Wake the API 3 minutes before. Open https://nirnain-api.onrender.com/health in a browser tab and wait until it shows a status (the first call after a quiet period can take about a minute; during the rehearsal it was already awake and answered in 0.2 seconds). Then open https://nirnain-web.onrender.com.
+2. Browser: zoom 100–110%, a window about 1440 × 900, bookmarks bar hidden, one tab for the live site and one tab already signed in to the backup account on its FreshCart dashboard.
+3. Files on the desktop: M1_2026-12-07_FreshCart_kickoff.vtt and M2_2027-03-01_FreshCart_change_review.vtt. Download them from the repository: https://github.com/Dogiparthi-Sharada/NirnAIn, folder tests/fixtures/transcripts (open each file, then "Download raw file").
+4. Zoom: share only the browser window, leave "Optimize for video clip" off, mute notifications (system "Do not disturb"), close Slack and email, and check who is presenting before you start.
+5. Claude cost: one full run (draft, intake, WBS draft, WBS review, change reading) used about 49,000 input and 25,000 output tokens, about $0.53 at Sonnet prices. Each extra click on an AI button costs more; never use the NirnAIn AI chat panel during the recording.
+6. Buttons never to click (they call Claude again): "Go to AI Intake" then "Re-Analyze", "AI Validate", "Re-check (uses AI)", "Find what changed" a second time, and anything in the "NirnAIn AI" chat panel. "Run again", "Approve inputs & run", "Re-solve with this change" and "Re-plan" use the solver and are free.
+7. If something hangs:
+  ◦ Safe to reload: Dashboard, Scope Review, WBS Builder, Constraints, Optimization Results and Changes & Versions. Everything is saved as you go; a running AI job or solver run continues on the server and the page picks it up again.
+  ◦ Not safe to reload: Create Project from upload before "Create project & review scope →" (the draft isn't saved), and a step-7 notes box before "Find what changed" (the text is lost; upload the file again).
+  ◦ Scope Review shows "No scope yet · Run AI Project Intake first · Go to AI Intake" for about a minute while the intake runs. Do not click it. Wait; the items appear by themselves.
+  ◦ If a wait goes past twice the times in Part C, switch to the backup tab and continue from the same step there.
+
+Part C: Talking script
+
+Total about 23 minutes. Times are a guide. Measured waits are in brackets.
+
+00:00–01:30 Intro (Sharada)
+
+Screen: Landing page, https://nirnain-web.onrender.com.
+
+Sharada: "Hi, we're Sharada, Srilekha and Rakshitha, and this is NirnAIn, our BAN 693 capstone project. Project plans usually start from a meeting: lots of decisions, spread across an hour of talk. Turning that into a plan that really fits the budget, the deadline and the team takes days, and the gaps only show up later. NirnAIn reads the meeting, lets us check every value it found, and then uses an optimizer to tell us honestly whether the plan fits and, if not, what it would cost to fix."
+
+Sharada: "Today we plan FreshCart, a grocery delivery app for Greenleaf Markets. We use two meeting transcripts: the kickoff in December, and a change review in March. Srilekha will start."
+
+01:30–02:30 Sign up and dashboard (Srilekha)
+
+Click: "Get Started" → fill First name, Last name, Work email, Password, Confirm password → "Create account". What appears: the Dashboard: "Welcome back, Priya. No projects in Priya Nair's Workspace yet." (Under 1 second.)
+
+Srilekha: "Signing up takes one screen; email confirmation is off for the demo. The left side shows the seven steps of the workflow. They unlock once we have a project. On the right is the NirnAIn AI panel; we won't use it today."
+
+02:30–04:00 Step 1: Create the project from the kickoff transcript (Srilekha)
+
+Click: "+ Create Project" → "Upload or paste →" → drop M1_2026-12-07_FreshCart_kickoff.vtt on the upload area → "Read it and fill in the project". What appears: [about 5 seconds] "Here's what AI found. Check each field. Nothing is saved until you click Create project." An amber box: "Needs you before the project can be created. 2 values to check: Project Name … Project Description …".
+
+Srilekha: "This is a 59-minute kickoff. NirnAIn found the name FreshCart, the start date January 4, 2027, the go-live October 1, 2027, the budget of $480,000, the department Digital Commerce and the sponsor Daniel Brooks. Every value shows the sentence it came from, and its status. 'Stated' means it's quoted word for word. The name and description are 'Inferred', so the app won't create the project until I confirm them."
+
+Click: "Confirm" under Project Name, "Confirm" under Project Description. Open "More details": Priority High, Methodology Agile.
+
+Srilekha: "The defaults say Waterfall, but the team works in two-week sprints, so I change that to Agile. Now the chip says 'Ready to create'."
+
+Click: "Create project & review scope →".
+
+04:00–06:30 Steps 2–3: AI intake and Scope Review (Srilekha)
+
+What appears: Scope Review with "No scope yet". Do not click "Go to AI Intake". While it loads [about 65 seconds]:
+
+Srilekha: "Creating the project starts the AI intake on the same transcript, so there's nothing to click on step 2. It reads the whole meeting and pulls out objectives, requirements, deliverables, constraints, risks and missing information. The part I care about as the tester is the evidence: every item has to keep the exact sentence it came from. If the AI says something the meeting didn't say, it's marked 'Not in your notes', and it can never slip into the plan unnoticed. When we tested this, we checked that a blank edit is refused, that removed items keep an Undo after a reload, and that the next step stays locked until every item is decided. That gate is the point: the WBS is built only from scope a person has accepted."
+
+What appears: "0 / 74 accepted". Objectives 3, Requirements 27, Deliverables 10, Constraints 22, Risks 8, Missing information 4.
+
+Srilekha: "74 items. For example: 'Grow online orders from 8 percent to 20 percent of sales within twelve months of launch', with Daniel's sentence under it. 'Security review takes two weeks and can start only after payments integration is complete.' Even the open questions: 'Whether a tablet layout is needed is undecided.'"
+
+Click: "Continue to WBS Builder →" first, to show the gate: "74 items are still pending. Accept or remove each one before you continue." Then "Accept All quoted". What appears: toast "Accepted 73 items quoted from your notes. 1 left for you to check." (About 5 seconds.)
+
+Srilekha: "One item is inferred, so it's left for me: 'It has not been confirmed that the team fits within the budget.' That's fair, that's exactly what the plan will answer. I accept it. And one thing the AI didn't pull out: the target milestones for the staff beta and code freeze. I add it myself under Constraints."
+
+Click: "Accept" on the inferred item. In Constraints, "+ Add item", type "Target milestones: internal staff beta by July 30, 2027; code freeze and security review finished by September 10, 2027.", "Add". What appears: "75 / 75 accepted" and "Every item is accepted or removed."
+
+06:30–09:00 Step 4: WBS Builder (Srilekha)
+
+Click: "Continue to WBS Builder →". What appears: "AI is building the WBS from the accepted scope…". While it loads [about 55 seconds, then the AI review about 15 seconds more]:
+
+Srilekha: "Now the AI drafts the work breakdown from the 75 accepted items: deliverables, work packages, a duration for each, and the skills each package needs. Two design choices matter here. First, the durations are only suggestions: the optimizer refuses to use an estimate until a person confirms it. Second, as soon as the WBS exists, a second AI pass reviews it for missing and duplicate work, once. Editing the WBS later doesn't call the AI again; free built-in checks run after every edit instead. That keeps the cost of a full demo under a dollar."
+
+What appears: "AI drafted this WBS from your 75 accepted scope items: 8 deliverables, 38 work packages, 101.4 weeks of effort." (The first time it may say "1 accepted scope items"; that is a display bug, the count is right after a reload.) "AI validation: 6 issues", for example "Missing: The driver tip requirement is not named in 1.2.4 or 1.3.3" and "Warning: 1.2.5 should state that it builds on the new Stripe API version". "Suggestions only. Nothing is added to the WBS until you add it."
+
+Srilekha: "These are useful catches, and they stay suggestions. One correction from us: the AI tagged 1.2.6, the tracking API, with the Maps skill. In the meeting, Aisha builds that API; the live map is app work. So I untick Maps there."
+
+Click: "Edit" on 1.2.6 Real-time order tracking and substitution APIs → untick "Maps" → "Save". Do not click "Re-check (uses AI)" in the note that appears. Click: "Continue to Constraints →" to show the gate ("38 AI effort estimates need your confirmation …"), then "Confirm all estimates" → "101.4 weeks of effort confirmed by you." → "Continue to Constraints →".
+
+09:00–13:00 Step 5: Constraints (Rakshitha)
+
+Rakshitha: "This is the screen I designed the most carefully. Each limit has a switch: Must hold, which the solver never breaks, or Can flex, which may bend at a price. And we only ask questions whose answer changes the plan."
+
+Click: Specialist question "No". Deadline question "Hard deadline". Contingency Reserve: type 10 and press Enter. Leave Budget Must hold, Deadline Must hold, Team & capacity Can flex, Required skills Must hold, Working Days 5 days (Mon–Fri).
+
+Rakshitha: "The budget, $480,000, and the dates came from the transcript. Daniel wants 10 percent held back, so I set the contingency to 10 percent. On the specialist question we answer No on purpose: let's first try with only our own team. Capacity can flex, because Daniel allowed up to one extra day a week. Notice the warning: NirnAIn recommends holding capacity when the deadline is hard, because overtime can hide a slipping date. We keep Can flex as the sponsor decided, and the warning stays visible on the results."
+
+Click: "+ Add team member" for each person: Name, Role, Type Employee, Hours, tick the skills from Part A2 → "Add to team". (Each save takes under 1 second.)
+
+Rakshitha (while typing): "Employees don't get a rate field: they're costed at their company rate, or the standard $85 an hour when none is on record. Finance said $90 in the meeting, so our costs are about 6 percent on the low side; we'd add company rates in the next version. Kevin is 32 hours, Hannah 24. Skills come from one shared list, the skills the WBS needs, so people and work use the same words."
+
+Click: In Required skills, rename "Maps" to "Real-time maps" (type in the name and press Enter). Click "Optional" for Accessibility, Analytics, DevOps, Marketing, Performance Engineering, Project Management, Release Management, Security, Technical Writing. What appears: "⚠ Nobody on the team has Real-time maps. Add someone who has it, allow an outside specialist (question above), or mark it Optional."
+
+Rakshitha: "Optional skills are about people outside the six-person team, like InfoSec and marketing, or coordination work. Required skills decide who may take a package. Now the only real gap is real-time maps, exactly as in the meeting."
+
+Click: Task dependencies: "+ Add Dependency", Predecessor 1.1.4 Design sign-off, Successor 1.3.1 App foundation and sign-in, "Add dependency". Repeat for 1.3.4 → 1.5.2 and 1.4.4 → 1.5.2.
+
+Rakshitha: "The AI already created 57 dependencies, including payments, then the security review, then app store submission. We add three from the meeting: screens start after design sign-off, and all features, including slot booking and the beta feedback button, before regression testing. Dependencies always must hold."
+
+Click: "Run Optimization →".
+
+13:00–16:30 Step 6: the infeasible run and the fix (Sharada, with Srilekha and Rakshitha)
+
+What appears: "Check the inputs the solver will use": 38 work packages · 101 weeks; 60 dependencies; Budget $480,000 · must hold; Deadline Oct 1, 2027 · hard; Outside specialists Not allowed; Employee cost 6 employees at the standard $85/h; Reserve 10% = $48,000 held back. "Inferred values are never used. Approving locks this exact set of inputs."
+
+Sharada: "Before anything runs, we approve exactly what the solver will use. Nothing inferred gets in."
+
+Click: "Approve inputs & run". While it loads [about 20 seconds]:
+
+Sharada: "This is OR-Tools, Google's constraint solver, not the AI. It assigns every work package to a qualified person and a date, respecting every Must hold limit, and it minimises cost. It's free to run, so we can run it as often as we like."
+
+What appears: "This plan is infeasible as specified. No assignment satisfies every hard constraint at once." A list of conflicting constraints, including "Skill: 1.3.5 Live order tracking map requires Real-time maps ≥ 2 · No one on the team has Real-time maps at level 2 or higher, and contractors are turned off." Further down: "What it would take: The deadline and the required skills can't both hold." Option "Bring in a contractor · Go-live Oct 1, 2027 · about $330,062 · A contractor takes 160 hours of the work at $175/h (estimate), covering React Native / Real-time maps …". "Also tried": overtime "Not needed: overtime is already allowed under Can flex"; move go-live "Not enough on its own"; change these together "Not needed".
+
+Sharada: "This is the moment most planning tools skip. NirnAIn doesn't quietly hand us a late or impossible plan. It says no, and why: the deadline and the required skills can't both hold. The key line is real-time maps: nobody on our team has it, and we said no contractors. The long list is everything tied up in that conflict: the dependency chain and the people who are already full."
+
+Srilekha: "And it didn't just say no. It tried the alternatives. Overtime alone doesn't help, moving the date alone doesn't help. The one change that works is a contractor, and it's priced."
+
+Rakshitha: "But it prices the contractor at $175 an hour, its market estimate. In the kickoff, Daniel approved a maps contractor at about $160."
+
+Sharada: "Right, so let's record the decision properly instead of taking the estimate: yes to an outside specialist, at $160 an hour."
+
+Click: "Edit constraints" → specialist question "Yes" → Specialist rate per hour: type 160, press Enter (the chip turns "✓ Confirmed") → "Run Optimization →" → "Approve inputs & run". While it loads [about 10 seconds]:
+
+Sharada: "Same inputs, one decision changed, and now the rate is confirmed, so the cost is firm, not estimated."
+
+What appears: "OPTIMAL · OR-Tools CP-SAT". BUDGET $330,062, $149,939 under budget. COMPLETION DATE Oct 1, 2027, Meets target date. RESOURCE UTILIZATION 37%, average across 7 resources. CRITICAL PATH 39 weeks. Constraint check: "This plan already schedules Hannah Lee at 125% of their hours."
+
+Sharada: "Now it fits: $330,062, well inside the $432,000 we may spend after the reserve, and it lands exactly on October 1. It's tight, and NirnAIn tells us how: Hannah works up to one extra day a week during design, which the sponsor allowed. The specialist takes the live tracking map, 160 hours. The tabs below show every assignment, every schedule change with its reason, and each person's utilization."
+
+Click: "Apply Optimized Plan" → "✓ Applied as Plan v1 · Plan v1 applied. Step 7, Changes & Versions, is now open." Optionally "Export PDF Report" [about 4 seconds] and "Export to MS Project" [about 1 second].
+
+16:30–20:30 Step 7: Changes & Versions (Sharada, Rakshitha on the WBS)
+
+Sharada: "Plans change. In March, the steering group meets again, and a lot happens: a new stakeholder, loyalty points pulled into the launch, more budget, Kevin loses eight hours a week, and the maps contractor is found."
+
+Click: "Changes & Versions" → "Upload a file" → M2_2027-03-01_FreshCart_change_review.vtt → "Find what changed". While it loads [about 15 seconds]:
+
+Sharada: "The AI reads the change meeting and compares it with Plan v1. It never overwrites a value we confirmed: if the meeting contradicts one, it asks."
+
+What appears: "What changed (8 found in the new notes)": Budget $480,000 → $520,000 with "This conflicts with a value you confirmed … Which should the new plan use?"; 1.1.2, 1.1.3, 1.1.4 done; Kevin O'Brien 32h/week → 24h/week; NEW REQUIREMENT FreshPoints loyalty, "Not re-planned"; SCOPE tablet layout removed, "Not re-planned"; TEAM "Add Lucas Moreau · Maps contractor · 30 h/wk · contractor at $160/h".
+
+Click: "Use $520,000", "Use 24h".
+
+Sharada: "Every change carries its quote, like 'I got an extra $40,000 approved for this'. The budget conflicts with the $480,000 we confirmed, so it asks; we take the new value. Same for Kevin's hours. Loyalty is a new requirement: NirnAIn won't invent the work for it. It asks us to put the work into the WBS first."
+
+Rakshitha: "So I add it, using the sizes from the meeting." Click: WBS Builder → "+ Add Deliverable" → "Edit" → name "FreshPoints loyalty" → "Save" → "+ Package" four times, each with "Edit": name, skills, weeks (Part A3, deliverable 1.9) → "Save". Then Constraints → "+ Add Dependency" six times (Part A3). Then back to "Changes & Versions". (Each save takes under 3 seconds.)
+
+Rakshitha: "A week of design for Hannah, four weeks of backend for Aisha, three weeks on the app, two weeks of extra testing for Tom. And the loyalty API waits for the cart and order APIs, and redeeming points goes into the same security review."
+
+Click: "Re-plan with minimal disruption". While it loads [about 23 seconds]:
+
+Sharada: "The solver re-plans with Plan v1 as the baseline and a penalty for every change, so as little as possible moves. Plan v1 stays in force until we approve."
+
+What appears: "Plan v2 vs Plan v1 · Draft · not applied yet". GO-LIVE Sep 8, 2027, −23d vs Plan v1. TOTAL COST $340,056, $9,995 more than v1. BUDGET HEADROOM $179,944 under $520,000 · was $149,939. WHAT CHANGED 28 moved · 5 owners changed · 4 added · 3 done or dropped. "Team in Plan v2: Lucas Moreau … joins". The table "What moved and why", for example "1.3.5 Live order tracking map … Contractor: React Native / Real-time maps specialist → Lucas Moreau · Lucas Moreau joins the team" and "1.3.4 Address entry and delivery slot booking … +16d · Kevin O'Brien now gives 24h a week".
+
+Sharada: "Daniel's question was simple: can we still make October 1 within $520,000? Yes, with about $180,000 of headroom. Loyalty adds about $34,000. One honest note: we're replaying a March 2027 meeting today, in November 2026, so NirnAIn re-plans from the project start and also uses January and February; that's why v2 looks earlier. In real use it re-plans from the meeting date."
+
+Click: "Approve Plan v2". What appears: toast "Plan v2 approved. Dashboard, notifications and versions are updated." Versions: Plan v1 Superseded, Go-live Oct 1, 2027 · $330,062; Plan v2 In force, Go-live Sep 8, 2027 · $340,056.
+
+20:30–22:00 Dashboard (Rakshitha)
+
+Click: "Dashboard" [about 5 seconds]. What appears: FreshCart · P-001, On Track, Due Oct 1, 2027, Plan v2 in force. BUDGET $520K, planned cost $340,056, $179,944 headroom. OPEN RISKS 8. Delivery health: Peak utilization 100%, Constraint violations 0, the four constraint choices. Notifications: "Plan v2 applied for FreshCart · finishes Sep 8, 2027" and "Plan v1 applied …". AI findings from the WBS review and the optimizer.
+
+Rakshitha: "The dashboard is the PM's morning view: status, budget headroom, risks straight from the scope review, and every plan version as a notification. The milestones card is empty because we didn't add phase milestones in this project. On hosting: the website and the API run on Render's free tier, the database and sign-in on Supabase. The free API sleeps after a quiet period, so the first request can take a minute; we wake it before a demo. And everything we showed is documented: the final report, the architecture decisions, the hosting guide and this walkthrough, as Word and text files in the repository."
+
+22:00–23:00 Close (Sharada)
+
+Sharada: "So that's NirnAIn. From a one-hour meeting to a checked scope, a work breakdown, and a plan that an optimizer proves fits the budget and the date, or tells us exactly what it would take. When things changed, it showed what moved, why, and what it cost, and nothing changed until we approved. AI proposes; people decide. The full Claude cost of what you just saw was about fifty cents. Thank you to our professor and our classmates. The code is at github.com/Dogiparthi-Sharada/NirnAIn and the live site at nirnain-web.onrender.com. Thanks for watching."
+
+Appendix: measured waits (rehearsal, November 18, 2026)
+
+• API /health (already awake): 0.2 s (a cold start can take about 1 minute).
+• Landing page: 2.3 s.
+• Sign up → Dashboard: under 1 s.
+• Step 1 "Read it and fill in the project" (AI): 4.5 s.
+• "Create project & review scope →" → items on Scope Review (AI intake): 67 s.
+• "Accept All quoted": 4.7 s.
+• WBS generation (AI): 53 s.
+• WBS review (AI, starts by itself): 15 s more.
+• "Confirm all estimates": 1 s.
+• Add a team member / a dependency: under 1.5 s each.
+• Optimization run, specialist No (infeasible): 12–22 s.
+• Optimization run, specialist Yes (Plan v1): 8–22 s.
+• "Apply Optimized Plan": 1.5 s.
+• "Export PDF Report" / "Export to MS Project": 3.9 s / 1.0 s.
+• Step 7 "Find what changed" (AI): 15 s.
+• Add a loyalty work package: about 3 s each.
+• "Re-plan with minimal disruption": 15–23 s.
+• "Approve Plan v2": 1.6 s.
+• Dashboard: 5 s.
+
+Appendix: things that may look confusing on screen
+
+• Scope Review shows "No scope yet · Run AI Project Intake first · Go to AI Intake" while the intake is still running (about a minute). Clicking through and pressing Analyze would run the AI twice.
+• The first WBS banner said "AI drafted this WBS from your 1 accepted scope items"; after a reload it said 75.
+• The confirmation sheet says "Required skills 9 · nobody has Real-time maps, React Native yet", although three people have React Native (it means nobody has both for 1.3.5).
+• A single priced option is labelled "0 changes" ("Bring in a contractor 0 changes").
+• The assignments table gives the reason "Skill gap" for packages assigned to qualified people.
+• "Move go-live: Not enough on its own" explains itself with capacity lines rather than the missing skill.
+• Employees can't be given the $90/h rate; skill levels can't be entered (all are level 3).
+• Plan v2 re-schedules work in January and February because the demo runs before the project start (see A5).
+• After the WBS edit, the AI review card says "The WBS changed since this AI review" with "Re-check (uses AI)": don't click it.

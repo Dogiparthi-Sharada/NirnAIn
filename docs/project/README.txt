@@ -129,6 +129,7 @@ The documents:
 • Architecture and design decisions – Files: ARCHITECTURE_AND_DESIGN_DECISIONS.docx, ARCHITECTURE_AND_DESIGN_DECISIONS.txt. What it covers: How it works, and the decision log.
 • Lessons learned – Files: LESSONS_LEARNED.docx, LESSONS_LEARNED.txt. What it covers: What worked, what didn't, what we'd do differently.
 • Hosting quick start – Files: HOSTING_QUICKSTART.docx, HOSTING_QUICKSTART.txt. What it covers: Host your own copy: a 16-step checklist.
+• FreshCart demo walkthrough – Files: FRESHCART_DEMO_WALKTHROUGH.docx, FRESHCART_DEMO_WALKTHROUGH.txt. What it covers: Demo data sheet, pre-recording checklist and the screen-by-screen script for the recording.
 • Full hosting guide – Files: DEPLOY_DEMO.docx, DEPLOY_DEMO.txt. What it covers: Every hosting step in detail (also docs/DEPLOY_DEMO.md).
 • How the code is kept on GitHub – Files: GITHUB_UPLOAD_STEPS.docx, GITHUB_UPLOAD_STEPS.txt. What it covers: Clone, update, commit and push, with the secret checks before every push.
 • Capstone presentation – Files: NirnAIn_Capstone_Presentation.pptx. What it covers: 24 slides with speaker notes, aligned with the applied research report.
