@@ -1,0 +1,696 @@
+WEBVTT
+
+NOTE
+Meeting 2 of 2: FreshCart Mobile App - Change Review (scope change and team changes)
+Company: Greenleaf Markets - Department: Digital Commerce
+Date: Monday, March 1, 2027, 10:00 to 10:35 AM - Microsoft Teams recording transcript
+Attendees: Daniel Brooks (sponsor), Priya Nair (PM), Olivia Grant (Director of Loyalty and CRM,
+new stakeholder), Marcus Chen, Sofia Ramirez, Kevin O'Brien, Aisha Patel, Hannah Lee, Tom Wallace,
+Lucas Moreau (maps contractor, joins for the last few minutes)
+Changes discussed: new stakeholder (Olivia Grant); FreshPoints loyalty added to launch scope;
+budget $480,000 to $520,000; launch date October 1, 2027 stays fixed; tablet layout out of scope;
+Kevin O'Brien 32 to 24 hours a week from March 15; contractor Lucas Moreau joins for tracking;
+UX designs and clickable prototype done.
+Use: after Plan v1 is applied, upload on step 7 (Changes & Versions) to record the change.
+
+NOTE Before we start
+
+1
+00:00:08.343 --> 00:00:12.591
+<v Priya Nair>Morning, everyone. Let's give people one more minute.</v>
+
+2
+00:00:18.065 --> 00:00:23.510
+<v Daniel Brooks>Morning. Olivia is joining today too, she's just finishing another call.</v>
+
+3
+00:00:28.649 --> 00:00:36.886
+<v Marcus Chen>Did everyone survive the sprint review on Thursday? I think that was our longest demo so far.</v>
+
+4
+00:00:41.486 --> 00:00:48.868
+<v Sofia Ramirez>It was long, but people actually clapped at the checkout demo, so I'll take it.</v>
+
+5
+00:00:53.859 --> 00:01:00.211
+<v Olivia Grant>Hi, sorry I'm a couple of minutes late. My previous meeting ran over.</v>
+
+6
+00:01:05.113 --> 00:01:09.699
+<v Priya Nair>No problem at all, Olivia, you're right on time.</v>
+
+NOTE Agenda item 1: Welcome, and a new stakeholder
+
+7
+00:01:13.050 --> 00:01:25.156
+<v Priya Nair>Okay, let's start. This is the FreshCart change review for March. We have one new face today, so Olivia, do you want to introduce yourself?</v>
+
+8
+00:01:30.015 --> 00:01:35.447
+<v Olivia Grant>Sure. Hi everyone, I'm Olivia Grant, Director of Loyalty and CRM.</v>
+
+9
+00:01:35.712 --> 00:01:48.821
+<v Olivia Grant>Daniel asked me to join the FreshCart steering group from now on, because what I'm about to ask for affects all of you. So, apologies in advance.</v>
+
+10
+00:01:54.064 --> 00:01:57.855
+<v Daniel Brooks>Olivia joins as a stakeholder from today.</v>
+
+11
+00:01:58.209 --> 00:02:07.166
+<v Daniel Brooks>She'll be in the monthly steering meetings, and she signs off anything that touches loyalty or customer communications.</v>
+
+12
+00:02:11.998 --> 00:02:13.511
+<v Priya Nair>Welcome, Olivia.</v>
+
+13
+00:02:13.736 --> 00:02:24.364
+<v Priya Nair>Here's the agenda: progress since the kickoff, then Olivia's request, then two team changes, a couple of open questions, and next steps.</v>
+
+14
+00:02:24.619 --> 00:02:31.903
+<v Priya Nair>I'll record everything we agree today in NirnAIn as a change and re-plan from there.</v>
+
+NOTE Agenda item 2: Progress since the kickoff
+
+15
+00:02:32.219 --> 00:02:35.939
+<v Priya Nair>Let's start with progress. Hannah, designs first?</v>
+
+16
+00:02:40.811 --> 00:02:51.904
+<v Hannah Lee>Good news. The UX designs and the clickable prototype are done. We got sign-off on Friday, February 26, so right on the milestone.</v>
+
+17
+00:02:52.333 --> 00:03:02.729
+<v Hannah Lee>We ran two rounds of usability testing with twelve customers, and the accessibility review found three issues, which are already fixed.</v>
+
+18
+00:03:08.069 --> 00:03:13.020
+<v Daniel Brooks>That's great work, Hannah, especially at 24 hours a week.</v>
+
+19
+00:03:18.413 --> 00:03:26.993
+<v Hannah Lee>Thanks. The substitution flow went through four versions, but the last round of testing was really positive.</v>
+
+20
+00:03:32.164 --> 00:03:37.754
+<v Daniel Brooks>Can you show us the substitution flow? I've only seen screenshots.</v>
+
+21
+00:03:42.573 --> 00:03:45.704
+<v Hannah Lee>Sure, let me share the prototype.</v>
+
+22
+00:03:55.875 --> 00:04:02.043
+<v Hannah Lee>Okay. So the picker in the store can't find the semi-skimmed milk.</v>
+
+23
+00:04:02.289 --> 00:04:12.138
+<v Hannah Lee>They pick a replacement on their scanner, and the customer gets a notification: "Your semi-skimmed milk is out of stock.</v>
+
+24
+00:04:12.485 --> 00:04:19.728
+<v Hannah Lee>We'd like to replace it with the organic semi-skimmed milk, same size, 40 cents more."</v>
+
+25
+00:04:19.900 --> 00:04:27.200
+<v Hannah Lee>The customer can tap approve or reject right in the notification, without opening the app.</v>
+
+26
+00:04:27.492 --> 00:04:35.226
+<v Hannah Lee>If they don't answer within ten minutes, we go with whatever default they chose at checkout.</v>
+
+27
+00:04:40.158 --> 00:04:41.718
+<v Daniel Brooks>What's the default?</v>
+
+28
+00:04:46.628 --> 00:04:53.888
+<v Hannah Lee>At checkout, customers choose between "replace with something similar" and "don't replace, just refund me".</v>
+
+29
+00:04:54.276 --> 00:05:00.833
+<v Hannah Lee>In testing, most people chose "replace", as long as they get the notification.</v>
+
+30
+00:05:05.828 --> 00:05:12.121
+<v Olivia Grant>That's nice. Can the price difference ever be more than a few dollars?</v>
+
+31
+00:05:17.010 --> 00:05:28.441
+<v Hannah Lee>We cap it. If the replacement costs more than 20 percent extra, the picker can't choose it without the customer approving it first.</v>
+
+32
+00:05:33.307 --> 00:05:39.240
+<v Daniel Brooks>Good. That's exactly the kind of thing that ends up in reviews.</v>
+
+33
+00:05:44.350 --> 00:05:56.215
+<v Tom Wallace>And for accessibility, the approve and reject buttons work with the screen reader, we tested that with two customers who use one every day.</v>
+
+34
+00:06:01.032 --> 00:06:03.344
+<v Hannah Lee>Okay, I'll stop sharing.</v>
+
+35
+00:06:12.226 --> 00:06:13.930
+<v Priya Nair>Aisha?</v>
+
+36
+00:06:19.472 --> 00:06:32.096
+<v Aisha Patel>The catalogue API is done and in staging. The cart API is about 70 percent done. The OMS team delivered the order events on January 25.</v>
+
+37
+00:06:32.390 --> 00:06:41.738
+<v Aisha Patel>That's two weeks later than they promised, but because we built against the mock, we didn't lose any time.</v>
+
+38
+00:06:47.238 --> 00:06:49.950
+<v Marcus Chen>That mock saved us, honestly.</v>
+
+39
+00:06:55.361 --> 00:07:03.248
+<v Kevin O'Brien>Catalogue and search screens are in progress. Typo tolerance works, bananas with three n's finds bananas.</v>
+
+40
+00:07:08.348 --> 00:07:10.177
+<v Hannah Lee>Ha, thank you.</v>
+
+41
+00:07:15.213 --> 00:07:24.640
+<v Sofia Ramirez>Checkout is going well. Apple Pay works end to end in staging, Google Pay should be done next sprint.</v>
+
+42
+00:07:30.007 --> 00:07:32.881
+<v Marcus Chen>And one risk is closed.</v>
+
+43
+00:07:33.223 --> 00:07:44.943
+<v Marcus Chen>Stripe confirmed that the old API version retires on April 20, and we're already on the new version, so that doesn't affect us anymore.</v>
+
+44
+00:07:49.522 --> 00:08:01.343
+<v Tom Wallace>From QA, the test strategy was signed off in January, and we have about 180 automated tests running in the pipeline on every change.</v>
+
+45
+00:08:06.419 --> 00:08:13.844
+<v Priya Nair>So overall, we're on track against Plan v1. Thanks, everyone. Now, Olivia, over to you.</v>
+
+NOTE Agenda item 3: Scope change, FreshPoints loyalty at launch
+
+46
+00:08:19.014 --> 00:08:29.391
+<v Olivia Grant>Thanks. So, I know loyalty was parked for phase two at the kickoff. I'm here to ask you to un-park it.</v>
+
+47
+00:08:29.784 --> 00:08:38.775
+<v Olivia Grant>Here's why. In our last customer survey, 60 percent of shoppers said loyalty points influence where they shop.</v>
+
+48
+00:08:38.934 --> 00:08:50.023
+<v Olivia Grant>And in January, our biggest competitor launched their app with points built into checkout. Their app ratings went up almost a full star.</v>
+
+49
+00:08:50.404 --> 00:09:02.004
+<v Olivia Grant>And the holiday campaign in October is now built around "double FreshPoints when you order in the app". Marketing approved the campaign last week.</v>
+
+50
+00:09:02.259 --> 00:09:08.097
+<v Olivia Grant>So if the app launches without points, the campaign doesn't make sense.</v>
+
+51
+00:09:13.251 --> 00:09:23.508
+<v Daniel Brooks>I'll be honest, I said phase two in December, and I meant it at the time. But the campaign changed things.</v>
+
+52
+00:09:23.701 --> 00:09:28.833
+<v Daniel Brooks>I've agreed with Olivia that loyalty is in for launch.</v>
+
+53
+00:09:33.710 --> 00:09:45.795
+<v Priya Nair>Okay. Olivia, can you describe exactly what customers need to be able to do? I want to be precise, because this goes into the plan.</v>
+
+54
+00:09:50.777 --> 00:10:00.112
+<v Olivia Grant>Three things. Customers link their existing FreshPoints card to their account, by scanning the card or typing the number.</v>
+
+55
+00:10:00.335 --> 00:10:12.167
+<v Olivia Grant>They see their points balance in the app. And at checkout, they earn points on the order and can redeem points as a discount.</v>
+
+56
+00:10:17.112 --> 00:10:26.375
+<v Sofia Ramirez>Redeem in the same checkout page? Because the whole point of the one-page checkout was to keep it simple.</v>
+
+57
+00:10:31.538 --> 00:10:39.530
+<v Olivia Grant>Yes, the same page. One line that says "use 1,200 points, save $12", with a toggle.</v>
+
+58
+00:10:45.054 --> 00:10:56.204
+<v Hannah Lee>That's doable without breaking the one-page idea. I'll need about a week to design it properly and test it with a few customers.</v>
+
+59
+00:11:00.967 --> 00:11:10.950
+<v Priya Nair>So, to record it clearly: loyalty points have to be added to the scope for launch. That's a new requirement.</v>
+
+60
+00:11:11.294 --> 00:11:19.729
+<v Priya Nair>Customers can link their FreshPoints card, see their points balance, and earn and redeem points at checkout.</v>
+
+61
+00:11:25.253 --> 00:11:36.131
+<v Sofia Ramirez>Before we size it, a few questions about the rules. How many points per dollar, and is there a minimum to redeem?</v>
+
+62
+00:11:41.527 --> 00:11:53.339
+<v Olivia Grant>One point per dollar spent, the same as in the stores. Customers can redeem from 500 points, and 100 points are worth one dollar.</v>
+
+63
+00:11:58.136 --> 00:12:03.285
+<v Aisha Patel>Are points earned on the delivery fee and the tip?</v>
+
+64
+00:12:08.826 --> 00:12:16.666
+<v Olivia Grant>No, only on the groceries. Not on the delivery fee, and definitely not on the tip.</v>
+
+65
+00:12:21.437 --> 00:12:29.248
+<v Kevin O'Brien>What about customers who don't have a FreshPoints card yet? Can they join from the app?</v>
+
+66
+00:12:34.281 --> 00:12:45.917
+<v Olivia Grant>Ideally yes, but that's a bigger piece of work, because joining needs the marketing consent flow. For launch, linking an existing card is enough.</v>
+
+67
+00:12:46.201 --> 00:12:49.326
+<v Olivia Grant>Joining from the app can wait.</v>
+
+68
+00:12:54.431 --> 00:13:03.652
+<v Priya Nair>So, joining the loyalty program from the app is not part of this change. Only linking an existing card.</v>
+
+69
+00:13:08.985 --> 00:13:10.611
+<v Olivia Grant>Correct.</v>
+
+70
+00:13:15.471 --> 00:13:23.468
+<v Tom Wallace>And when are the points added? When the customer pays, or when the order is delivered?</v>
+
+71
+00:13:28.805 --> 00:13:38.708
+<v Olivia Grant>When it's delivered. If an order is cancelled before delivery, no points. That's how it works in the stores too.</v>
+
+72
+00:13:43.758 --> 00:13:49.463
+<v Priya Nair>Thanks, that's clear. Marcus, Aisha, what does it take to build?</v>
+
+73
+00:13:54.460 --> 00:14:09.694
+<v Aisha Patel>On the backend, I need to integrate with the loyalty platform. It has an API, but it's old and it's slow, so I'll need a caching layer in front of it.</v>
+
+74
+00:14:09.901 --> 00:14:13.626
+<v Aisha Patel>I'd say four weeks of backend work.</v>
+
+75
+00:14:18.777 --> 00:14:28.880
+<v Sofia Ramirez>On the app side, about three weeks. Card linking with the camera, the balance screen, and the redeem toggle in checkout.</v>
+
+76
+00:14:34.215 --> 00:14:45.097
+<v Tom Wallace>And two extra weeks of testing for me. Points touch money, so I want proper tests on rounding, refunds and cancelled orders.</v>
+
+77
+00:14:45.523 --> 00:14:51.096
+<v Tom Wallace>If an order is cancelled, the points have to go back.</v>
+
+78
+00:14:55.764 --> 00:15:01.289
+<v Olivia Grant>Yes, that's important. Customers notice very quickly if their points disappear.</v>
+
+79
+00:15:06.285 --> 00:15:16.714
+<v Marcus Chen>There's a security angle too. Redeeming points is basically a payment, so Grace will want it inside the same security review.</v>
+
+80
+00:15:21.491 --> 00:15:25.220
+<v Priya Nair>Good point, I'll let Grace know today.</v>
+
+81
+00:15:25.582 --> 00:15:40.330
+<v Priya Nair>So roughly: a week of design, four weeks of backend, three weeks on the app, and two weeks of extra testing, and the security review covers points redemption as well.</v>
+
+82
+00:15:40.720 --> 00:15:47.400
+<v Priya Nair>Daniel, we sized the budget without loyalty. Where does the money come from?</v>
+
+83
+00:15:52.544 --> 00:16:00.621
+<v Daniel Brooks>Olivia and I talked about that. Her team is moving money from the loyalty marketing budget.</v>
+
+84
+00:16:00.776 --> 00:16:08.779
+<v Daniel Brooks>I got an extra $40,000 approved for this, so the budget goes from $480,000 to $520,000.</v>
+
+85
+00:16:14.012 --> 00:16:20.550
+<v Priya Nair>So the budget is now $520,000. And the contingency stays at 10 percent?</v>
+
+86
+00:16:25.230 --> 00:16:36.452
+<v Daniel Brooks>Yes, 10 percent of the new budget. And the budget is still fixed at that new number. No more increases after this one.</v>
+
+87
+00:16:41.815 --> 00:16:44.414
+<v Priya Nair>Understood. And the launch date?</v>
+
+88
+00:16:49.431 --> 00:16:58.157
+<v Daniel Brooks>October 1 doesn't move. The launch date stays fixed. If anything, the campaign makes it even more fixed.</v>
+
+89
+00:17:03.231 --> 00:17:10.699
+<v Olivia Grant>The TV slots are booked for the first week of October. There's no moving them.</v>
+
+90
+00:17:15.415 --> 00:17:22.313
+<v Priya Nair>Okay. October 1 stays a must-hold date, and the budget is fixed at $520,000.</v>
+
+NOTE Agenda item 3, continued: Closing one open question
+
+91
+00:17:22.537 --> 00:17:31.396
+<v Priya Nair>While we're on scope, there were two open questions from the kickoff. The tablet layout, and alcohol orders.</v>
+
+92
+00:17:36.650 --> 00:17:44.167
+<v Daniel Brooks>Let's close the tablet one. The tablet layout is out of scope for this release.</v>
+
+93
+00:17:44.567 --> 00:17:54.213
+<v Daniel Brooks>Six percent of orders isn't worth it right now, the phone layout will scale up well enough on a tablet.</v>
+
+94
+00:17:59.761 --> 00:18:08.744
+<v Hannah Lee>Agreed. I'll make sure the phone layout doesn't look broken on a tablet, but no dedicated tablet design.</v>
+
+95
+00:18:13.660 --> 00:18:18.532
+<v Priya Nair>Okay, the tablet layout is out of scope. And alcohol?</v>
+
+96
+00:18:23.593 --> 00:18:31.584
+<v Daniel Brooks>Still waiting on legal. They promised an answer by the end of March. Leave it open.</v>
+
+97
+00:18:36.661 --> 00:18:42.038
+<v Priya Nair>Alcohol orders stay an open question until the end of March.</v>
+
+NOTE Agenda item 4: Team changes
+
+98
+00:18:42.446 --> 00:18:47.800
+<v Priya Nair>Now the team. Kevin, do you want to share your news?</v>
+
+99
+00:18:53.072 --> 00:19:01.662
+<v Kevin O'Brien>Yeah. So, store operations asked me to help with the new handheld scanner app for the pickers.</v>
+
+100
+00:19:01.829 --> 00:19:13.718
+<v Kevin O'Brien>It's only for a few months, but it means that from March 15, I'll be on FreshCart 24 hours a week instead of 32.</v>
+
+101
+00:19:18.344 --> 00:19:29.514
+<v Daniel Brooks>I wasn't thrilled about that one, but the scanner app is what the pickers use for substitutions, so it helps FreshCart too, indirectly.</v>
+
+102
+00:19:34.652 --> 00:19:42.532
+<v Priya Nair>Okay. So Kevin will be on 24 hours a week instead of 32, starting March 15.</v>
+
+103
+00:19:47.828 --> 00:19:56.891
+<v Sofia Ramirez>If it helps, I can take over push notifications completely, since my checkout work is ahead of schedule.</v>
+
+104
+00:19:57.307 --> 00:20:02.331
+<v Sofia Ramirez>Then Kevin can focus on catalogue, search and the cart.</v>
+
+105
+00:20:07.752 --> 00:20:11.356
+<v Kevin O'Brien>That would help a lot, thanks Sofia.</v>
+
+106
+00:20:16.438 --> 00:20:24.281
+<v Priya Nair>Good, I'll reflect that in the plan. Marcus, the other team change is good news, right?</v>
+
+107
+00:20:29.478 --> 00:20:38.729
+<v Marcus Chen>It is. We found our maps person. We're bringing in Lucas Moreau as a contractor for the real-time tracking.</v>
+
+108
+00:20:39.000 --> 00:20:50.132
+<v Marcus Chen>He built live driver tracking for a food delivery startup, and he's done it on React Native, which is exactly what we need.</v>
+
+109
+00:20:55.292 --> 00:20:56.966
+<v Daniel Brooks>And the rate?</v>
+
+110
+00:21:01.645 --> 00:21:10.115
+<v Marcus Chen>$160 an hour, like we discussed at the kickoff, for 30 hours a week, starting March 15.</v>
+
+111
+00:21:14.851 --> 00:21:27.379
+<v Priya Nair>So, to record it: Lucas Moreau joins as a contractor at $160 an hour, 30 hours a week, from March 15, for the real-time tracking work.</v>
+
+112
+00:21:27.758 --> 00:21:31.754
+<v Priya Nair>His skills are real-time maps and React Native.</v>
+
+113
+00:21:37.144 --> 00:21:46.333
+<v Marcus Chen>I'd put him at a five for real-time maps and a four for React Native, based on the interview.</v>
+
+114
+00:21:51.725 --> 00:21:58.139
+<v Priya Nair>Five and four, noted. Daniel, his cost comes out of the $520,000, right?</v>
+
+115
+00:22:03.187 --> 00:22:07.866
+<v Daniel Brooks>Yes. It was always planned, it's just now real.</v>
+
+NOTE Agenda item 5: What this means for the plan
+
+116
+00:22:13.159 --> 00:22:23.443
+<v Priya Nair>So, putting it all together. We're adding about ten weeks of work for loyalty, spread across Hannah, Aisha, Sofia and Tom.</v>
+
+117
+00:22:23.877 --> 00:22:35.282
+<v Priya Nair>Kevin drops eight hours a week. Lucas joins for tracking. The budget goes up by $40,000, and the launch date stays October 1.</v>
+
+118
+00:22:40.288 --> 00:22:52.343
+<v Marcus Chen>My gut feeling is that it's tight but possible. The loyalty backend work is the long pole, because Aisha is also finishing the order APIs.</v>
+
+119
+00:22:57.567 --> 00:23:10.204
+<v Aisha Patel>Yes. I can't start loyalty properly until the cart and order APIs are done, so that's roughly mid-April. Four weeks from there takes me to mid-May.</v>
+
+120
+00:23:15.701 --> 00:23:26.088
+<v Tom Wallace>And then the loyalty testing has to happen before code freeze on September 10. That should be okay if mid-May holds.</v>
+
+121
+00:23:31.209 --> 00:23:44.328
+<v Daniel Brooks>What I need to know is simple. Can we still make October 1 within $520,000? And if not, what are my options and what do they cost?</v>
+
+122
+00:23:49.292 --> 00:24:01.451
+<v Priya Nair>That's exactly what the re-plan will tell us. I'll record today's changes in NirnAIn, re-plan from today, and compare the new plan with Plan v1.</v>
+
+123
+00:24:01.873 --> 00:24:12.981
+<v Priya Nair>If it doesn't fit, NirnAIn shows the options, like more hours near the end, another contractor, or moving something, each with a price.</v>
+
+124
+00:24:18.251 --> 00:24:28.495
+<v Daniel Brooks>Overtime in September is still okay, as we agreed. Up to a day a week, only if it saves the date.</v>
+
+125
+00:24:33.406 --> 00:24:35.561
+<v Priya Nair>Understood, nothing changes there.</v>
+
+126
+00:24:41.013 --> 00:24:51.013
+<v Olivia Grant>Can I see the comparison too? I'd like to understand what loyalty costs us in time, not just in money.</v>
+
+127
+00:24:56.322 --> 00:25:01.526
+<v Priya Nair>Of course. I'll send the comparison to both of you.</v>
+
+NOTE Agenda item 6: Risks update
+
+128
+00:25:01.854 --> 00:25:12.210
+<v Priya Nair>Quick risk update. The Stripe risk is closed. The OMS risk is mostly closed, since the order events arrived. What's new?</v>
+
+129
+00:25:17.149 --> 00:25:27.939
+<v Aisha Patel>The loyalty platform. It's slow, and it's owned by a vendor. If their API goes down, checkout can't fail because of it.</v>
+
+130
+00:25:28.228 --> 00:25:37.175
+<v Aisha Patel>So if the loyalty platform doesn't answer, the customer can still pay, and the points are added later.</v>
+
+131
+00:25:42.263 --> 00:25:48.095
+<v Olivia Grant>That's fine from my side, as long as the points do arrive.</v>
+
+132
+00:25:53.461 --> 00:26:06.498
+<v Tom Wallace>And the new risk on my side is the testing window. With loyalty added, the regression testing at the end gets longer, and we can't squeeze it.</v>
+
+133
+00:26:11.376 --> 00:26:20.055
+<v Marcus Chen>And Lucas is new, so there's some onboarding risk. I'll pair with him for the first two weeks.</v>
+
+134
+00:26:24.750 --> 00:26:34.127
+<v Priya Nair>Okay. New risks: the loyalty platform's performance and availability, a longer regression testing window, and onboarding a new contractor.</v>
+
+NOTE Agenda item 7: Summary and next steps
+
+135
+00:26:34.549 --> 00:26:42.357
+<v Priya Nair>Let me recap what we agreed today. Olivia Grant joins the steering group as a stakeholder.</v>
+
+136
+00:26:42.592 --> 00:26:51.817
+<v Priya Nair>FreshPoints loyalty is now in scope for launch: link the card, see the balance, earn and redeem at checkout.</v>
+
+137
+00:26:52.086 --> 00:27:04.301
+<v Priya Nair>The budget goes from $480,000 to $520,000, with a 10 percent contingency, and it's fixed at that number. The launch date stays October 1, 2027.</v>
+
+138
+00:27:04.740 --> 00:27:15.840
+<v Priya Nair>The UX designs and the clickable prototype are done. The tablet layout is out of scope. Alcohol orders are still an open question.</v>
+
+139
+00:27:16.005 --> 00:27:22.071
+<v Priya Nair>Kevin goes from 32 to 24 hours a week from March 15.</v>
+
+140
+00:27:22.245 --> 00:27:32.719
+<v Priya Nair>And Lucas Moreau joins as a contractor for real-time tracking at $160 an hour, 30 hours a week, from March 15.</v>
+
+141
+00:27:38.196 --> 00:27:39.992
+<v Daniel Brooks>That's everything.</v>
+
+142
+00:27:45.408 --> 00:27:56.148
+<v Priya Nair>Next steps. I'll record this change in NirnAIn today, re-plan, and send Daniel and Olivia the comparison with Plan v1 by Wednesday.</v>
+
+143
+00:27:56.503 --> 00:28:02.179
+<v Priya Nair>Olivia, can you share the loyalty platform's API documentation with Aisha?</v>
+
+144
+00:28:07.376 --> 00:28:10.384
+<v Olivia Grant>I'll send it after this call.</v>
+
+145
+00:28:15.091 --> 00:28:20.148
+<v Priya Nair>Aisha, can you meet the loyalty platform team this week?</v>
+
+146
+00:28:25.149 --> 00:28:28.275
+<v Aisha Patel>I'll set it up for Thursday.</v>
+
+147
+00:28:33.109 --> 00:28:37.528
+<v Priya Nair>Marcus, Lucas's onboarding, laptop and access for March 15?</v>
+
+148
+00:28:42.569 --> 00:28:44.331
+<v Marcus Chen>Already requested.</v>
+
+149
+00:28:49.647 --> 00:28:51.720
+<v Priya Nair>Hannah, the loyalty designs?</v>
+
+150
+00:28:56.815 --> 00:28:59.356
+<v Hannah Lee>First version by next Friday.</v>
+
+151
+00:29:04.284 --> 00:29:14.729
+<v Marcus Chen>Oh, before we close. Lucas said he'd jump on for the last few minutes to say hello. Lucas, are you there?</v>
+
+152
+00:29:20.236 --> 00:29:25.011
+<v Lucas Moreau>Hi everyone, yes, I'm here. Can you hear me?</v>
+
+153
+00:29:29.648 --> 00:29:32.404
+<v Priya Nair>Loud and clear. Welcome, Lucas.</v>
+
+154
+00:29:37.646 --> 00:29:44.636
+<v Lucas Moreau>Thanks. I'm Lucas Moreau, I'll be working on the real-time tracking from March 15.</v>
+
+155
+00:29:44.985 --> 00:29:58.462
+<v Lucas Moreau>For the last three years I built live driver tracking for a food delivery startup, so moving dots on maps is pretty much what I do all day.</v>
+
+156
+00:30:03.408 --> 00:30:08.108
+<v Daniel Brooks>Welcome aboard. What's the hardest part, in your experience?</v>
+
+157
+00:30:13.114 --> 00:30:26.662
+<v Lucas Moreau>Honestly, it's never the map. It's the data. If the driver app sends positions late or in bursts, the dot jumps around and customers lose trust in it.</v>
+
+158
+00:30:27.104 --> 00:30:37.419
+<v Lucas Moreau>So the first thing I'll do is look at the GPS feed from your driver app, before writing any app code.</v>
+
+159
+00:30:42.703 --> 00:30:53.566
+<v Marcus Chen>That's the assumption we wrote down at the kickoff, positions every ten seconds. It'll be good to have someone check it properly.</v>
+
+160
+00:30:58.393 --> 00:31:09.329
+<v Lucas Moreau>Exactly. And battery use. If the tracking screen drains the phone, people close it. I'll keep updates smooth without polling every second.</v>
+
+161
+00:31:13.980 --> 00:31:21.846
+<v Hannah Lee>I'd love an hour with you in your first week, to walk through the tracking designs.</v>
+
+162
+00:31:26.736 --> 00:31:30.047
+<v Lucas Moreau>Absolutely, put something in my calendar.</v>
+
+163
+00:31:35.446 --> 00:31:43.760
+<v Priya Nair>Great. Lucas, I'll send you the plan and the project details today. Okay, anything else from anyone?</v>
+
+164
+00:31:48.355 --> 00:31:50.259
+<v Tom Wallace>Nothing from me.</v>
+
+165
+00:31:55.372 --> 00:32:02.995
+<v Daniel Brooks>Thanks, everyone. This was a good meeting. Let's see what the numbers say on Wednesday.</v>
+
+166
+00:32:07.756 --> 00:32:10.000
+<v Priya Nair>Thanks, everyone. Talk soon.</v>
